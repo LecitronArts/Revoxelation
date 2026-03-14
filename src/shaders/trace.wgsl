@@ -66,6 +66,7 @@ struct GiReservoir {
 
 struct SurfaceSample {
     normal_material: vec4<f32>,
+    surface_meta: vec4<u32>,
 };
 
 struct Ray {
@@ -592,7 +593,7 @@ fn remap_previous_emitter(index: u32) -> u32 {
 }
 
 fn surface_empty() -> SurfaceSample {
-    return SurfaceSample(vec4<f32>(0.0, 0.0, 0.0, -1.0));
+    return SurfaceSample(vec4<f32>(0.0, 0.0, 0.0, -1.0), vec4<u32>(0u));
 }
 
 fn read_prev_reservoir(pixel_index: u32) -> Reservoir {
@@ -767,7 +768,40 @@ fn read_curr_surface(pixel_index: u32) -> SurfaceSample {
     return surface_history[pixel_index];
 }
 
-fn build_surface_sample(hit_position: vec3<f32>, hit_normal: vec3<f32>) -> SurfaceSample {
+fn encode_surface_face(hit_normal: vec3<f32>) -> u32 {
+    let normal = normalize(hit_normal);
+    let abs_normal = abs(normal);
+    if abs_normal.x >= abs_normal.y && abs_normal.x >= abs_normal.z {
+        return select(0u, 1u, normal.x >= 0.0);
+    }
+    if abs_normal.y >= abs_normal.z {
+        return select(2u, 3u, normal.y >= 0.0);
+    }
+    return select(4u, 5u, normal.z >= 0.0);
+}
+
+fn hash_surface_identity(
+    voxel_coord: vec3<i32>,
+    chunk_coord: vec3<i32>,
+    material_tag: u32,
+    face: u32,
+) -> u32 {
+    let voxel_hash = hash_u32(u32(voxel_coord.x) * 73856093u)
+        ^ hash_u32(u32(voxel_coord.y) * 19349663u)
+        ^ hash_u32(u32(voxel_coord.z) * 83492791u);
+    var id = hash_u32(material_tag ^ (face * 0x9e3779b9u));
+    id = hash_u32(id ^ voxel_hash);
+    id = hash_u32(id ^ hash_chunk_coord(chunk_coord));
+    return id;
+}
+
+fn build_surface_sample(
+    hit_position: vec3<f32>,
+    hit_normal: vec3<f32>,
+    material: u32,
+    emissive: u32,
+) -> SurfaceSample {
+    let normal = normalize(hit_normal);
     let depth = dot(
         hit_position - camera.position_lens.xyz,
         camera.forward_fov.xyz,
@@ -775,7 +809,15 @@ fn build_surface_sample(hit_position: vec3<f32>, hit_normal: vec3<f32>) -> Surfa
     if depth <= 0.0 {
         return surface_empty();
     }
-    return SurfaceSample(vec4<f32>(normalize(hit_normal), depth));
+    let voxel_coord = vec3<i32>(floor(hit_position - normal * 0.5));
+    let chunk_coord = chunk_coord_from_voxel(voxel_coord);
+    let material_tag = (material & 0xffu) | ((emissive & 0xffu) << 8u);
+    let face = encode_surface_face(normal);
+    let surface_id = hash_surface_identity(voxel_coord, chunk_coord, material_tag, face);
+    return SurfaceSample(
+        vec4<f32>(normal, depth),
+        vec4<u32>(surface_id, material_tag, face, 0u),
+    );
 }
 
 fn surface_reuse_compatible(
@@ -1428,7 +1470,10 @@ fn integrate_path(pixel: vec2<u32>, pixel_index: u32, seed: ptr<function, u32>) 
                 seed,
                 &gi_reservoir,
             );
-            write_curr_surface(pixel_index, build_surface_sample(hit.position, hit.normal));
+            write_curr_surface(
+                pixel_index,
+                build_surface_sample(hit.position, hit.normal, hit.material, hit.emissive),
+            );
             write_curr_reservoir_gi(pixel_index, gi_reservoir);
         }
 

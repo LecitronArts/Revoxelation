@@ -9,6 +9,7 @@ pub(super) struct PipelineSetupOutput {
     pub svgf_init_pipeline: wgpu::ComputePipeline,
     pub svgf_atrous_pipeline: wgpu::ComputePipeline,
     pub svgf_resolve_pipeline: wgpu::ComputePipeline,
+    pub svgf_diag_reduce_pipeline: wgpu::ComputePipeline,
     pub svgf_bind_group_layout: wgpu::BindGroupLayout,
 }
 
@@ -27,6 +28,7 @@ pub(super) fn setup_pipelines(
         svgf_init_pipeline: pipelines.svgf_init_pipeline,
         svgf_atrous_pipeline: pipelines.svgf_atrous_pipeline,
         svgf_resolve_pipeline: pipelines.svgf_resolve_pipeline,
+        svgf_diag_reduce_pipeline: pipelines.svgf_diag_reduce_pipeline,
         svgf_bind_group_layout: layouts.svgf_bind_group_layout,
     }
 }

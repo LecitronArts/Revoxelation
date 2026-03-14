@@ -413,13 +413,32 @@ fn draw_renderer_ui(
                             .text("Center Weight"),
                     );
                     ui.add(
-                        Slider::new(&mut settings.svgf_history_normal_reject_cos, 0.5..=0.999)
-                            .text("History Normal Reject"),
+                        Slider::new(&mut settings.svgf_reprojection_error_threshold, 0.25..=8.0)
+                            .text("Reprojection Error"),
                     );
                     ui.add(
-                        Slider::new(&mut settings.svgf_history_depth_reject_scale, 0.01..=0.5)
+                        Slider::new(&mut settings.svgf_disocclusion_depth_threshold, 0.01..=0.5)
                             .logarithmic(true)
-                            .text("History Depth Reject"),
+                            .text("Disocclusion Depth"),
+                    );
+                    ui.add(
+                        Slider::new(
+                            &mut settings.svgf_disocclusion_normal_threshold,
+                            0.5..=0.999,
+                        )
+                        .text("Disocclusion Normal"),
+                    );
+                    ui.add(
+                        Slider::new(&mut settings.svgf_reactive_strength, 0.0..=1.0)
+                            .text("Reactive Strength"),
+                    );
+                    ui.add(
+                        Slider::new(&mut settings.svgf_history_max_weight_dynamic, 0.0..=0.99)
+                            .text("Dynamic History Max"),
+                    );
+                    ui.add(
+                        Slider::new(&mut settings.svgf_diag_sample_interval, 1..=16)
+                            .text("Diag Sample Interval"),
                     );
                 });
 

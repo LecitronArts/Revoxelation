@@ -49,10 +49,20 @@ pub(crate) fn sanitize_renderer_settings(settings: RendererSettings) -> Renderer
     settings.svgf_clamp_sigma = settings.svgf_clamp_sigma.clamp(0.0, 8.0);
     settings.svgf_invalid_variance_boost = settings.svgf_invalid_variance_boost.clamp(1.0, 16.0);
     settings.svgf_center_weight = settings.svgf_center_weight.clamp(0.5, 12.0);
-    settings.svgf_history_normal_reject_cos =
-        settings.svgf_history_normal_reject_cos.clamp(0.5, 0.999);
-    settings.svgf_history_depth_reject_scale =
-        settings.svgf_history_depth_reject_scale.clamp(0.01, 0.5);
+    settings.svgf_reprojection_error_threshold =
+        settings.svgf_reprojection_error_threshold.clamp(0.25, 8.0);
+    settings.svgf_disocclusion_depth_threshold =
+        settings.svgf_disocclusion_depth_threshold.clamp(0.01, 0.5);
+    settings.svgf_disocclusion_normal_threshold = settings
+        .svgf_disocclusion_normal_threshold
+        .clamp(0.5, 0.999);
+    settings.svgf_reactive_strength = settings.svgf_reactive_strength.clamp(0.0, 1.0);
+    settings.svgf_history_max_weight_dynamic =
+        settings.svgf_history_max_weight_dynamic.clamp(0.0, 0.99);
+    settings.svgf_diag_sample_interval = settings.svgf_diag_sample_interval.clamp(
+        super::state::SVGF_DIAG_SAMPLE_INTERVAL_MIN,
+        super::state::SVGF_DIAG_SAMPLE_INTERVAL_MAX,
+    );
     settings
 }
 
@@ -140,14 +150,27 @@ impl Renderer {
                 > 1.0e-5
             || (self.runtime.settings.svgf_center_weight - settings.svgf_center_weight).abs()
                 > 1.0e-5
-            || (self.runtime.settings.svgf_history_normal_reject_cos
-                - settings.svgf_history_normal_reject_cos)
+            || (self.runtime.settings.svgf_reprojection_error_threshold
+                - settings.svgf_reprojection_error_threshold)
                 .abs()
                 > 1.0e-5
-            || (self.runtime.settings.svgf_history_depth_reject_scale
-                - settings.svgf_history_depth_reject_scale)
+            || (self.runtime.settings.svgf_disocclusion_depth_threshold
+                - settings.svgf_disocclusion_depth_threshold)
                 .abs()
-                > 1.0e-5;
+                > 1.0e-5
+            || (self.runtime.settings.svgf_disocclusion_normal_threshold
+                - settings.svgf_disocclusion_normal_threshold)
+                .abs()
+                > 1.0e-5
+            || (self.runtime.settings.svgf_reactive_strength - settings.svgf_reactive_strength)
+                .abs()
+                > 1.0e-5
+            || (self.runtime.settings.svgf_history_max_weight_dynamic
+                - settings.svgf_history_max_weight_dynamic)
+                .abs()
+                > 1.0e-5
+            || self.runtime.settings.svgf_diag_sample_interval
+                != settings.svgf_diag_sample_interval;
         self.runtime.settings = settings;
         if changed {
             world_ops::reset_accumulation(self);
@@ -231,12 +254,47 @@ mod tests {
     }
 
     #[test]
-    fn svgf_history_thresholds_are_clamped_into_expected_range() {
+    fn svgf_new_temporal_thresholds_are_clamped_into_expected_range() {
         let mut settings = RendererSettings::default();
-        settings.svgf_history_normal_reject_cos = 0.1;
-        settings.svgf_history_depth_reject_scale = 2.0;
+        settings.svgf_reprojection_error_threshold = 0.01;
+        settings.svgf_disocclusion_depth_threshold = 2.0;
+        settings.svgf_disocclusion_normal_threshold = 0.25;
+        settings.svgf_reactive_strength = 2.0;
+        settings.svgf_history_max_weight_dynamic = 2.0;
         let sanitized = sanitize_renderer_settings(settings);
-        assert_eq!(sanitized.svgf_history_normal_reject_cos, 0.5);
-        assert_eq!(sanitized.svgf_history_depth_reject_scale, 0.5);
+        assert_eq!(sanitized.svgf_reprojection_error_threshold, 0.25);
+        assert_eq!(sanitized.svgf_disocclusion_depth_threshold, 0.5);
+        assert_eq!(sanitized.svgf_disocclusion_normal_threshold, 0.5);
+        assert_eq!(sanitized.svgf_reactive_strength, 1.0);
+        assert_eq!(sanitized.svgf_history_max_weight_dynamic, 0.99);
+    }
+
+    #[test]
+    fn svgf_reprojection_error_upper_bound_is_clamped() {
+        let mut settings = RendererSettings::default();
+        settings.svgf_reprojection_error_threshold = 64.0;
+        let sanitized = sanitize_renderer_settings(settings);
+        assert_eq!(sanitized.svgf_reprojection_error_threshold, 8.0);
+    }
+
+    #[test]
+    fn svgf_dynamic_history_weight_lower_bound_is_clamped() {
+        let mut settings = RendererSettings::default();
+        settings.svgf_history_max_weight_dynamic = -1.0;
+        let sanitized = sanitize_renderer_settings(settings);
+        assert_eq!(sanitized.svgf_history_max_weight_dynamic, 0.0);
+    }
+
+    #[test]
+    fn svgf_diag_sample_interval_is_clamped_to_supported_range() {
+        let mut settings = RendererSettings::default();
+        settings.svgf_diag_sample_interval = 0;
+        let sanitized = sanitize_renderer_settings(settings);
+        assert_eq!(sanitized.svgf_diag_sample_interval, 1);
+
+        let mut settings = RendererSettings::default();
+        settings.svgf_diag_sample_interval = 99;
+        let sanitized = sanitize_renderer_settings(settings);
+        assert_eq!(sanitized.svgf_diag_sample_interval, 16);
     }
 }

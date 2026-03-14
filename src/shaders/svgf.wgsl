@@ -27,10 +27,19 @@ struct SvgfUniform {
     resolution_step: vec4<u32>,
     params: vec4<f32>,
     extras: vec4<f32>,
+    disocclusion: vec4<f32>,
 };
 
 struct SurfaceSample {
     normal_material: vec4<f32>,
+    surface_meta: vec4<u32>,
+};
+
+struct SvgfDiagStats {
+    accept_count: atomic<u32>,
+    disocclusion_count: atomic<u32>,
+    reactive_count: atomic<u32>,
+    pixel_count: atomic<u32>,
 };
 
 @group(0) @binding(0)
@@ -53,6 +62,8 @@ var<uniform> camera: CameraGpu;
 var<uniform> previous_camera: CameraGpu;
 @group(0) @binding(9)
 var<storage, read_write> debug_data: array<vec4<f32>>;
+@group(0) @binding(10)
+var<storage, read_write> svgf_diag_stats: SvgfDiagStats;
 
 const OVERLAY_MODE_PROBE: u32 = 1u;
 const OVERLAY_MODE_MOTION: u32 = 2u;
@@ -69,8 +80,16 @@ const REJECT_INVALID_PREVIOUS: u32 = 3u;
 const REJECT_DEPTH: u32 = 4u;
 const REJECT_NORMAL: u32 = 5u;
 const REJECT_MOTION: u32 = 6u;
+const REJECT_SURFACE_ID: u32 = 7u;
 
 const EDGE_NORMAL_COS_THRESHOLD: f32 = 0.9063078; // cos(25deg)
+const REACTIVE_PACK_SCALE: f32 = 1023.0;
+const REACTIVE_RATIO_THRESHOLD: f32 = 0.5;
+
+var<workgroup> diag_local_accept_count: atomic<u32>;
+var<workgroup> diag_local_disocclusion_count: atomic<u32>;
+var<workgroup> diag_local_reactive_count: atomic<u32>;
+var<workgroup> diag_local_pixel_count: atomic<u32>;
 
 fn in_bounds(pixel: vec2<i32>, resolution: vec2<i32>) -> bool {
     return all(pixel >= vec2<i32>(0)) && all(pixel < resolution);
@@ -119,18 +138,30 @@ fn write_svgf_target(pixel_index: u32, value: vec4<f32>) {
     }
 }
 
-fn history_normal_reject_cos() -> f32 {
-    return clamp(svgf.extras.z, 0.5, 0.999);
+fn history_reprojection_error_threshold() -> f32 {
+    return clamp(svgf.extras.z, 0.25, 8.0);
 }
 
-fn history_depth_reject_scale() -> f32 {
-    return clamp(svgf.extras.w, 0.01, 0.5);
+fn history_max_weight_dynamic() -> f32 {
+    return clamp(svgf.extras.w, 0.0, 0.99);
 }
 
-fn responsive_history_suppression(
+fn disocclusion_depth_threshold() -> f32 {
+    return clamp(svgf.disocclusion.x, 0.01, 0.5);
+}
+
+fn disocclusion_normal_threshold() -> f32 {
+    return clamp(svgf.disocclusion.y, 0.5, 0.999);
+}
+
+fn reactive_strength() -> f32 {
+    return clamp(svgf.disocclusion.z, 0.0, 1.0);
+}
+
+fn history_consistency_suppression(
     normal_cos: f32,
     depth_rel: f32,
-    motion_pixels: f32,
+    motion_error: f32,
     normal_threshold: f32,
     depth_threshold: f32,
 ) -> f32 {
@@ -140,7 +171,7 @@ fn responsive_history_suppression(
         1.0,
     );
     let depth_margin = clamp(1.0 - depth_rel / max(depth_threshold, 1.0e-6), 0.0, 1.0);
-    let motion_term = exp(-motion_pixels * 0.35);
+    let motion_term = exp(-motion_error / max(history_reprojection_error_threshold(), 1.0e-6));
     return clamp(normal_margin * depth_margin * motion_term, 0.0, 1.0);
 }
 
@@ -154,6 +185,37 @@ fn safe_normalize(v: vec3<f32>) -> vec3<f32> {
 
 fn luminance(color: vec3<f32>) -> f32 {
     return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+fn rgb_to_ycocg(color: vec3<f32>) -> vec3<f32> {
+    let y = dot(color, vec3<f32>(0.25, 0.5, 0.25));
+    let co = color.x * 0.5 - color.z * 0.5;
+    let cg = -color.x * 0.25 + color.y * 0.5 - color.z * 0.25;
+    return vec3<f32>(y, co, cg);
+}
+
+fn ycocg_to_rgb(ycocg: vec3<f32>) -> vec3<f32> {
+    let y = ycocg.x;
+    let co = ycocg.y;
+    let cg = ycocg.z;
+    let r = y + co - cg;
+    let g = y + cg;
+    let b = y - co - cg;
+    return vec3<f32>(r, g, b);
+}
+
+fn pack_reactive_clamp(reactive_mask: f32, clamp_delta: f32) -> f32 {
+    let reactive_q = floor(clamp(reactive_mask, 0.0, 1.0) * REACTIVE_PACK_SCALE + 0.5);
+    let clamp_q = clamp(clamp_delta, 0.0, 0.999999);
+    return reactive_q + clamp_q;
+}
+
+fn decode_reactive_mask_from_debug(packed: f32) -> f32 {
+    return clamp(floor(max(packed, 0.0)) / REACTIVE_PACK_SCALE, 0.0, 1.0);
+}
+
+fn decode_clamp_delta_from_debug(packed: f32) -> f32 {
+    return clamp(fract(max(packed, 0.0)), 0.0, 1.0);
 }
 
 fn reconstruct_world_position(pixel: vec2<i32>, depth: f32, cam: CameraGpu) -> vec3<f32> {
@@ -344,6 +406,9 @@ fn reject_reason_color(reason: u32) -> vec3<f32> {
         case REJECT_MOTION: {
             return vec3<f32>(0.98, 0.35, 0.65);
         }
+        case REJECT_SURFACE_ID: {
+            return vec3<f32>(0.82, 0.82, 0.82);
+        }
         default: {
             return vec3<f32>(0.12, 0.85, 0.24);
         }
@@ -364,15 +429,82 @@ fn svgf_init_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sample = accumulation[pixel_index];
     let current_surface = read_curr_surface(pixel_index);
     let current_variance = local_luminance_variance(pixel, resolution, width);
+    let current_valid = current_surface.normal_material.w > 0.0;
+    let current_normal = safe_normalize(current_surface.normal_material.xyz);
+    let current_depth = max(current_surface.normal_material.w, 1.0e-4);
 
     var temporal_color = sample.rgb;
     var temporal_variance = current_variance;
     var history_weight = 0.0;
     var reject_reason: u32 = REJECT_NONE;
     var motion_pixels = 0.0;
+    var roundtrip_error = 0.0;
+    var disocclusion_score = 0.0;
+
+    var neighborhood_min = vec3<f32>(1.0e30);
+    var neighborhood_max = vec3<f32>(-1.0e30);
+    var neighborhood_mean = vec3<f32>(0.0);
+    var neighborhood_mean_sq = vec3<f32>(0.0);
+    var neighborhood_count = 0.0;
+    let center_luma = luminance(sample.rgb);
+    var max_luma_delta = 0.0;
+    var edge_hits = 0.0;
+
+    for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
+        for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
+            let neighbor = pixel + vec2<i32>(ox, oy);
+            if !in_bounds(neighbor, resolution) {
+                continue;
+            }
+            let neighbor_index = pixel_index_of(neighbor, width);
+            let neighbor_surface = read_curr_surface(neighbor_index);
+            let neighbor_color = accumulation[neighbor_index].rgb;
+            max_luma_delta = max(max_luma_delta, abs(luminance(neighbor_color) - center_luma));
+
+            var skip_neighbor = false;
+            if current_valid && neighbor_surface.normal_material.w > 0.0 {
+                let neighbor_normal = safe_normalize(neighbor_surface.normal_material.xyz);
+                let normal_cos = dot(current_normal, neighbor_normal);
+                let depth_delta =
+                    abs(current_depth - neighbor_surface.normal_material.w) / current_depth;
+                if normal_cos < disocclusion_normal_threshold()
+                    || depth_delta > disocclusion_depth_threshold()
+                {
+                    edge_hits = edge_hits + 1.0;
+                }
+                if normal_cos < EDGE_NORMAL_COS_THRESHOLD
+                    || depth_delta > disocclusion_depth_threshold() * 1.2
+                {
+                    skip_neighbor = true;
+                }
+            }
+            if skip_neighbor {
+                continue;
+            }
+
+            let neighbor_ycocg = rgb_to_ycocg(neighbor_color);
+            neighborhood_min = min(neighborhood_min, neighbor_ycocg);
+            neighborhood_max = max(neighborhood_max, neighbor_ycocg);
+            neighborhood_mean = neighborhood_mean + neighbor_ycocg;
+            neighborhood_mean_sq = neighborhood_mean_sq + neighbor_ycocg * neighbor_ycocg;
+            neighborhood_count = neighborhood_count + 1.0;
+        }
+    }
+
+    let edge_ratio = clamp(edge_hits / max(neighborhood_count - 1.0, 1.0), 0.0, 1.0);
+    let luma_ratio = clamp(
+        max_luma_delta / max(sqrt(max(current_variance, 1.0e-6)) + 1.0e-4, 1.0e-4),
+        0.0,
+        1.0,
+    );
+    let reactive_mask = clamp(
+        (edge_ratio * 0.6 + luma_ratio * 0.4) * reactive_strength(),
+        0.0,
+        1.0,
+    );
 
     if tracer.resolution_frame_chunks.z > 0u {
-        if current_surface.normal_material.w <= 0.0 {
+        if !current_valid {
             reject_reason = REJECT_INVALID_CURRENT;
         } else {
             let world_pos = reconstruct_world_position(pixel, current_surface.normal_material.w, camera);
@@ -385,21 +517,26 @@ fn svgf_init_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let previous_surface = read_prev_surface(previous_index);
                 if previous_surface.normal_material.w <= 0.0 {
                     reject_reason = REJECT_INVALID_PREVIOUS;
+                } else if previous_surface.surface_meta.x != current_surface.surface_meta.x {
+                    reject_reason = REJECT_SURFACE_ID;
                 } else {
                     let current_normal = safe_normalize(current_surface.normal_material.xyz);
                     let previous_normal = safe_normalize(previous_surface.normal_material.xyz);
                     let normal_cos = clamp(dot(current_normal, previous_normal), 0.0, 1.0);
-                    let normal_reject = history_normal_reject_cos();
-                    let depth_reject = history_depth_reject_scale();
+                    let normal_reject = disocclusion_normal_threshold();
+                    let depth_reject = disocclusion_depth_threshold();
                     let depth_rel = abs(current_surface.normal_material.w - previous_surface.normal_material.w)
                         / max(current_surface.normal_material.w, 1.0e-4);
+                    let reprojection_error_threshold = history_reprojection_error_threshold()
+                        * (1.0 + 0.15 * sqrt(max(current_surface.normal_material.w, 1.0)));
 
-                    motion_pixels = length(
+                    let curr_to_prev_motion = length(
                         vec2<f32>(
                             f32(pixel.x - previous_pixel.x),
                             f32(pixel.y - previous_pixel.y),
                         ),
                     );
+                    motion_pixels = curr_to_prev_motion;
 
                     var motion_consistent = true;
                     let previous_world = reconstruct_world_position(
@@ -409,19 +546,34 @@ fn svgf_init_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     );
                     let roundtrip_pixel = project_world_to_pixel(previous_world, camera, resolution);
                     if in_bounds(roundtrip_pixel, resolution) {
-                        let roundtrip_error = length(
+                        roundtrip_error = length(
                             vec2<f32>(
                                 f32(roundtrip_pixel.x - pixel.x),
                                 f32(roundtrip_pixel.y - pixel.y),
                             ),
                         );
                         motion_pixels = max(motion_pixels, roundtrip_error);
-                        let motion_limit =
-                            1.5 + 0.6 * sqrt(max(current_surface.normal_material.w, 1.0));
-                        motion_consistent = roundtrip_error <= motion_limit;
+                        let motion_divergence = abs(roundtrip_error - curr_to_prev_motion);
+                        motion_consistent = roundtrip_error <= reprojection_error_threshold
+                            && motion_divergence <= reprojection_error_threshold;
                     } else {
                         motion_consistent = false;
                     }
+
+                    let depth_score =
+                        clamp(depth_rel / max(depth_reject, 1.0e-6), 0.0, 2.0);
+                    let normal_score = clamp(
+                        (normal_reject - normal_cos) / max(1.0 - normal_reject, 1.0e-6),
+                        0.0,
+                        2.0,
+                    );
+                    let motion_score = clamp(
+                        roundtrip_error / max(reprojection_error_threshold, 1.0e-6),
+                        0.0,
+                        2.0,
+                    );
+                    disocclusion_score =
+                        clamp(max(depth_score, max(normal_score, motion_score)) * 0.5, 0.0, 1.0);
 
                     if normal_cos < normal_reject {
                         reject_reason = REJECT_NORMAL;
@@ -436,7 +588,8 @@ fn svgf_init_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
                         let normal_term = pow(normal_cos, max(svgf.params.x, 0.05));
                         let depth_term = exp(-depth_rel * (24.0 / max(svgf.params.y, 1.0)));
-                        let motion_term = exp(-motion_pixels * 0.35);
+                        let motion_term =
+                            exp(-roundtrip_error / max(reprojection_error_threshold, 1.0e-6));
                         let variance_term = clamp(
                             sigma_current / (sigma_current + sigma_previous + 1.0e-6),
                             0.15,
@@ -444,13 +597,18 @@ fn svgf_init_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                         );
                         let camera_motion_dampen =
                             select(1.0, 0.65, tracer.debug_map_stats.w > 0.5);
-                        let responsive = responsive_history_suppression(
+                        let consistency = history_consistency_suppression(
                             normal_cos,
                             depth_rel,
-                            motion_pixels,
+                            roundtrip_error,
                             normal_reject,
                             depth_reject,
                         );
+                        let disocclusion_dampen =
+                            exp(-disocclusion_score * (1.5 + 2.0 * reactive_strength()));
+                        let reactive_dampen = 1.0 - reactive_mask;
+                        let dynamic_cap = history_max_weight_dynamic()
+                            * (1.0 - 0.75 * reactive_mask);
 
                         history_weight = clamp(
                             normal_term
@@ -458,11 +616,13 @@ fn svgf_init_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                                 * motion_term
                                 * variance_term
                                 * camera_motion_dampen
-                                * responsive,
+                                * consistency
+                                * disocclusion_dampen
+                                * reactive_dampen,
                             0.0,
-                            0.97,
+                            dynamic_cap,
                         );
-                        if responsive < 0.03 || history_weight < 0.005 {
+                        if history_weight < 0.005 || reactive_mask > 0.995 {
                             history_weight = 0.0;
                             reject_reason = REJECT_MOTION;
                         }
@@ -478,44 +638,6 @@ fn svgf_init_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    let current_valid = current_surface.normal_material.w > 0.0;
-    let current_normal = safe_normalize(current_surface.normal_material.xyz);
-    let current_depth = max(current_surface.normal_material.w, 1.0e-4);
-    var neighborhood_min = vec3<f32>(1.0e30, 1.0e30, 1.0e30);
-    var neighborhood_max = vec3<f32>(-1.0e30, -1.0e30, -1.0e30);
-    var neighborhood_mean = vec3<f32>(0.0);
-    var neighborhood_mean_sq = vec3<f32>(0.0);
-    var neighborhood_count = 0.0;
-
-    for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
-        for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
-            let neighbor = pixel + vec2<i32>(ox, oy);
-            if !in_bounds(neighbor, resolution) {
-                continue;
-            }
-            let neighbor_index = pixel_index_of(neighbor, width);
-            let neighbor_surface = read_curr_surface(neighbor_index);
-
-            if current_valid && neighbor_surface.normal_material.w > 0.0 {
-                let neighbor_normal = safe_normalize(neighbor_surface.normal_material.xyz);
-                if dot(current_normal, neighbor_normal) < EDGE_NORMAL_COS_THRESHOLD {
-                    continue;
-                }
-                let depth_delta = abs(current_depth - neighbor_surface.normal_material.w) / current_depth;
-                if depth_delta > 0.12 {
-                    continue;
-                }
-            }
-
-            let neighbor_color = accumulation[neighbor_index].rgb;
-            neighborhood_min = min(neighborhood_min, neighbor_color);
-            neighborhood_max = max(neighborhood_max, neighbor_color);
-            neighborhood_mean = neighborhood_mean + neighbor_color;
-            neighborhood_mean_sq = neighborhood_mean_sq + neighbor_color * neighbor_color;
-            neighborhood_count = neighborhood_count + 1.0;
-        }
-    }
-
     var clamp_delta = 0.0;
     if neighborhood_count > 0.0 {
         let inv_count = 1.0 / neighborhood_count;
@@ -528,7 +650,8 @@ fn svgf_init_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let clamp_sigma = max(svgf.params.w, 0.25);
         let lower = max(neighborhood_min, mean - sigma * clamp_sigma);
         let upper = min(neighborhood_max, mean + sigma * clamp_sigma);
-        let clamped = clamp(temporal_color, lower, upper);
+        let clamped_ycocg = clamp(rgb_to_ycocg(temporal_color), lower, upper);
+        let clamped = ycocg_to_rgb(clamped_ycocg);
         clamp_delta = luminance(abs(clamped - temporal_color));
         temporal_color = clamped;
     }
@@ -539,12 +662,12 @@ fn svgf_init_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     temporal_variance = max(temporal_variance, 1.0e-6);
     write_svgf_target(pixel_index, vec4<f32>(temporal_color, temporal_variance));
 
-    let motion_debug = clamp(motion_pixels * 0.125, 0.0, 1.0);
+    let motion_debug = clamp(max(motion_pixels, roundtrip_error) * 0.125, 0.0, 1.0);
     debug_data[pixel_index] = vec4<f32>(
         motion_debug,
         history_weight,
         f32(reject_reason),
-        clamp_delta,
+        pack_reactive_clamp(reactive_mask, clamp_delta),
     );
 }
 
@@ -570,10 +693,11 @@ fn svgf_atrous_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var color_sum = center_value.rgb * center_weight;
     var variance_sum = center_value.a * center_weight;
 
-    var neighborhood_min = center_value.rgb;
-    var neighborhood_max = center_value.rgb;
-    var neighborhood_mean = center_value.rgb;
-    var neighborhood_mean_sq = center_value.rgb * center_value.rgb;
+    let center_ycocg = rgb_to_ycocg(center_value.rgb);
+    var neighborhood_min = center_ycocg;
+    var neighborhood_max = center_ycocg;
+    var neighborhood_mean = center_ycocg;
+    var neighborhood_mean_sq = center_ycocg * center_ycocg;
     var neighborhood_count = 1.0;
 
     for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
@@ -594,7 +718,7 @@ fn svgf_atrous_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             if center_surface.normal_material.w > 0.0 && neighbor_surface.normal_material.w > 0.0 {
                 let center_normal = safe_normalize(center_surface.normal_material.xyz);
                 let neighbor_normal = safe_normalize(neighbor_surface.normal_material.xyz);
-                let normal_gate = max(EDGE_NORMAL_COS_THRESHOLD, history_normal_reject_cos());
+                let normal_gate = max(EDGE_NORMAL_COS_THRESHOLD, disocclusion_normal_threshold());
                 let normal_cos = dot(center_normal, neighbor_normal);
                 if normal_cos < normal_gate {
                     let normal_gap = (normal_gate - normal_cos) / max(normal_gate, 1.0e-6);
@@ -604,7 +728,7 @@ fn svgf_atrous_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let center_depth = max(center_surface.normal_material.w, 1.0e-4);
                 let depth_rel = abs(center_surface.normal_material.w - neighbor_surface.normal_material.w)
                     / center_depth;
-                let depth_gate = history_depth_reject_scale() * 1.5;
+                let depth_gate = disocclusion_depth_threshold() * 1.5;
                 if depth_rel > depth_gate {
                     let depth_excess = (depth_rel - depth_gate) / max(depth_gate, 1.0e-6);
                     edge_gate_weight = edge_gate_weight * exp(-depth_excess * 12.0);
@@ -628,10 +752,11 @@ fn svgf_atrous_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             color_sum = color_sum + neighbor_value.rgb * sample_weight;
             variance_sum = variance_sum + neighbor_value.a * sample_weight;
 
-            neighborhood_min = min(neighborhood_min, neighbor_value.rgb);
-            neighborhood_max = max(neighborhood_max, neighbor_value.rgb);
-            neighborhood_mean = neighborhood_mean + neighbor_value.rgb;
-            neighborhood_mean_sq = neighborhood_mean_sq + neighbor_value.rgb * neighbor_value.rgb;
+            let neighbor_ycocg = rgb_to_ycocg(neighbor_value.rgb);
+            neighborhood_min = min(neighborhood_min, neighbor_ycocg);
+            neighborhood_max = max(neighborhood_max, neighbor_ycocg);
+            neighborhood_mean = neighborhood_mean + neighbor_ycocg;
+            neighborhood_mean_sq = neighborhood_mean_sq + neighbor_ycocg * neighbor_ycocg;
             neighborhood_count = neighborhood_count + 1.0;
         }
     }
@@ -646,18 +771,75 @@ fn svgf_atrous_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let clamp_sigma = max(svgf.params.w, 0.0);
     let lower = max(neighborhood_min, mean - sigma * clamp_sigma);
     let upper = min(neighborhood_max, mean + sigma * clamp_sigma);
-    let clamped = clamp(filtered, lower, upper);
+    let filtered_ycocg = rgb_to_ycocg(filtered);
+    let clamped = ycocg_to_rgb(clamp(filtered_ycocg, lower, upper));
     let clamp_delta = luminance(abs(clamped - filtered));
 
     write_svgf_target(pixel_index, vec4<f32>(clamped, max(filtered_variance, 1.0e-6)));
 
     let previous_debug = debug_data[pixel_index];
+    let reactive_mask = decode_reactive_mask_from_debug(previous_debug.w);
+    let previous_clamp_delta = decode_clamp_delta_from_debug(previous_debug.w);
     debug_data[pixel_index] = vec4<f32>(
         previous_debug.x,
         previous_debug.y,
         previous_debug.z,
-        max(previous_debug.w, clamp_delta),
+        pack_reactive_clamp(reactive_mask, max(previous_clamp_delta, clamp_delta)),
     );
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn svgf_diag_reduce_cs(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    if local_index == 0u {
+        atomicStore(&diag_local_accept_count, 0u);
+        atomicStore(&diag_local_disocclusion_count, 0u);
+        atomicStore(&diag_local_reactive_count, 0u);
+        atomicStore(&diag_local_pixel_count, 0u);
+    }
+    workgroupBarrier();
+
+    let width = tracer.resolution_frame_chunks.x;
+    let height = tracer.resolution_frame_chunks.y;
+    if gid.x < width && gid.y < height {
+        let pixel_index = gid.y * width + gid.x;
+        let debug = debug_data[pixel_index];
+        let reject_reason = u32(round(debug.z));
+        let history_weight = debug.y;
+        let reactive_mask = decode_reactive_mask_from_debug(debug.w);
+
+        if reject_reason == REJECT_NONE && history_weight > 0.0 {
+            atomicAdd(&diag_local_accept_count, 1u);
+        }
+        if reject_reason == REJECT_OOB
+            || reject_reason == REJECT_DEPTH
+            || reject_reason == REJECT_NORMAL
+            || reject_reason == REJECT_MOTION
+            || reject_reason == REJECT_SURFACE_ID
+        {
+            atomicAdd(&diag_local_disocclusion_count, 1u);
+        }
+        if reactive_mask > REACTIVE_RATIO_THRESHOLD {
+            atomicAdd(&diag_local_reactive_count, 1u);
+        }
+        atomicAdd(&diag_local_pixel_count, 1u);
+    }
+
+    workgroupBarrier();
+    if local_index == 0u {
+        atomicAdd(&svgf_diag_stats.accept_count, atomicLoad(&diag_local_accept_count));
+        atomicAdd(
+            &svgf_diag_stats.disocclusion_count,
+            atomicLoad(&diag_local_disocclusion_count),
+        );
+        atomicAdd(
+            &svgf_diag_stats.reactive_count,
+            atomicLoad(&diag_local_reactive_count),
+        );
+        atomicAdd(&svgf_diag_stats.pixel_count, atomicLoad(&diag_local_pixel_count));
+    }
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -695,7 +877,8 @@ fn svgf_resolve_cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             color = reject_reason_color(u32(round(debug.z)));
         }
         case OVERLAY_MODE_CLAMP_DIFF: {
-            let clamp_energy = 1.0 - exp(-debug.w * 6.0);
+            let clamp_delta = decode_clamp_delta_from_debug(debug.w);
+            let clamp_energy = 1.0 - exp(-clamp_delta * 6.0);
             color = heatmap(clamp(clamp_energy, 0.0, 1.0));
         }
         case OVERLAY_MODE_TEMPORAL_VARIANCE: {

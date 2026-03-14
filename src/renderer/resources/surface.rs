@@ -2,7 +2,9 @@ use bytemuck::bytes_of;
 use wgpu::util::DeviceExt;
 
 use crate::renderer::RendererSettings;
-use crate::renderer::protocol::{GiReservoirGpu, ReservoirGpu, SurfaceSampleGpu, SvgfUniform};
+use crate::renderer::protocol::{
+    GiReservoirGpu, ReservoirGpu, SurfaceSampleGpu, SvgfDiagStatsGpu, SvgfUniform,
+};
 
 use super::restir_storage::RestirStorage;
 
@@ -51,6 +53,9 @@ pub struct RebuiltSurfaceResources {
     pub svgf_ping_buffer: wgpu::Buffer,
     pub svgf_pong_buffer: wgpu::Buffer,
     pub svgf_debug_buffer: wgpu::Buffer,
+    pub svgf_diag_stats_buffer: wgpu::Buffer,
+    pub svgf_diag_stats_readback_buffers: [wgpu::Buffer; 2],
+    pub svgf_diag_stats_readback_size: u64,
     pub svgf_init_uniform_buffer: wgpu::Buffer,
     pub svgf_resolve_uniform_buffer: wgpu::Buffer,
     pub svgf_atrous_uniform_buffers: Vec<wgpu::Buffer>,
@@ -86,6 +91,9 @@ pub fn rebuild_surface_resources(
     let svgf_ping_buffer = create_svgf_buffer(device, state.width, state.height);
     let svgf_pong_buffer = create_svgf_buffer(device, state.width, state.height);
     let svgf_debug_buffer = create_svgf_buffer(device, state.width, state.height);
+    let svgf_diag_stats_buffer = create_svgf_diag_stats_buffer(device);
+    let (svgf_diag_stats_readback_buffers, svgf_diag_stats_readback_size) =
+        create_svgf_diag_stats_readback_buffers(device);
     let svgf_init_uniform_buffer =
         create_svgf_uniform_buffer(device, state.width, state.height, 1, 0, settings);
     let svgf_resolve_uniform_buffer = create_svgf_uniform_buffer(
@@ -107,6 +115,9 @@ pub fn rebuild_surface_resources(
         svgf_ping_buffer,
         svgf_pong_buffer,
         svgf_debug_buffer,
+        svgf_diag_stats_buffer,
+        svgf_diag_stats_readback_buffers,
+        svgf_diag_stats_readback_size,
         svgf_init_uniform_buffer,
         svgf_resolve_uniform_buffer,
         svgf_atrous_uniform_buffers,
@@ -170,8 +181,17 @@ pub fn svgf_anti_ghosting_extras(settings: &RendererSettings) -> [f32; 4] {
     [
         settings.svgf_invalid_variance_boost,
         settings.svgf_center_weight,
-        settings.svgf_history_normal_reject_cos,
-        settings.svgf_history_depth_reject_scale,
+        settings.svgf_reprojection_error_threshold,
+        settings.svgf_history_max_weight_dynamic,
+    ]
+}
+
+pub fn svgf_disocclusion_controls(settings: &RendererSettings) -> [f32; 4] {
+    [
+        settings.svgf_disocclusion_depth_threshold,
+        settings.svgf_disocclusion_normal_threshold,
+        settings.svgf_reactive_strength,
+        0.0,
     ]
 }
 
@@ -183,8 +203,10 @@ pub fn responsive_history_weight(
     motion_pixels: f32,
     settings: &RendererSettings,
 ) -> f32 {
-    let normal_threshold = settings.svgf_history_normal_reject_cos.clamp(0.5, 0.999);
-    let depth_threshold = settings.svgf_history_depth_reject_scale.clamp(0.01, 0.5);
+    let normal_threshold = settings
+        .svgf_disocclusion_normal_threshold
+        .clamp(0.5, 0.999);
+    let depth_threshold = settings.svgf_disocclusion_depth_threshold.clamp(0.01, 0.5);
     if normal_cos < normal_threshold || depth_relative_delta > depth_threshold {
         return 0.0;
     }
@@ -193,8 +215,11 @@ pub fn responsive_history_weight(
         ((normal_cos - normal_threshold) / (1.0 - normal_threshold)).clamp(0.0, 1.0);
     let depth_margin = (1.0 - depth_relative_delta / depth_threshold).clamp(0.0, 1.0);
     let motion_term = (-motion_pixels * 0.35).exp().clamp(0.0, 1.0);
-    let reactive_term = (normal_margin * depth_margin * motion_term).clamp(0.0, 1.0);
-    (base_weight.clamp(0.0, 1.0) * reactive_term).clamp(0.0, 1.0)
+    let reactive_term = settings.svgf_reactive_strength.clamp(0.0, 1.0);
+    let dynamic_cap = settings.svgf_history_max_weight_dynamic.clamp(0.0, 0.99);
+    let suppression =
+        (normal_margin * depth_margin * motion_term * (1.0 - 0.7 * reactive_term)).clamp(0.0, 1.0);
+    (base_weight.clamp(0.0, 1.0) * suppression).min(dynamic_cap)
 }
 
 pub fn svgf_uniform(
@@ -213,6 +238,7 @@ pub fn svgf_uniform(
             settings.svgf_clamp_sigma,
         ],
         extras: svgf_anti_ghosting_extras(settings),
+        disocclusion: svgf_disocclusion_controls(settings),
     }
 }
 
@@ -295,9 +321,39 @@ pub fn create_svgf_buffer(device: &wgpu::Device, width: u32, height: u32) -> wgp
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("svgf-buffer"),
         size: byte_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
+}
+
+pub fn create_svgf_diag_stats_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    let byte_size = std::mem::size_of::<SvgfDiagStatsGpu>() as u64;
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("svgf-diag-stats-buffer"),
+        size: byte_size,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
+pub fn create_svgf_diag_stats_readback_buffers(device: &wgpu::Device) -> ([wgpu::Buffer; 2], u64) {
+    let byte_size = std::mem::size_of::<SvgfDiagStatsGpu>() as u64;
+    let buffers = std::array::from_fn(|index| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(match index {
+                0 => "svgf-diag-stats-readback-buffer-a",
+                _ => "svgf-diag-stats-readback-buffer-b",
+            }),
+            size: byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    });
+    (buffers, byte_size)
 }
 
 #[cfg(test)]
@@ -381,17 +437,21 @@ mod tests {
         let mut settings = RendererSettings::default();
         settings.svgf_invalid_variance_boost = 5.5;
         settings.svgf_center_weight = 3.0;
-        settings.svgf_history_normal_reject_cos = 0.9;
-        settings.svgf_history_depth_reject_scale = 0.2;
+        settings.svgf_reprojection_error_threshold = 1.9;
+        settings.svgf_history_max_weight_dynamic = 0.77;
+        settings.svgf_disocclusion_depth_threshold = 0.18;
+        settings.svgf_disocclusion_normal_threshold = 0.92;
+        settings.svgf_reactive_strength = 0.85;
 
         let uniform = svgf_uniform(640, 360, 1, 0, &settings);
-        assert_eq!(uniform.extras, [5.5, 3.0, 0.9, 0.2]);
+        assert_eq!(uniform.extras, [5.5, 3.0, 1.9, 0.77]);
+        assert_eq!(uniform.disocclusion, [0.18, 0.92, 0.85, 0.0]);
     }
 
     #[test]
     fn responsive_history_weight_rejects_when_normal_below_threshold() {
         let mut settings = RendererSettings::default();
-        settings.svgf_history_normal_reject_cos = 0.88;
+        settings.svgf_disocclusion_normal_threshold = 0.88;
 
         let weight = responsive_history_weight(0.8, 0.87, 0.02, 0.0, &settings);
         assert_eq!(weight, 0.0);
@@ -400,7 +460,7 @@ mod tests {
     #[test]
     fn responsive_history_weight_rejects_when_depth_above_threshold() {
         let mut settings = RendererSettings::default();
-        settings.svgf_history_depth_reject_scale = 0.09;
+        settings.svgf_disocclusion_depth_threshold = 0.09;
 
         let weight = responsive_history_weight(0.8, 0.95, 0.11, 0.0, &settings);
         assert_eq!(weight, 0.0);
@@ -418,6 +478,14 @@ mod tests {
     fn responsive_history_weight_stays_within_unit_interval() {
         let settings = RendererSettings::default();
         let weight = responsive_history_weight(2.5, 0.99, 0.001, -3.0, &settings);
-        assert!((0.0..=1.0).contains(&weight));
+        assert!((0.0..=settings.svgf_history_max_weight_dynamic).contains(&weight));
+    }
+
+    #[test]
+    fn responsive_history_weight_respects_dynamic_cap() {
+        let mut settings = RendererSettings::default();
+        settings.svgf_history_max_weight_dynamic = 0.42;
+        let weight = responsive_history_weight(0.98, 0.99, 0.0, 0.0, &settings);
+        assert!(weight <= 0.42);
     }
 }

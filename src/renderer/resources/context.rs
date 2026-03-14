@@ -67,6 +67,9 @@ pub struct SurfaceHistoryResources {
     pub svgf_ping_buffer: wgpu::Buffer,
     pub svgf_pong_buffer: wgpu::Buffer,
     pub svgf_debug_buffer: wgpu::Buffer,
+    pub svgf_diag_stats_buffer: wgpu::Buffer,
+    pub svgf_diag_stats_readback_buffers: [wgpu::Buffer; 2],
+    pub svgf_diag_stats_readback_size: u64,
     pub svgf_init_uniform_buffer: wgpu::Buffer,
     pub svgf_resolve_uniform_buffer: wgpu::Buffer,
     pub svgf_atrous_uniform_buffers: Vec<wgpu::Buffer>,
@@ -82,6 +85,9 @@ impl From<RebuiltSurfaceResources> for SurfaceHistoryResources {
             svgf_ping_buffer: value.svgf_ping_buffer,
             svgf_pong_buffer: value.svgf_pong_buffer,
             svgf_debug_buffer: value.svgf_debug_buffer,
+            svgf_diag_stats_buffer: value.svgf_diag_stats_buffer,
+            svgf_diag_stats_readback_buffers: value.svgf_diag_stats_readback_buffers,
+            svgf_diag_stats_readback_size: value.svgf_diag_stats_readback_size,
             svgf_init_uniform_buffer: value.svgf_init_uniform_buffer,
             svgf_resolve_uniform_buffer: value.svgf_resolve_uniform_buffer,
             svgf_atrous_uniform_buffers: value.svgf_atrous_uniform_buffers,
@@ -151,6 +157,7 @@ impl RendererResourceContext {
             svgf_ping_buffer: &self.surface.svgf_ping_buffer,
             svgf_pong_buffer: &self.surface.svgf_pong_buffer,
             svgf_debug_buffer: &self.surface.svgf_debug_buffer,
+            svgf_diag_stats_buffer: &self.surface.svgf_diag_stats_buffer,
             restir_bindings: self.surface.restir_storage.bindings(),
         }
     }

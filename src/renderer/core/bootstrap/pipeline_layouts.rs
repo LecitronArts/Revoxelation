@@ -331,6 +331,16 @@ fn svgf_bind_group_layout_entries(
             },
             count: None,
         },
+        wgpu::BindGroupLayoutEntry {
+            binding: svgf::DIAG_STATS,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
     ]
 }
 
@@ -385,5 +395,23 @@ mod tests {
     #[test]
     fn svgf_layout_binding_order_matches_bind_group_builder_order() {
         assert_eq!(svgf_layout_binding_order(), svgf_bind_group_binding_order());
+    }
+
+    #[test]
+    fn svgf_layout_exposes_diag_stats_storage_binding() {
+        let entries = svgf_bind_group_layout_entries(wgpu::TextureFormat::Rgba8Unorm);
+        let entry = entries
+            .iter()
+            .find(|item| item.binding == svgf::DIAG_STATS)
+            .expect("missing svgf diag stats binding");
+        assert_eq!(entry.visibility, wgpu::ShaderStages::COMPUTE);
+        assert_eq!(
+            entry.ty,
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            }
+        );
     }
 }

@@ -7,6 +7,7 @@ pub(super) struct ComputePipelineSetup {
     pub svgf_init_pipeline: wgpu::ComputePipeline,
     pub svgf_atrous_pipeline: wgpu::ComputePipeline,
     pub svgf_resolve_pipeline: wgpu::ComputePipeline,
+    pub svgf_diag_reduce_pipeline: wgpu::ComputePipeline,
 }
 
 pub(super) fn create_compute_pipelines(
@@ -49,6 +50,14 @@ pub(super) fn create_compute_pipelines(
         entry_point: "svgf_resolve_cs",
         compilation_options: wgpu::PipelineCompilationOptions::default(),
     });
+    let svgf_diag_reduce_pipeline =
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("svgf-diag-reduce-pipeline"),
+            layout: Some(&layouts.svgf_pipeline_layout),
+            module: &shaders.svgf_shader,
+            entry_point: "svgf_diag_reduce_cs",
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        });
 
     ComputePipelineSetup {
         trace_pipeline,
@@ -56,5 +65,6 @@ pub(super) fn create_compute_pipelines(
         svgf_init_pipeline,
         svgf_atrous_pipeline,
         svgf_resolve_pipeline,
+        svgf_diag_reduce_pipeline,
     }
 }

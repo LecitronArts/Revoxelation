@@ -1,6 +1,22 @@
 [package]
-name = "Revoxelation"
+name = "revoxelation"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0"
+bytemuck = { version = "1.16", features = ["derive"] }
+dashmap = "6.1"
+env_logger = "0.11"
+egui = "0.28"
+egui-wgpu = "0.28"
+egui-winit = "0.28"
+glam = { version = "0.30", features = ["bytemuck"] }
+hecs = "0.10"
+log = "0.4"
+noise = "0.9"
+pollster = "0.4"
+rand = "0.9"
+rayon = "1.10"
+wgpu = "0.20"
+winit = "0.29"

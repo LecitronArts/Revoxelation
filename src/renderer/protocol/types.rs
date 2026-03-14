@@ -94,6 +94,7 @@ pub struct SvgfUniform {
     pub resolution_step: [u32; 4],
     pub params: [f32; 4],
     pub extras: [f32; 4],
+    pub disocclusion: [f32; 4],
 }
 
 impl Default for SvgfUniform {
@@ -101,7 +102,8 @@ impl Default for SvgfUniform {
         Self {
             resolution_step: [1, 1, 1, 0],
             params: [1.5, 96.0, 2.0, 2.25],
-            extras: [3.5, 4.0, 0.0, 0.0],
+            extras: [3.5, 4.0, 1.5, 0.9],
+            disocclusion: [0.10, 0.85, 0.65, 0.0],
         }
     }
 }
@@ -190,12 +192,14 @@ pub struct GiReservoirGpu {
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct SurfaceSampleGpu {
     pub normal_material: [f32; 4],
+    pub surface_meta: [u32; 4],
 }
 
 impl SurfaceSampleGpu {
     pub const fn empty() -> Self {
         Self {
             normal_material: [0.0, 0.0, 0.0, -1.0],
+            surface_meta: [0, 0, 0, 0],
         }
     }
 }
@@ -204,4 +208,13 @@ impl SurfaceSampleGpu {
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct MotionVectorGpu {
     pub velocity_depth: [f32; 4],
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct SvgfDiagStatsGpu {
+    pub accept_count: u32,
+    pub disocclusion_count: u32,
+    pub reactive_count: u32,
+    pub pixel_count: u32,
 }

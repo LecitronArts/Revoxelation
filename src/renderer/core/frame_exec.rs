@@ -7,12 +7,13 @@ use crate::renderer::passes::{
     DEFAULT_WORKGROUP_SIZE, DispatchGrid, PrepareContext as PassPrepareContext,
     RecordContext as PassRecordContext, RenderPass,
 };
-use crate::renderer::protocol::{CameraGpu, TracerUniform, encode_history_flags};
+use crate::renderer::protocol::{CameraGpu, SvgfDiagStatsGpu, TracerUniform, encode_history_flags};
 use crate::renderer::resources::surface::{svgf_atrous_step, svgf_uniform};
 
 use super::state::{
     FrameContext, RenderDiagnosticsSummary, Renderer, RendererDiagEvent, RendererDiagEventSnapshot,
-    RendererRuntimeContext, SVGF_MAX_ATROUS_PASSES,
+    RendererRuntimeContext, SVGF_DIAG_READBACK_SLOT_COUNT, SVGF_MAX_ATROUS_PASSES,
+    SvgfDiagReadbackStage, SvgfDiagnosticsSnapshot,
 };
 use super::world_ops;
 
@@ -27,30 +28,119 @@ pub(super) enum RenderExecutionAction {
 
 pub(super) type RenderExecutionSummary = RenderDiagnosticsSummary;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct RenderDiagnosticsSnapshot {
     pub summary: RenderExecutionSummary,
     pub trace_len: usize,
 }
 
-pub(super) fn summarize_render_execution(frame_plan: &FramePlan) -> RenderExecutionSummary {
+const SVGF_DIAG_STATS_SIZE: usize = std::mem::size_of::<SvgfDiagStatsGpu>();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadbackPollResult {
+    Pending,
+    Ready,
+    Failed,
+}
+
+fn should_sample_svgf_diagnostics(frame_index: u32, interval: u32, run_svgf: bool) -> bool {
+    if !run_svgf {
+        return false;
+    }
+    frame_index % interval.max(1) == 0
+}
+
+fn promote_readback_stage(
+    current: SvgfDiagReadbackStage,
+    poll_result: ReadbackPollResult,
+) -> SvgfDiagReadbackStage {
+    match (current, poll_result) {
+        (SvgfDiagReadbackStage::Pending, ReadbackPollResult::Ready) => SvgfDiagReadbackStage::Ready,
+        (SvgfDiagReadbackStage::Pending, ReadbackPollResult::Failed) => {
+            SvgfDiagReadbackStage::Consumed
+        }
+        (SvgfDiagReadbackStage::Pending, ReadbackPollResult::Pending) => {
+            SvgfDiagReadbackStage::Pending
+        }
+        (stage, _) => stage,
+    }
+}
+
+fn decode_svgf_diag_stats_from_bytes(bytes: &[u8]) -> Option<SvgfDiagStatsGpu> {
+    if bytes.len() < SVGF_DIAG_STATS_SIZE {
+        return None;
+    }
+
+    Some(SvgfDiagStatsGpu {
+        accept_count: u32::from_le_bytes(bytes[0..4].try_into().ok()?),
+        disocclusion_count: u32::from_le_bytes(bytes[4..8].try_into().ok()?),
+        reactive_count: u32::from_le_bytes(bytes[8..12].try_into().ok()?),
+        pixel_count: u32::from_le_bytes(bytes[12..16].try_into().ok()?),
+    })
+}
+
+fn snapshot_from_svgf_diag_stats(stats: SvgfDiagStatsGpu) -> SvgfDiagnosticsSnapshot {
+    if stats.pixel_count == 0 {
+        return SvgfDiagnosticsSnapshot::default();
+    }
+
+    let pixel_count = stats.pixel_count as f32;
+    SvgfDiagnosticsSnapshot {
+        history_accept_rate: stats.accept_count.min(stats.pixel_count) as f32 / pixel_count,
+        disocclusion_ratio: stats.disocclusion_count.min(stats.pixel_count) as f32 / pixel_count,
+        reactive_ratio: stats.reactive_count.min(stats.pixel_count) as f32 / pixel_count,
+    }
+}
+
+fn merge_svgf_diag_snapshot(
+    previous: Option<SvgfDiagnosticsSnapshot>,
+    incoming: Option<SvgfDiagnosticsSnapshot>,
+    apply_snapshot: bool,
+) -> Option<SvgfDiagnosticsSnapshot> {
+    if !apply_snapshot {
+        return previous;
+    }
+    incoming.or(previous)
+}
+
+fn render_metrics_or_zero(
+    frame_plan: &FramePlan,
+    metrics: Option<SvgfDiagnosticsSnapshot>,
+) -> SvgfDiagnosticsSnapshot {
+    if !frame_plan.passes.run_svgf {
+        return SvgfDiagnosticsSnapshot::default();
+    }
+    metrics.unwrap_or_default()
+}
+
+pub(super) fn summarize_render_execution(
+    frame_plan: &FramePlan,
+    metrics: Option<SvgfDiagnosticsSnapshot>,
+) -> RenderExecutionSummary {
     let run_svgf = frame_plan.passes.run_svgf;
     let svgf_passes = if run_svgf {
         frame_plan.svgf_passes.min(SVGF_MAX_ATROUS_PASSES)
     } else {
         0
     };
+    let metrics = render_metrics_or_zero(frame_plan, metrics);
 
     RenderExecutionSummary {
         run_trace: frame_plan.passes.run_trace,
         run_reistir: frame_plan.passes.run_reistir,
         run_svgf,
         svgf_passes,
+        history_accept_rate: metrics.history_accept_rate,
+        disocclusion_ratio: metrics.disocclusion_ratio,
+        reactive_ratio: metrics.reactive_ratio,
     }
 }
 
-pub(super) fn build_render_diagnostics(frame_plan: &FramePlan) -> RenderDiagnosticsSnapshot {
-    let summary = summarize_render_execution(frame_plan);
+pub(super) fn build_render_diagnostics(
+    frame_plan: &FramePlan,
+    metrics: Option<SvgfDiagnosticsSnapshot>,
+) -> RenderDiagnosticsSnapshot {
+    let summary = summarize_render_execution(frame_plan, metrics);
     let trace_len = render_execution_trace(summary).len();
     RenderDiagnosticsSnapshot { summary, trace_len }
 }
@@ -102,13 +192,8 @@ pub(super) fn render_frame(
         SVGF_MAX_ATROUS_PASSES,
     );
     let frame_context = FrameContext::from_plan(&frame_plan);
-    let diagnostics = build_render_diagnostics(&frame_plan);
-    let execution = diagnostics.summary;
-    debug_assert!(
-        diagnostics.trace_len >= 2,
-        "render trace should include trace + reistir",
-    );
-
+    refresh_svgf_diag_state_on_surface_change(renderer);
+    update_svgf_diag_readback(renderer, true);
     let camera_gpu = camera.to_gpu(
         frame_context.resolution[0],
         frame_context.resolution[1],
@@ -116,6 +201,22 @@ pub(super) fn render_frame(
     );
     let camera_in_motion = update_motion_state(&mut renderer.runtime, &camera_gpu);
     renderer.runtime.camera_in_motion = camera_in_motion;
+    let diagnostics = build_render_diagnostics(&frame_plan, renderer.runtime.last_svgf_diagnostics);
+    let execution = diagnostics.summary;
+    let sample_svgf_diag = should_sample_svgf_diagnostics(
+        frame_context.frame_index,
+        renderer.runtime.settings.svgf_diag_sample_interval,
+        execution.run_svgf,
+    );
+    let sample_copy_slot = if sample_svgf_diag {
+        reserve_svgf_diag_copy_slot(renderer)
+    } else {
+        None
+    };
+    debug_assert!(
+        diagnostics.trace_len >= 2,
+        "render trace should include trace + reistir",
+    );
     if camera_changed(&renderer.runtime, &camera_gpu) {
         world_ops::reset_accumulation(renderer);
     }
@@ -275,6 +376,13 @@ pub(super) fn render_frame(
         0,
         bytes_of(&svgf_resolve_uniform),
     );
+    if sample_copy_slot.is_some() {
+        renderer.gpu.queue.write_buffer(
+            &renderer.resources.surface.svgf_diag_stats_buffer,
+            0,
+            bytes_of(&SvgfDiagStatsGpu::default()),
+        );
+    }
 
     let frame = renderer.gpu.surface.get_current_texture()?;
     let frame_view = frame
@@ -339,6 +447,26 @@ pub(super) fn render_frame(
     }
     if execution.run_svgf {
         renderer.pipelines.svgf_pass.record(&mut record_context);
+    }
+
+    if let Some(copy_slot) = sample_copy_slot {
+        let [groups_x, groups_y] = dispatch.groups();
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("svgf-diag-reduce-pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&renderer.pipelines.svgf_diag_reduce_pipeline);
+            pass.set_bind_group(0, &renderer.pipelines.svgf_resolve_bind_group, &[]);
+            pass.dispatch_workgroups(groups_x, groups_y, 1);
+        }
+        encoder.copy_buffer_to_buffer(
+            &renderer.resources.surface.svgf_diag_stats_buffer,
+            0,
+            &renderer.resources.surface.svgf_diag_stats_readback_buffers[copy_slot],
+            0,
+            renderer.resources.surface.svgf_diag_stats_readback_size,
+        );
     }
 
     encoder.copy_texture_to_texture(
@@ -406,10 +534,117 @@ pub(super) fn render_frame(
 
     renderer.gpu.queue.submit(Some(encoder.finish()));
     frame.present();
+    if let Some(copy_slot) = sample_copy_slot {
+        enqueue_svgf_diag_map_request(renderer, copy_slot);
+    }
+    update_svgf_diag_readback(renderer, execution.run_svgf);
+    if !execution.run_svgf {
+        // Policy: when SVGF is disabled, diagnostics report zeros via None -> default summary.
+        renderer.runtime.last_svgf_diagnostics = None;
+    }
     renderer.runtime.last_camera_gpu = camera_gpu;
     renderer.runtime.frame_bridge.advance();
-    push_render_diag_event(renderer, frame_context.frame_index, diagnostics);
+    let final_diagnostics =
+        build_render_diagnostics(&frame_plan, renderer.runtime.last_svgf_diagnostics);
+    push_render_diag_event(renderer, frame_context.frame_index, final_diagnostics);
     Ok(())
+}
+
+fn refresh_svgf_diag_state_on_surface_change(renderer: &mut Renderer) {
+    let current_surface_generation = renderer.resources.versions().surface_generation();
+    if renderer.runtime.svgf_diag_surface_generation == current_surface_generation {
+        return;
+    }
+
+    reset_svgf_diag_readback_tracking(renderer);
+    renderer.runtime.svgf_diag_surface_generation = current_surface_generation;
+}
+
+fn reset_svgf_diag_readback_tracking(renderer: &mut Renderer) {
+    for slot in 0..SVGF_DIAG_READBACK_SLOT_COUNT {
+        renderer.runtime.svgf_diag_readback_slots[slot] = Default::default();
+    }
+    renderer.runtime.svgf_diag_next_copy_slot = 0;
+    renderer.runtime.last_svgf_diagnostics = None;
+}
+
+fn reserve_svgf_diag_copy_slot(renderer: &mut Renderer) -> Option<usize> {
+    for offset in 0..SVGF_DIAG_READBACK_SLOT_COUNT {
+        let slot =
+            (renderer.runtime.svgf_diag_next_copy_slot + offset) % SVGF_DIAG_READBACK_SLOT_COUNT;
+        if renderer.runtime.svgf_diag_readback_slots[slot].stage == SvgfDiagReadbackStage::Consumed
+        {
+            renderer.runtime.svgf_diag_next_copy_slot = (slot + 1) % SVGF_DIAG_READBACK_SLOT_COUNT;
+            return Some(slot);
+        }
+    }
+    None
+}
+
+fn enqueue_svgf_diag_map_request(renderer: &mut Renderer, slot: usize) {
+    let readback_size = renderer.resources.surface.svgf_diag_stats_readback_size;
+    if readback_size < SVGF_DIAG_STATS_SIZE as u64 {
+        return;
+    }
+
+    let slice =
+        renderer.resources.surface.svgf_diag_stats_readback_buffers[slot].slice(..readback_size);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |status| {
+        let _ = tx.send(status);
+    });
+    renderer.runtime.svgf_diag_readback_slots[slot].pending_map = Some(rx);
+    renderer.runtime.svgf_diag_readback_slots[slot].stage = SvgfDiagReadbackStage::Pending;
+}
+
+fn update_svgf_diag_readback(renderer: &mut Renderer, apply_snapshot: bool) {
+    let _ = renderer.gpu.device.poll(wgpu::Maintain::Poll);
+    let readback_size = renderer.resources.surface.svgf_diag_stats_readback_size;
+    if readback_size < SVGF_DIAG_STATS_SIZE as u64 {
+        return;
+    }
+
+    for slot in 0..SVGF_DIAG_READBACK_SLOT_COUNT {
+        if renderer.runtime.svgf_diag_readback_slots[slot].stage == SvgfDiagReadbackStage::Pending {
+            let poll_result = match renderer.runtime.svgf_diag_readback_slots[slot]
+                .pending_map
+                .as_ref()
+                .map(|rx| rx.try_recv())
+            {
+                Some(Ok(Ok(()))) => ReadbackPollResult::Ready,
+                Some(Ok(Err(_))) => ReadbackPollResult::Failed,
+                Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                    ReadbackPollResult::Failed
+                }
+                Some(Err(std::sync::mpsc::TryRecvError::Empty)) => ReadbackPollResult::Pending,
+                None => ReadbackPollResult::Failed,
+            };
+            let next_stage = promote_readback_stage(
+                renderer.runtime.svgf_diag_readback_slots[slot].stage,
+                poll_result,
+            );
+            renderer.runtime.svgf_diag_readback_slots[slot].stage = next_stage;
+            if next_stage != SvgfDiagReadbackStage::Pending {
+                renderer.runtime.svgf_diag_readback_slots[slot].pending_map = None;
+            }
+        }
+
+        if renderer.runtime.svgf_diag_readback_slots[slot].stage == SvgfDiagReadbackStage::Ready {
+            let mapped = renderer.resources.surface.svgf_diag_stats_readback_buffers[slot]
+                .slice(..readback_size)
+                .get_mapped_range();
+            let snapshot =
+                decode_svgf_diag_stats_from_bytes(&mapped).map(snapshot_from_svgf_diag_stats);
+            drop(mapped);
+            renderer.resources.surface.svgf_diag_stats_readback_buffers[slot].unmap();
+            renderer.runtime.svgf_diag_readback_slots[slot].stage = SvgfDiagReadbackStage::Consumed;
+            renderer.runtime.last_svgf_diagnostics = merge_svgf_diag_snapshot(
+                renderer.runtime.last_svgf_diagnostics,
+                snapshot,
+                apply_snapshot,
+            );
+        }
+    }
 }
 
 fn sun_direction(yaw_degrees: f32, pitch_degrees: f32) -> [f32; 3] {
@@ -536,7 +771,7 @@ mod tests {
         settings.svgf_enabled = svgf_enabled;
         settings.svgf_passes = svgf_passes;
         let plan = build_frame_plan(0, 1280, 720, &settings, SVGF_MAX_ATROUS_PASSES);
-        summarize_render_execution(&plan)
+        summarize_render_execution(&plan, None)
     }
 
     #[test]
@@ -544,6 +779,9 @@ mod tests {
         let summary = build_summary(false, 5);
         assert!(!summary.run_svgf);
         assert_eq!(summary.svgf_passes, 0);
+        assert_eq!(summary.history_accept_rate, 0.0);
+        assert_eq!(summary.disocclusion_ratio, 0.0);
+        assert_eq!(summary.reactive_ratio, 0.0);
     }
 
     #[test]
@@ -616,7 +854,7 @@ mod tests {
         settings.svgf_enabled = false;
         settings.svgf_passes = 4;
         let plan = build_frame_plan(0, 1280, 720, &settings, SVGF_MAX_ATROUS_PASSES);
-        let diagnostics = build_render_diagnostics(&plan);
+        let diagnostics = build_render_diagnostics(&plan, None);
         assert_eq!(
             diagnostics.summary,
             RenderExecutionSummary {
@@ -624,6 +862,9 @@ mod tests {
                 run_reistir: true,
                 run_svgf: false,
                 svgf_passes: 0,
+                history_accept_rate: 0.0,
+                disocclusion_ratio: 0.0,
+                reactive_ratio: 0.0,
             }
         );
         assert_eq!(diagnostics.trace_len, 2);
@@ -635,7 +876,14 @@ mod tests {
         settings.svgf_enabled = true;
         settings.svgf_passes = 2;
         let plan = build_frame_plan(1, 800, 600, &settings, SVGF_MAX_ATROUS_PASSES);
-        let diagnostics = build_render_diagnostics(&plan);
+        let diagnostics = build_render_diagnostics(
+            &plan,
+            Some(SvgfDiagnosticsSnapshot {
+                history_accept_rate: 0.42,
+                disocclusion_ratio: 0.31,
+                reactive_ratio: 0.24,
+            }),
+        );
         assert_eq!(
             diagnostics.summary,
             RenderExecutionSummary {
@@ -643,6 +891,9 @@ mod tests {
                 run_reistir: true,
                 run_svgf: true,
                 svgf_passes: 2,
+                history_accept_rate: 0.42,
+                disocclusion_ratio: 0.31,
+                reactive_ratio: 0.24,
             }
         );
         assert_eq!(diagnostics.trace_len, 6);
@@ -654,7 +905,7 @@ mod tests {
         settings.svgf_enabled = true;
         settings.svgf_passes = 64;
         let plan = build_frame_plan(2, 640, 480, &settings, SVGF_MAX_ATROUS_PASSES);
-        let diagnostics = build_render_diagnostics(&plan);
+        let diagnostics = build_render_diagnostics(&plan, None);
         assert_eq!(diagnostics.summary.svgf_passes, SVGF_MAX_ATROUS_PASSES);
         assert_eq!(diagnostics.trace_len, 2 + 1 + SVGF_MAX_ATROUS_PASSES + 1);
     }
@@ -674,8 +925,232 @@ mod tests {
             },
             SVGF_MAX_ATROUS_PASSES,
         );
-        let diagnostics = build_render_diagnostics(&plan);
+        let diagnostics = build_render_diagnostics(&plan, None);
         assert_eq!(trace.len(), diagnostics.trace_len);
+    }
+
+    #[test]
+    fn diagnostics_with_svgf_falls_back_to_zero_when_no_gpu_snapshot() {
+        let mut settings = RendererSettings::default();
+        settings.svgf_enabled = true;
+        settings.svgf_passes = 1;
+        let plan = build_frame_plan(11, 640, 360, &settings, SVGF_MAX_ATROUS_PASSES);
+        let diagnostics = build_render_diagnostics(&plan, None);
+        assert_eq!(diagnostics.summary.history_accept_rate, 0.0);
+        assert_eq!(diagnostics.summary.disocclusion_ratio, 0.0);
+        assert_eq!(diagnostics.summary.reactive_ratio, 0.0);
+    }
+
+    #[test]
+    fn sample_interval_one_samples_every_frame_when_svgf_runs() {
+        for frame in 0..12 {
+            assert!(should_sample_svgf_diagnostics(frame, 1, true));
+        }
+    }
+
+    #[test]
+    fn sample_interval_six_samples_only_on_interval_frames() {
+        let sampled = (0..19)
+            .filter(|frame| should_sample_svgf_diagnostics(*frame, 6, true))
+            .collect::<Vec<_>>();
+        assert_eq!(sampled, vec![0, 6, 12, 18]);
+    }
+
+    #[test]
+    fn sample_interval_never_samples_when_svgf_is_disabled() {
+        for frame in 0..20 {
+            assert!(!should_sample_svgf_diagnostics(frame, 3, false));
+        }
+    }
+
+    #[test]
+    fn readback_stage_promotes_pending_to_ready_on_success() {
+        assert_eq!(
+            promote_readback_stage(SvgfDiagReadbackStage::Pending, ReadbackPollResult::Ready),
+            SvgfDiagReadbackStage::Ready
+        );
+    }
+
+    #[test]
+    fn readback_stage_promotes_pending_to_consumed_on_failure() {
+        assert_eq!(
+            promote_readback_stage(SvgfDiagReadbackStage::Pending, ReadbackPollResult::Failed),
+            SvgfDiagReadbackStage::Consumed
+        );
+    }
+
+    #[test]
+    fn readback_stage_keeps_non_pending_states_stable() {
+        assert_eq!(
+            promote_readback_stage(SvgfDiagReadbackStage::Ready, ReadbackPollResult::Failed),
+            SvgfDiagReadbackStage::Ready
+        );
+        assert_eq!(
+            promote_readback_stage(SvgfDiagReadbackStage::Consumed, ReadbackPollResult::Ready),
+            SvgfDiagReadbackStage::Consumed
+        );
+    }
+
+    #[test]
+    fn merge_snapshot_keeps_previous_when_readback_not_ready() {
+        let previous = Some(SvgfDiagnosticsSnapshot {
+            history_accept_rate: 0.25,
+            disocclusion_ratio: 0.35,
+            reactive_ratio: 0.45,
+        });
+        assert_eq!(merge_svgf_diag_snapshot(previous, None, true), previous);
+    }
+
+    #[test]
+    fn merge_snapshot_updates_when_new_snapshot_is_available() {
+        let previous = Some(SvgfDiagnosticsSnapshot {
+            history_accept_rate: 0.1,
+            disocclusion_ratio: 0.2,
+            reactive_ratio: 0.3,
+        });
+        let incoming = Some(SvgfDiagnosticsSnapshot {
+            history_accept_rate: 0.7,
+            disocclusion_ratio: 0.1,
+            reactive_ratio: 0.9,
+        });
+        assert_eq!(merge_svgf_diag_snapshot(previous, incoming, true), incoming);
+    }
+
+    #[test]
+    fn merge_snapshot_ignores_incoming_when_apply_is_disabled() {
+        let previous = Some(SvgfDiagnosticsSnapshot {
+            history_accept_rate: 0.4,
+            disocclusion_ratio: 0.5,
+            reactive_ratio: 0.6,
+        });
+        let incoming = Some(SvgfDiagnosticsSnapshot {
+            history_accept_rate: 0.9,
+            disocclusion_ratio: 0.1,
+            reactive_ratio: 0.2,
+        });
+        assert_eq!(
+            merge_svgf_diag_snapshot(previous, incoming, false),
+            previous
+        );
+    }
+
+    #[test]
+    fn decode_svgf_diag_stats_returns_none_for_short_payload() {
+        let payload = [1u8; SVGF_DIAG_STATS_SIZE - 1];
+        assert!(decode_svgf_diag_stats_from_bytes(&payload).is_none());
+    }
+
+    #[test]
+    fn decode_svgf_diag_stats_reads_first_struct_from_payload() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&7u32.to_le_bytes());
+        payload.extend_from_slice(&3u32.to_le_bytes());
+        payload.extend_from_slice(&5u32.to_le_bytes());
+        payload.extend_from_slice(&9u32.to_le_bytes());
+
+        let stats = decode_svgf_diag_stats_from_bytes(&payload).unwrap();
+        assert_eq!(stats.accept_count, 7);
+        assert_eq!(stats.disocclusion_count, 3);
+        assert_eq!(stats.reactive_count, 5);
+        assert_eq!(stats.pixel_count, 9);
+    }
+
+    #[test]
+    fn decode_svgf_diag_stats_ignores_trailing_bytes() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&2u32.to_le_bytes());
+        payload.extend_from_slice(&4u32.to_le_bytes());
+        payload.extend_from_slice(&6u32.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&[9u8, 9, 9]);
+
+        let stats = decode_svgf_diag_stats_from_bytes(&payload).unwrap();
+        assert_eq!(stats.accept_count, 2);
+        assert_eq!(stats.disocclusion_count, 4);
+        assert_eq!(stats.reactive_count, 6);
+        assert_eq!(stats.pixel_count, 8);
+    }
+
+    #[test]
+    fn snapshot_from_svgf_diag_stats_returns_zero_when_pixel_count_is_zero() {
+        let snapshot = snapshot_from_svgf_diag_stats(SvgfDiagStatsGpu {
+            accept_count: 3,
+            disocclusion_count: 2,
+            reactive_count: 1,
+            pixel_count: 0,
+        });
+        assert_eq!(snapshot, SvgfDiagnosticsSnapshot::default());
+    }
+
+    #[test]
+    fn snapshot_from_svgf_diag_stats_computes_expected_ratios() {
+        let snapshot = snapshot_from_svgf_diag_stats(SvgfDiagStatsGpu {
+            accept_count: 30,
+            disocclusion_count: 12,
+            reactive_count: 9,
+            pixel_count: 60,
+        });
+        assert_eq!(snapshot.history_accept_rate, 0.5);
+        assert_eq!(snapshot.disocclusion_ratio, 0.2);
+        assert_eq!(snapshot.reactive_ratio, 0.15);
+    }
+
+    #[test]
+    fn snapshot_from_svgf_diag_stats_clamps_corrupted_counts() {
+        let snapshot = snapshot_from_svgf_diag_stats(SvgfDiagStatsGpu {
+            accept_count: 999,
+            disocclusion_count: 777,
+            reactive_count: 555,
+            pixel_count: 10,
+        });
+        assert_eq!(snapshot.history_accept_rate, 1.0);
+        assert_eq!(snapshot.disocclusion_ratio, 1.0);
+        assert_eq!(snapshot.reactive_ratio, 1.0);
+    }
+
+    #[test]
+    fn decode_then_snapshot_handles_zeroed_payload() {
+        let payload = [0u8; SVGF_DIAG_STATS_SIZE];
+        let stats = decode_svgf_diag_stats_from_bytes(&payload).unwrap();
+        let snapshot = snapshot_from_svgf_diag_stats(stats);
+        assert_eq!(snapshot, SvgfDiagnosticsSnapshot::default());
+    }
+
+    #[test]
+    fn summarize_render_execution_uses_real_snapshot_when_svgf_enabled() {
+        let mut settings = RendererSettings::default();
+        settings.svgf_enabled = true;
+        settings.svgf_passes = 1;
+        let plan = build_frame_plan(7, 320, 200, &settings, SVGF_MAX_ATROUS_PASSES);
+        let summary = summarize_render_execution(
+            &plan,
+            Some(SvgfDiagnosticsSnapshot {
+                history_accept_rate: 0.77,
+                disocclusion_ratio: 0.22,
+                reactive_ratio: 0.33,
+            }),
+        );
+        assert_eq!(summary.history_accept_rate, 0.77);
+        assert_eq!(summary.disocclusion_ratio, 0.22);
+        assert_eq!(summary.reactive_ratio, 0.33);
+    }
+
+    #[test]
+    fn summarize_render_execution_ignores_snapshot_when_svgf_disabled() {
+        let mut settings = RendererSettings::default();
+        settings.svgf_enabled = false;
+        let plan = build_frame_plan(8, 320, 200, &settings, SVGF_MAX_ATROUS_PASSES);
+        let summary = summarize_render_execution(
+            &plan,
+            Some(SvgfDiagnosticsSnapshot {
+                history_accept_rate: 1.0,
+                disocclusion_ratio: 1.0,
+                reactive_ratio: 1.0,
+            }),
+        );
+        assert_eq!(summary.history_accept_rate, 0.0);
+        assert_eq!(summary.disocclusion_ratio, 0.0);
+        assert_eq!(summary.reactive_ratio, 0.0);
     }
 
     #[test]

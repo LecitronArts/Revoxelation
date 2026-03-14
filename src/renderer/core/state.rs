@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::mpsc::Receiver;
 
 use winit::dpi::PhysicalSize;
 
@@ -14,6 +15,9 @@ use crate::renderer::resources::restir_storage::FrameBridge;
 use super::frame_plan::FramePlan;
 
 pub(crate) const SVGF_MAX_ATROUS_PASSES: usize = 5;
+pub(crate) const SVGF_DIAG_READBACK_SLOT_COUNT: usize = 2;
+pub(crate) const SVGF_DIAG_SAMPLE_INTERVAL_MIN: u32 = 1;
+pub(crate) const SVGF_DIAG_SAMPLE_INTERVAL_MAX: u32 = 16;
 pub(crate) const RENDERER_DIAG_EVENT_CAPACITY: usize = 128;
 pub const DEBUG_OVERLAY_MODE_NONE: u32 = 0;
 pub const DEBUG_OVERLAY_MODE_PROBE: u32 = 1;
@@ -58,8 +62,12 @@ pub struct RendererSettings {
     pub svgf_clamp_sigma: f32,
     pub svgf_invalid_variance_boost: f32,
     pub svgf_center_weight: f32,
-    pub svgf_history_normal_reject_cos: f32,
-    pub svgf_history_depth_reject_scale: f32,
+    pub svgf_reprojection_error_threshold: f32,
+    pub svgf_disocclusion_depth_threshold: f32,
+    pub svgf_disocclusion_normal_threshold: f32,
+    pub svgf_reactive_strength: f32,
+    pub svgf_history_max_weight_dynamic: f32,
+    pub svgf_diag_sample_interval: u32,
 }
 
 impl Default for RendererSettings {
@@ -96,8 +104,33 @@ impl Default for RendererSettings {
             svgf_clamp_sigma: 2.25,
             svgf_invalid_variance_boost: 3.5,
             svgf_center_weight: 4.0,
-            svgf_history_normal_reject_cos: 0.85,
-            svgf_history_depth_reject_scale: 0.10,
+            svgf_reprojection_error_threshold: 1.5,
+            svgf_disocclusion_depth_threshold: 0.10,
+            svgf_disocclusion_normal_threshold: 0.85,
+            svgf_reactive_strength: 0.65,
+            svgf_history_max_weight_dynamic: 0.90,
+            svgf_diag_sample_interval: 6,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SvgfDiagReadbackStage {
+    Pending,
+    Ready,
+    Consumed,
+}
+
+pub(crate) struct SvgfDiagReadbackSlot {
+    pub stage: SvgfDiagReadbackStage,
+    pub pending_map: Option<Receiver<Result<(), wgpu::BufferAsyncError>>>,
+}
+
+impl Default for SvgfDiagReadbackSlot {
+    fn default() -> Self {
+        Self {
+            stage: SvgfDiagReadbackStage::Consumed,
+            pending_map: None,
         }
     }
 }
@@ -116,12 +149,22 @@ pub struct RendererStats {
     pub camera_in_motion: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct RenderDiagnosticsSummary {
     pub run_trace: bool,
     pub run_reistir: bool,
     pub run_svgf: bool,
     pub svgf_passes: usize,
+    pub history_accept_rate: f32,
+    pub disocclusion_ratio: f32,
+    pub reactive_ratio: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SvgfDiagnosticsSnapshot {
+    pub history_accept_rate: f32,
+    pub disocclusion_ratio: f32,
+    pub reactive_ratio: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +180,7 @@ pub struct RendererDiagnostics {
     pub resource_version_signature: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RendererDiagEventSnapshot {
     pub frame_index: u32,
     pub lifecycle_trace: Option<Vec<LifecycleExecutionAction>>,
@@ -149,7 +192,7 @@ pub struct RendererDiagEventSnapshot {
     pub chunk_map_dropped_entries: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RendererDiagEvent {
     SyncRejected(RendererDiagEventSnapshot),
     SyncSucceeded(RendererDiagEventSnapshot),
@@ -305,6 +348,7 @@ pub(crate) struct RendererPipelineContext {
     pub svgf_init_pipeline: wgpu::ComputePipeline,
     pub svgf_atrous_pipeline: wgpu::ComputePipeline,
     pub svgf_resolve_pipeline: wgpu::ComputePipeline,
+    pub svgf_diag_reduce_pipeline: wgpu::ComputePipeline,
     pub svgf_bind_group_layout: wgpu::BindGroupLayout,
     pub svgf_init_bind_group: wgpu::BindGroup,
     pub svgf_atrous_bind_groups: Vec<wgpu::BindGroup>,
@@ -344,6 +388,10 @@ pub(crate) struct RendererRuntimeContext {
     pub motion_frames_remaining: u32,
     pub camera_in_motion: bool,
     pub last_camera_gpu: CameraGpu,
+    pub last_svgf_diagnostics: Option<SvgfDiagnosticsSnapshot>,
+    pub svgf_diag_readback_slots: [SvgfDiagReadbackSlot; SVGF_DIAG_READBACK_SLOT_COUNT],
+    pub svgf_diag_next_copy_slot: usize,
+    pub svgf_diag_surface_generation: u64,
     pub diagnostics: RendererDiagnosticsState,
     pub diag_events: RendererDiagEventRing,
 }
@@ -552,6 +600,9 @@ mod tests {
             run_reistir: true,
             run_svgf: true,
             svgf_passes: 3,
+            history_accept_rate: 0.72,
+            disocclusion_ratio: 0.11,
+            reactive_ratio: 0.28,
         });
         let event = RendererDiagEvent::Render(snapshot);
         let data = event.snapshot();
@@ -563,6 +614,9 @@ mod tests {
                 run_reistir: true,
                 run_svgf: true,
                 svgf_passes: 3,
+                history_accept_rate: 0.72,
+                disocclusion_ratio: 0.11,
+                reactive_ratio: 0.28,
             })
         );
     }
@@ -686,5 +740,173 @@ mod tests {
             .map(|event| event.snapshot().frame_index)
             .collect::<Vec<_>>();
         assert_eq!(frames, vec![4, 5]);
+    }
+
+    #[test]
+    fn render_summary_diagnostics_fields_are_readable_from_recent() {
+        let mut ring = RendererDiagEventRing::with_capacity(4);
+        let mut item = snapshot(42);
+        item.render_summary = Some(RenderDiagnosticsSummary {
+            run_trace: true,
+            run_reistir: true,
+            run_svgf: true,
+            svgf_passes: 2,
+            history_accept_rate: 0.66,
+            disocclusion_ratio: 0.21,
+            reactive_ratio: 0.34,
+        });
+        ring.push(RendererDiagEvent::Render(item));
+
+        let recent = ring.recent(1);
+        let summary = recent[0].snapshot().render_summary.unwrap();
+        assert_eq!(summary.history_accept_rate, 0.66);
+        assert_eq!(summary.disocclusion_ratio, 0.21);
+        assert_eq!(summary.reactive_ratio, 0.34);
+    }
+
+    #[test]
+    fn render_summary_diagnostics_field_order_stays_stable() {
+        let mut ring = RendererDiagEventRing::with_capacity(8);
+        for (frame, values) in [
+            (1, (0.70, 0.10, 0.20)),
+            (2, (0.55, 0.26, 0.44)),
+            (3, (0.48, 0.31, 0.57)),
+        ] {
+            let mut item = snapshot(frame);
+            item.render_summary = Some(RenderDiagnosticsSummary {
+                run_trace: true,
+                run_reistir: true,
+                run_svgf: true,
+                svgf_passes: 1,
+                history_accept_rate: values.0,
+                disocclusion_ratio: values.1,
+                reactive_ratio: values.2,
+            });
+            ring.push(RendererDiagEvent::Render(item));
+        }
+
+        let ordered = ring
+            .since_frame(1, 10)
+            .into_iter()
+            .map(|event| {
+                let summary = event.snapshot().render_summary.unwrap();
+                (
+                    summary.history_accept_rate,
+                    summary.disocclusion_ratio,
+                    summary.reactive_ratio,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered,
+            vec![(0.70, 0.10, 0.20), (0.55, 0.26, 0.44), (0.48, 0.31, 0.57)]
+        );
+    }
+
+    #[test]
+    fn recent_with_render_metrics_preserves_old_to_new_order() {
+        let mut ring = RendererDiagEventRing::with_capacity(6);
+        for frame in 1..=3 {
+            let mut item = snapshot(frame);
+            item.render_summary = Some(RenderDiagnosticsSummary {
+                run_trace: true,
+                run_reistir: true,
+                run_svgf: true,
+                svgf_passes: 1,
+                history_accept_rate: frame as f32 * 0.1,
+                disocclusion_ratio: frame as f32 * 0.01,
+                reactive_ratio: frame as f32 * 0.2,
+            });
+            ring.push(RendererDiagEvent::Render(item));
+        }
+
+        let frames = ring
+            .recent(3)
+            .into_iter()
+            .map(|event| event.snapshot().frame_index)
+            .collect::<Vec<_>>();
+        assert_eq!(frames, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn recent_by_type_with_render_metrics_keeps_order() {
+        let mut ring = RendererDiagEventRing::with_capacity(8);
+        ring.push(event_of_kind(RendererDiagEventKind::Resize, 1));
+        for frame in [2u32, 4, 6] {
+            let mut item = snapshot(frame);
+            item.render_summary = Some(RenderDiagnosticsSummary {
+                run_trace: true,
+                run_reistir: true,
+                run_svgf: true,
+                svgf_passes: 2,
+                history_accept_rate: 0.5,
+                disocclusion_ratio: 0.2,
+                reactive_ratio: 0.3,
+            });
+            ring.push(RendererDiagEvent::Render(item));
+        }
+
+        let frames = ring
+            .recent_by_kind(10, RendererDiagEventKind::Render)
+            .into_iter()
+            .map(|event| event.snapshot().frame_index)
+            .collect::<Vec<_>>();
+        assert_eq!(frames, vec![2, 4, 6]);
+    }
+
+    #[test]
+    fn since_frame_with_render_metrics_remains_inclusive_and_ordered() {
+        let mut ring = RendererDiagEventRing::with_capacity(8);
+        for frame in 1..=5 {
+            let mut item = snapshot(frame);
+            item.render_summary = Some(RenderDiagnosticsSummary {
+                run_trace: true,
+                run_reistir: true,
+                run_svgf: true,
+                svgf_passes: 1,
+                history_accept_rate: 0.1 * frame as f32,
+                disocclusion_ratio: 0.02 * frame as f32,
+                reactive_ratio: 0.03 * frame as f32,
+            });
+            ring.push(RendererDiagEvent::Render(item));
+        }
+
+        let frames = ring
+            .since_frame(3, 10)
+            .into_iter()
+            .map(|event| event.snapshot().frame_index)
+            .collect::<Vec<_>>();
+        assert_eq!(frames, vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn diagnostics_query_order_remains_stable_across_mixed_sources() {
+        let mut ring = RendererDiagEventRing::with_capacity(8);
+        ring.push(event_of_kind(RendererDiagEventKind::Resize, 1));
+        ring.push(event_of_kind(RendererDiagEventKind::Render, 2));
+        ring.push(event_of_kind(RendererDiagEventKind::Reconfigure, 3));
+        ring.push(event_of_kind(RendererDiagEventKind::Render, 4));
+        ring.push(event_of_kind(RendererDiagEventKind::SyncSucceeded, 5));
+
+        let recent_frames = ring
+            .recent(5)
+            .into_iter()
+            .map(|event| event.snapshot().frame_index)
+            .collect::<Vec<_>>();
+        assert_eq!(recent_frames, vec![1, 2, 3, 4, 5]);
+
+        let render_frames = ring
+            .recent_by_kind(10, RendererDiagEventKind::Render)
+            .into_iter()
+            .map(|event| event.snapshot().frame_index)
+            .collect::<Vec<_>>();
+        assert_eq!(render_frames, vec![2, 4]);
+
+        let since_frames = ring
+            .since_frame(3, 10)
+            .into_iter()
+            .map(|event| event.snapshot().frame_index)
+            .collect::<Vec<_>>();
+        assert_eq!(since_frames, vec![3, 4, 5]);
     }
 }

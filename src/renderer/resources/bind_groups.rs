@@ -24,6 +24,7 @@ pub struct BindGroupExecutorInput<'a> {
     pub svgf_ping_buffer: &'a wgpu::Buffer,
     pub svgf_pong_buffer: &'a wgpu::Buffer,
     pub svgf_debug_buffer: &'a wgpu::Buffer,
+    pub svgf_diag_stats_buffer: &'a wgpu::Buffer,
     pub restir_bindings: RestirBindings<'a>,
 }
 
@@ -79,6 +80,7 @@ pub fn rebuild_bind_groups(input: BindGroupExecutorInput<'_>) -> RebuiltBindGrou
         input.svgf_ping_buffer,
         input.svgf_pong_buffer,
         input.svgf_debug_buffer,
+        input.svgf_diag_stats_buffer,
     );
     let svgf_atrous_bind_groups = input
         .svgf_atrous_uniform_buffers
@@ -97,6 +99,7 @@ pub fn rebuild_bind_groups(input: BindGroupExecutorInput<'_>) -> RebuiltBindGrou
                 input.svgf_ping_buffer,
                 input.svgf_pong_buffer,
                 input.svgf_debug_buffer,
+                input.svgf_diag_stats_buffer,
             )
         })
         .collect();
@@ -113,6 +116,7 @@ pub fn rebuild_bind_groups(input: BindGroupExecutorInput<'_>) -> RebuiltBindGrou
         input.svgf_ping_buffer,
         input.svgf_pong_buffer,
         input.svgf_debug_buffer,
+        input.svgf_diag_stats_buffer,
     );
 
     RebuiltBindGroups {
@@ -283,6 +287,7 @@ fn create_svgf_bind_group(
     svgf_ping_buffer: &wgpu::Buffer,
     svgf_pong_buffer: &wgpu::Buffer,
     svgf_debug_buffer: &wgpu::Buffer,
+    svgf_diag_stats_buffer: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("svgf-bind-group"),
@@ -298,6 +303,7 @@ fn create_svgf_bind_group(
             svgf_ping_buffer,
             svgf_pong_buffer,
             svgf_debug_buffer,
+            svgf_diag_stats_buffer,
         ),
     })
 }
@@ -314,6 +320,7 @@ fn svgf_bind_group_entries<'a>(
     svgf_ping_buffer: &'a wgpu::Buffer,
     svgf_pong_buffer: &'a wgpu::Buffer,
     svgf_debug_buffer: &'a wgpu::Buffer,
+    svgf_diag_stats_buffer: &'a wgpu::Buffer,
 ) -> [wgpu::BindGroupEntry<'a>; svgf::COUNT] {
     [
         wgpu::BindGroupEntry {
@@ -355,6 +362,10 @@ fn svgf_bind_group_entries<'a>(
         wgpu::BindGroupEntry {
             binding: svgf::DEBUG_DATA,
             resource: svgf_debug_buffer.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+            binding: svgf::DIAG_STATS,
+            resource: svgf_diag_stats_buffer.as_entire_binding(),
         },
     ]
 }
@@ -400,5 +411,11 @@ mod tests {
     #[test]
     fn svgf_bind_group_order_uses_protocol_count() {
         assert_eq!(svgf_bind_group_binding_order().len(), svgf::COUNT);
+    }
+
+    #[test]
+    fn svgf_bind_group_order_includes_diag_stats_binding() {
+        let order = svgf_bind_group_binding_order();
+        assert_eq!(order.last().copied(), Some(svgf::DIAG_STATS));
     }
 }

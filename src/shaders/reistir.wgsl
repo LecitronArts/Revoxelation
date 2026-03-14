@@ -53,6 +53,7 @@ struct GiReservoir {
 
 struct SurfaceSample {
     normal_material: vec4<f32>,
+    surface_meta: vec4<u32>,
 };
 
 @group(0) @binding(2)

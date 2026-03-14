@@ -3,7 +3,7 @@ pub mod types;
 
 pub use types::{
     CameraGpu, ChunkMapEntryGpu, ChunkMetaGpu, EmissiveVoxelGpu, GiReservoirGpu, ReservoirGpu,
-    SurfaceSampleGpu, SvgfUniform, TracerUniform,
+    SurfaceSampleGpu, SvgfDiagStatsGpu, SvgfUniform, TracerUniform,
 };
 
 pub const fn history_read_slot_from_frame(frame_index: u32) -> u32 {
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn svgf_uniform_layout_matches_protocol() {
-        assert_eq!(size_of::<SvgfUniform>(), 48);
+        assert_eq!(size_of::<SvgfUniform>(), 64);
         assert_eq!(align_of::<SvgfUniform>(), 16);
     }
 
@@ -76,10 +76,19 @@ mod tests {
         assert_eq!(align_of::<ReservoirGpu>(), 16);
         assert_eq!(size_of::<GiReservoirGpu>(), 48);
         assert_eq!(align_of::<GiReservoirGpu>(), 16);
-        assert_eq!(size_of::<SurfaceSampleGpu>(), 16);
+        assert_eq!(size_of::<SurfaceSampleGpu>(), 32);
         assert_eq!(align_of::<SurfaceSampleGpu>(), 16);
         assert_eq!(size_of::<MotionVectorGpu>(), 16);
         assert_eq!(align_of::<MotionVectorGpu>(), 16);
+        assert_eq!(size_of::<SvgfDiagStatsGpu>(), 16);
+        assert_eq!(align_of::<SvgfDiagStatsGpu>(), 16);
+    }
+
+    #[test]
+    fn surface_sample_empty_keeps_invalid_depth_and_zero_surface_id() {
+        let sample = SurfaceSampleGpu::empty();
+        assert_eq!(sample.normal_material[3], -1.0);
+        assert_eq!(sample.surface_meta[0], 0);
     }
 
     #[test]

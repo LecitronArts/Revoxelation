@@ -51,7 +51,8 @@ pub mod svgf {
     pub const CAMERA: u32 = 7;
     pub const PREVIOUS_CAMERA: u32 = 8;
     pub const DEBUG_DATA: u32 = 9;
-    pub const COUNT: usize = 10;
+    pub const DIAG_STATS: u32 = 10;
+    pub const COUNT: usize = 11;
 
     #[cfg(test)]
     pub const ORDER: [u32; COUNT] = [
@@ -65,6 +66,7 @@ pub mod svgf {
         CAMERA,
         PREVIOUS_CAMERA,
         DEBUG_DATA,
+        DIAG_STATS,
     ];
 }
 
