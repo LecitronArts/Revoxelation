@@ -7,9 +7,9 @@
 
 ### Runtime and ECS
 
-- [ ] **ECS-01**: Developer can run a deterministic mixed scheduler with explicit fixed stages for input, simulation, world update, meshing sync, and render submit.
-- [ ] **ECS-02**: Developer can register systems through stable boundaries (world, meshing, collision, persistence) without introducing cross-module coupling.
-- [ ] **ECS-03**: Engine can emit and consume serializable domain events for player actions, chunk lifecycle, and block edits.
+- [x] **ECS-01**: Developer can run a deterministic mixed scheduler with explicit fixed stages for input, simulation, world update, meshing sync, and render submit.
+- [x] **ECS-02**: Developer can register systems through stable boundaries (world, meshing, collision, persistence) without introducing cross-module coupling.
+- [x] **ECS-03**: Engine can emit and consume serializable domain events for player actions, chunk lifecycle, and block edits.
 
 ### World Streaming
 
@@ -48,7 +48,7 @@
 
 ### Quality Gates
 
-- [ ] **QUAL-01**: Planning and implementation workflow enforces superpowers gates (`writing-plans`, `test-driven-development`, `systematic-debugging`, `verification-before-completion`, `requesting-code-review`, `receiving-code-review`, `finishing-a-development-branch`).
+- [x] **QUAL-01**: Planning and implementation workflow enforces superpowers gates (`writing-plans`, `test-driven-development`, `systematic-debugging`, `verification-before-completion`, `requesting-code-review`, `receiving-code-review`, `finishing-a-development-branch`).
 
 ## v2 Requirements
 
@@ -82,9 +82,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ECS-01 | Phase 1 | Pending |
-| ECS-02 | Phase 1 | Pending |
-| ECS-03 | Phase 1 | Pending |
+| ECS-01 | Phase 1 | Complete |
+| ECS-02 | Phase 1 | Complete |
+| ECS-03 | Phase 1 | Complete |
 | STRM-01 | Phase 2 | Pending |
 | STRM-02 | Phase 2 | Pending |
 | STRM-03 | Phase 2 | Pending |
@@ -102,7 +102,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SAVE-03 | Phase 6 | Pending |
 | NINT-01 | Phase 7 | Pending |
 | NINT-02 | Phase 7 | Pending |
-| QUAL-01 | Phase 1 | Pending |
+| QUAL-01 | Phase 1 | Complete |
 
 **Coverage:**
 - v1 requirements: 21 total
