@@ -22,6 +22,8 @@ const GATE_CHECKLIST_FILE: &str =
     ".planning/phases/01-runtime-skeleton-and-quality-gates/01-GATE-CHECKLIST.md";
 const GATE_EVIDENCE_TEMPLATE_FILE: &str =
     ".planning/phases/01-runtime-skeleton-and-quality-gates/01-GATE-EVIDENCE-TEMPLATE.md";
+const ARCHITECTURE_BOUNDARIES_FILE: &str =
+    ".planning/phases/01-runtime-skeleton-and-quality-gates/01-ARCHITECTURE-BOUNDARIES.md";
 
 const REQUIRED_GATES: [&str; 7] = [
     "writing-plans",
@@ -42,6 +44,13 @@ const REQUIRED_EVIDENCE_FIELDS: [&str; 8] = [
     "Explicit Reason",
     "Risk",
     "Remediation / Follow-Up Plan",
+];
+
+const REQUIRED_ARCHITECTURE_SECTIONS: [&str; 4] = [
+    "## Stage Spine",
+    "## Boundary Contracts",
+    "## Cross-Domain Rules",
+    "## Observability Handoff",
 ];
 
 #[test]
@@ -94,6 +103,24 @@ fn quality_gate_evidence_fields_present() {
         assert!(
             template.contains(field),
             "quality gate evidence template missing required field: {field}",
+        );
+    }
+}
+
+#[test]
+fn architecture_boundary_notes_present() {
+    assert!(
+        Path::new(ARCHITECTURE_BOUNDARIES_FILE).exists(),
+        "architecture boundary notes artifact missing: {ARCHITECTURE_BOUNDARIES_FILE}",
+    );
+
+    let architecture_notes = fs::read_to_string(ARCHITECTURE_BOUNDARIES_FILE)
+        .expect("architecture boundary notes must be readable for closure enforcement");
+
+    for section in REQUIRED_ARCHITECTURE_SECTIONS {
+        assert!(
+            architecture_notes.contains(section),
+            "architecture boundary notes missing required section: {section}",
         );
     }
 }
