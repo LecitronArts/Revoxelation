@@ -37,6 +37,12 @@ pub struct RegistrationError {
     pub reason: String,
 }
 
+impl RegistrationError {
+    fn with_reason(reason: String) -> Self {
+        Self { reason }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisteredSystem {
     pub name: &'static str,
@@ -62,7 +68,21 @@ impl BoundaryRegistryCore {
         declared_domain: RuntimeDomain,
         name: &'static str,
     ) -> Result<(), RegistrationError> {
-        let _ = self.domain;
+        if declared_domain != self.domain {
+            return Err(RegistrationError::with_reason(format!(
+                "cross-domain registration rejected: system `{name}` declared `{}` cannot register in `{}` boundary",
+                declared_domain.as_str(),
+                self.domain.as_str()
+            )));
+        }
+
+        if self.systems.iter().any(|registered| registered.name == name) {
+            return Err(RegistrationError::with_reason(format!(
+                "duplicate registration rejected: system `{name}` already registered in `{}` boundary",
+                self.domain.as_str()
+            )));
+        }
+
         self.systems.push(RegisteredSystem {
             name,
             declared_domain,

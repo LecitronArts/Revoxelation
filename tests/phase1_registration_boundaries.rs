@@ -1,7 +1,21 @@
 use revoxelation::runtime::{
-    boundaries::{RuntimeBoundaryRegistry, RuntimeDomain},
+    boundaries::{DomainSystem, RuntimeBoundaryRegistry, RuntimeDomain},
     systems::placeholders,
 };
+
+struct MeshingCrossDomainProbe;
+
+impl DomainSystem for MeshingCrossDomainProbe {
+    const DOMAIN: RuntimeDomain = RuntimeDomain::Meshing;
+    const NAME: &'static str = "meshing_cross_domain_probe";
+}
+
+struct WorldDuplicateProbe;
+
+impl DomainSystem for WorldDuplicateProbe {
+    const DOMAIN: RuntimeDomain = RuntimeDomain::World;
+    const NAME: &'static str = "world_duplicate_probe";
+}
 
 #[test]
 fn boundary_registers_in_domain_systems() {
@@ -31,4 +45,39 @@ fn boundary_registers_in_domain_systems() {
     );
     assert_eq!(persistence[0].name, "persistence_placeholder");
     assert_eq!(persistence[0].declared_domain, RuntimeDomain::Persistence);
+}
+
+#[test]
+fn boundary_rejects_cross_domain_registration() {
+    let mut registry = RuntimeBoundaryRegistry::default();
+
+    let error = registry
+        .world_mut()
+        .register::<MeshingCrossDomainProbe>()
+        .expect_err("cross-domain registration should be rejected");
+
+    assert_eq!(
+        error.reason,
+        "cross-domain registration rejected: system `meshing_cross_domain_probe` declared `meshing` cannot register in `world` boundary"
+    );
+}
+
+#[test]
+fn boundary_rejects_duplicate_registration() {
+    let mut registry = RuntimeBoundaryRegistry::default();
+
+    registry
+        .world_mut()
+        .register::<WorldDuplicateProbe>()
+        .expect("first registration should succeed");
+
+    let error = registry
+        .world_mut()
+        .register::<WorldDuplicateProbe>()
+        .expect_err("duplicate registration should be rejected");
+
+    assert_eq!(
+        error.reason,
+        "duplicate registration rejected: system `world_duplicate_probe` already registered in `world` boundary"
+    );
 }
