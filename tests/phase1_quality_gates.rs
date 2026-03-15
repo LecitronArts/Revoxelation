@@ -45,6 +45,18 @@ const REQUIRED_EVIDENCE_FIELDS: [&str; 8] = [
     "Risk",
     "Remediation / Follow-Up Plan",
 ];
+const REQUIRED_CHECKLIST_SECTIONS: [&str; 2] = ["## Required Gates", "## Gate Evidence Log"];
+
+const REQUIRED_CHECKLIST_TABLE_HEADERS: [&str; 8] = [
+    "Gate",
+    "Command",
+    "Key Output",
+    "Pass/Fail",
+    "Owner",
+    "Explicit Reason",
+    "Risk",
+    "Remediation / Follow-Up Plan",
+];
 
 const REQUIRED_ARCHITECTURE_SECTIONS: [&str; 4] = [
     "## Stage Spine",
@@ -86,9 +98,24 @@ fn quality_gate_artifacts_present() {
 
     let checklist = fs::read_to_string(GATE_CHECKLIST_FILE)
         .expect("quality gate checklist must be readable for enforcement");
+
+    for section in REQUIRED_CHECKLIST_SECTIONS {
+        assert!(
+            checklist.contains(section),
+            "quality gate checklist missing required section: {section}",
+        );
+    }
+
+    for header in REQUIRED_CHECKLIST_TABLE_HEADERS {
+        assert!(
+            checklist.contains(header),
+            "quality gate checklist missing required evidence header: {header}",
+        );
+    }
+
     for gate in REQUIRED_GATES {
         assert!(
-            checklist.contains(&format!("`{gate}`")),
+            checklist.contains(&format!("{gate}")),
             "quality gate checklist missing required gate: {gate}",
         );
     }
