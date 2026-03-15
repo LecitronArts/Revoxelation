@@ -42,3 +42,10 @@ Handoff expectations for later phases:
 - Structured runtime logs include registration failures with domain/system/reason context.
 - HUD/overlay can render boundary failure summaries sourced from the same rejection reason strings.
 - Diagnostics consumers must treat rejection messages as deterministic interfaces suitable for assertions and operator feedback.
+## Closure Guard Signals
+
+Phase closure remains blocked unless all of the following remain true:
+
+- `tests/phase1_quality_gates.rs::architecture_boundary_notes_present` passes and verifies required headings.
+- Architecture notes remain file-content based and reproducible (no runtime-only assumptions).
+- Boundary and stage constraints here stay synchronized with runtime and selector assertions.

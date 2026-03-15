@@ -58,11 +58,12 @@ const REQUIRED_CHECKLIST_TABLE_HEADERS: [&str; 8] = [
     "Remediation / Follow-Up Plan",
 ];
 
-const REQUIRED_ARCHITECTURE_SECTIONS: [&str; 4] = [
+const REQUIRED_ARCHITECTURE_SECTIONS: [&str; 5] = [
     "## Stage Spine",
     "## Boundary Contracts",
     "## Cross-Domain Rules",
     "## Observability Handoff",
+    "## Closure Guard Signals",
 ];
 
 #[test]
@@ -115,7 +116,7 @@ fn quality_gate_artifacts_present() {
 
     for gate in REQUIRED_GATES {
         assert!(
-            checklist.contains(&format!("{gate}")),
+            checklist.contains(&format!("`{gate}`")),
             "quality gate checklist missing required gate: {gate}",
         );
     }
