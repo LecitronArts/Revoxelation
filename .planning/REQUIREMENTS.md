@@ -82,33 +82,33 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ECS-01 | TBA | Pending |
-| ECS-02 | TBA | Pending |
-| ECS-03 | TBA | Pending |
-| STRM-01 | TBA | Pending |
-| STRM-02 | TBA | Pending |
-| STRM-03 | TBA | Pending |
-| MESH-01 | TBA | Pending |
-| MESH-02 | TBA | Pending |
-| MESH-03 | TBA | Pending |
-| MOVE-01 | TBA | Pending |
-| MOVE-02 | TBA | Pending |
-| MOVE-03 | TBA | Pending |
-| EDIT-01 | TBA | Pending |
-| EDIT-02 | TBA | Pending |
-| EDIT-03 | TBA | Pending |
-| SAVE-01 | TBA | Pending |
-| SAVE-02 | TBA | Pending |
-| SAVE-03 | TBA | Pending |
-| NINT-01 | TBA | Pending |
-| NINT-02 | TBA | Pending |
-| QUAL-01 | TBA | Pending |
+| ECS-01 | Phase 1 | Pending |
+| ECS-02 | Phase 1 | Pending |
+| ECS-03 | Phase 1 | Pending |
+| STRM-01 | Phase 2 | Pending |
+| STRM-02 | Phase 2 | Pending |
+| STRM-03 | Phase 2 | Pending |
+| MESH-01 | Phase 3 | Pending |
+| MESH-02 | Phase 3 | Pending |
+| MESH-03 | Phase 3 | Pending |
+| MOVE-01 | Phase 4 | Pending |
+| MOVE-02 | Phase 4 | Pending |
+| MOVE-03 | Phase 4 | Pending |
+| EDIT-01 | Phase 5 | Pending |
+| EDIT-02 | Phase 5 | Pending |
+| EDIT-03 | Phase 5 | Pending |
+| SAVE-01 | Phase 6 | Pending |
+| SAVE-02 | Phase 6 | Pending |
+| SAVE-03 | Phase 6 | Pending |
+| NINT-01 | Phase 7 | Pending |
+| NINT-02 | Phase 7 | Pending |
+| QUAL-01 | Phase 1 | Pending |
 
 **Coverage:**
 - v1 requirements: 21 total
-- Mapped to phases: 0
-- Unmapped: 21 ⚠️
+- Mapped to phases: 21
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-15*  
-*Last updated: 2026-03-15 after initial definition*
+*Last updated: 2026-03-15 after roadmap creation*
