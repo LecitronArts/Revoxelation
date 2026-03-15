@@ -1,8 +1,11 @@
-use revoxelation::runtime::events::{
-    is_monotonic, BlockEditCommand, BlockEditOperation, BlockPosition, ChunkCoordinate,
-    ChunkLifecycleAction, ChunkLifecycleCommand, CommandEnvelope, CommandOutcome,
-    CommandOutcomeEvent, EventBus, EventEnvelope, PlayerAction, PlayerActionCommand,
-    RejectionReason, RuntimeCommand, RuntimeEvent, SequenceMetadata,
+use revoxelation::runtime::{
+    events::{
+        is_monotonic, BlockEditCommand, BlockEditOperation, BlockPosition, ChunkCoordinate,
+        ChunkLifecycleAction, ChunkLifecycleCommand, CommandEnvelope, CommandOutcome,
+        CommandOutcomeEvent, EventBus, EventEnvelope, PlayerAction, PlayerActionCommand,
+        RejectionReason, RuntimeCommand, RuntimeEvent, SequenceMetadata,
+    },
+    run_frame,
 };
 
 #[test]
@@ -10,6 +13,7 @@ fn wave0_events_selector_bootstrap() {
     let selectors = [
         "event_serde_roundtrip_models",
         "invalid_command_rejected_with_reason",
+        "one_frame_event_flow_is_monotonic",
     ];
 
     for selector in selectors {
@@ -160,4 +164,27 @@ fn invalid_command_rejected_with_reason() {
             .all(|entry| !matches!(entry.event, RuntimeEvent::BlockEditApplied(_))),
         "invalid block edit command should never emit a block edit applied event",
     );
+}
+
+#[test]
+fn one_frame_event_flow_is_monotonic() {
+    let frame = run_frame(9);
+    let event_bus = &frame.event_bus;
+
+    assert_eq!(event_bus.frame_index, 9);
+    assert_eq!(
+        event_bus.emitted_events, event_bus.consumed_events,
+        "render submit stage should consume all events emitted in the frame",
+    );
+    assert!(
+        event_bus.emitted_is_monotonic(),
+        "emitted events must preserve deterministic monotonic sequence ordering",
+    );
+
+    for sequence in event_bus.emitted_sequences() {
+        assert_eq!(
+            sequence.frame_index, 9,
+            "single-frame event flow should retain frame metadata",
+        );
+    }
 }
