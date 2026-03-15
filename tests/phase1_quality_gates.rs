@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 const WAVE0_SELECTOR_NAMES: [&str; 5] = [
     "wave0_stage_selector_bootstrap",
@@ -16,6 +16,32 @@ const WAVE0_ARTIFACT_FILES: [&str; 5] = [
     "tests/phase1_registration_boundaries.rs",
     "tests/phase1_events.rs",
     "tests/phase1_quality_gates.rs",
+];
+
+const GATE_CHECKLIST_FILE: &str =
+    ".planning/phases/01-runtime-skeleton-and-quality-gates/01-GATE-CHECKLIST.md";
+const GATE_EVIDENCE_TEMPLATE_FILE: &str =
+    ".planning/phases/01-runtime-skeleton-and-quality-gates/01-GATE-EVIDENCE-TEMPLATE.md";
+
+const REQUIRED_GATES: [&str; 7] = [
+    "writing-plans",
+    "test-driven-development",
+    "systematic-debugging",
+    "verification-before-completion",
+    "requesting-code-review",
+    "receiving-code-review",
+    "finishing-a-development-branch",
+];
+
+const REQUIRED_EVIDENCE_FIELDS: [&str; 8] = [
+    "Gate",
+    "Command",
+    "Key Output",
+    "Pass/Fail",
+    "Owner",
+    "Explicit Reason",
+    "Risk",
+    "Remediation / Follow-Up Plan",
 ];
 
 #[test]
@@ -36,6 +62,38 @@ fn wave0_quality_gate_selector_bootstrap() {
         assert!(
             Path::new(artifact).exists(),
             "Wave 0 artifact missing: {artifact}",
+        );
+    }
+}
+
+#[test]
+fn quality_gate_artifacts_present() {
+    for artifact in [GATE_CHECKLIST_FILE, GATE_EVIDENCE_TEMPLATE_FILE] {
+        assert!(
+            Path::new(artifact).exists(),
+            "quality gate artifact missing: {artifact}",
+        );
+    }
+
+    let checklist = fs::read_to_string(GATE_CHECKLIST_FILE)
+        .expect("quality gate checklist must be readable for enforcement");
+    for gate in REQUIRED_GATES {
+        assert!(
+            checklist.contains(&format!("`{gate}`")),
+            "quality gate checklist missing required gate: {gate}",
+        );
+    }
+}
+
+#[test]
+fn quality_gate_evidence_fields_present() {
+    let template = fs::read_to_string(GATE_EVIDENCE_TEMPLATE_FILE)
+        .expect("quality gate evidence template must be readable for enforcement");
+
+    for field in REQUIRED_EVIDENCE_FIELDS {
+        assert!(
+            template.contains(field),
+            "quality gate evidence template missing required field: {field}",
         );
     }
 }
