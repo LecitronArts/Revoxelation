@@ -1,4 +1,5 @@
 pub mod boundaries;
+pub mod events;
 pub mod observability;
 pub mod scheduler;
 pub mod stages;

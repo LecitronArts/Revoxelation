@@ -18,5 +18,9 @@ noise = "0.9"
 pollster = "0.4"
 rand = "0.9"
 rayon = "1.10"
+serde = { version = "1.0", features = ["derive"] }
 wgpu = "0.20"
 winit = "0.29"
+
+[dev-dependencies]
+serde_json = "1.0"
