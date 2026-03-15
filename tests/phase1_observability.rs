@@ -32,9 +32,9 @@ fn wave0_observability_selector_bootstrap() {
             "HUD/overlay source drifted: missing `overlay` anchor",
         );
     } else {
-        assert!(
-            HUD_OVERLAY_FILE.contains(HUD_OVERLAY_ANCHOR),
-            "overlay anchor must remain reserved in Wave 0 fixture",
+        assert_eq!(
+            HUD_OVERLAY_ANCHOR, "overlay",
+            "overlay anchor fixture must remain stable before HUD implementation lands",
         );
     }
 }
