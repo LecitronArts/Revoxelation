@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-03-15T05:18:59.248Z"
-last_activity: 2026-03-15 - Completed Phase 1 Plan 03 boundary-safe registration and architecture notes.
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-03-15T06:03:58.727Z"
+last_activity: 2026-03-15 - Completed Phase 1 Plan 04 serializable event contracts and deterministic sequencing.
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -26,16 +26,16 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 ## Current Position
 
 Phase: 1 of 7 (Runtime Skeleton and Quality Gates)
-Plan: 3 of 5 in current phase
+Plan: 4 of 5 in current phase
 Status: In progress
-Last activity: 2026-03-15 - Completed Phase 1 Plan 03 boundary-safe registration and architecture notes.
+Last activity: 2026-03-15 - Completed Phase 1 Plan 04 serializable event contracts and deterministic sequencing.
 
-Progress: [######----] 60%
+Progress: [########--] 80%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
+- Total plans completed: 4
 - Average duration: 5 min
 - Total execution time: 0.3 hours
 
@@ -43,7 +43,7 @@ Progress: [######----] 60%
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1 | 3 | 16 min | 5 min |
+| 1 | 4 | 20 min | 5 min |
 | 2 | 0 | 0 min | 0 min |
 | 3 | 0 | 0 min | 0 min |
 | 4 | 0 | 0 min | 0 min |
@@ -52,13 +52,14 @@ Progress: [######----] 60%
 | 7 | 0 | 0 min | 0 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-03 (8 min), 01-02 (5 min), 01-01 (3 min)
+- Last 5 plans: 01-04 (4 min), 01-03 (8 min), 01-02 (5 min), 01-01 (3 min)
 - Trend: Stable deterministic execution throughput
 
 *Updated after each plan completion*
 | Phase 01 P01 | 3 | 3 tasks | 5 files |
 | Phase 01-runtime-skeleton-and-quality-gates P02 | 5 | 3 tasks | 7 files |
 | Phase 01-runtime-skeleton-and-quality-gates P03 | 8 min | 3 tasks | 4 files |
+| Phase 01-runtime-skeleton-and-quality-gates P04 | 4 min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -76,6 +77,9 @@ Recent decisions affecting current work:
 - [Phase 01-runtime-skeleton-and-quality-gates]: HUD/overlay state is projected from runtime trace entries to keep observability deterministic and single-source.
 - [Phase 01-runtime-skeleton-and-quality-gates]: Exposed runtime boundary/system modules so boundary selectors compile against real registration paths.
 - [Phase 01-runtime-skeleton-and-quality-gates]: Boundary rejection reasons are deterministic strings to support stable tests and observability handoff.
+- [Phase 01-runtime-skeleton-and-quality-gates]: CommandOutcome events are emitted for every command to keep acceptance and rejection paths observable.
+- [Phase 01-runtime-skeleton-and-quality-gates]: Monotonic event sequence numbers are frame-indexed with a fixed stride to preserve deterministic replay ordering.
+- [Phase 01-runtime-skeleton-and-quality-gates]: Scheduler event bus integration remains stage-boundary-scoped: Input publish, Simulation process, RenderSubmit consume.
 
 ### Pending Todos
 
@@ -87,8 +91,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-15T05:18:59.245Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-03-15T06:03:58.724Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
 
 

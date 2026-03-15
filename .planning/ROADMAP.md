@@ -37,7 +37,7 @@ Plans:
 - [x] 01-01: Implement deterministic scheduler stages and system registration boundaries.
 - [x] 01-02: Implement serializable domain events and quality-gate enforcement hooks.
 - [x] 01-03: Implement boundary-safe runtime system registration and architecture notes.
-- [ ] 01-04: Implement serializable event contracts and validation paths.
+- [x] 01-04: Implement serializable event contracts and validation paths.
 - [ ] 01-05: Implement quality-gate enforcement artifacts and final phase checks.
 
 ### Phase 2: Streaming Lifecycle and Job Queues
@@ -129,7 +129,7 @@ Phases execute in numeric order: 2 -> 2.1 -> 2.2 -> 3 -> 3.1 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Runtime Skeleton and Quality Gates | 3/5 | In progress | - |
+| 1. Runtime Skeleton and Quality Gates | 4/5 | In progress | - |
 | 2. Streaming Lifecycle and Job Queues | 0/2 | Not started | - |
 | 3. Greedy Meshing and Render Delta Sync | 0/2 | Not started | - |
 | 4. Movement and Collision Modes | 0/2 | Not started | - |
