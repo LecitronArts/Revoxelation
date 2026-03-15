@@ -1,6 +1,7 @@
 use log::info;
 
 use super::{
+    observability::RuntimeHudOverlay,
     stages::{Stage, STAGE_ORDER},
     trace::{TraceEntry, TransitionKind},
 };
@@ -10,6 +11,7 @@ pub struct FrameExecution {
     pub frame_index: u64,
     pub executed_stages: Vec<Stage>,
     pub trace_entries: Vec<TraceEntry>,
+    pub overlay: RuntimeHudOverlay,
 }
 
 pub fn run_frame(frame_index: u64) -> FrameExecution {
@@ -30,9 +32,12 @@ pub fn run_frame(frame_index: u64) -> FrameExecution {
         trace_entries.push(end);
     }
 
+    let overlay = RuntimeHudOverlay::from_trace_entries(&trace_entries);
+
     FrameExecution {
         frame_index,
         executed_stages,
         trace_entries,
+        overlay,
     }
 }

@@ -1,4 +1,4 @@
-use revoxelation::runtime::{run_frame, Stage, TransitionKind, STAGE_ORDER};
+use revoxelation::runtime::{run_frame, RuntimeHudOverlay, Stage, TransitionKind, STAGE_ORDER};
 
 #[test]
 fn structured_logs_include_frame_stage_event() {
@@ -55,4 +55,41 @@ fn structured_logs_include_frame_stage_event() {
         observed_stage_trace, expected_stage_trace,
         "trace ordering must match deterministic stage traversal"
     );
+}
+
+#[test]
+fn hud_overlay_exposes_stage_progress() {
+    let frame_index = 17;
+    let execution = run_frame(frame_index);
+    let overlay = &execution.overlay;
+
+    assert_eq!(overlay.stage_progress.last_frame_index, Some(frame_index));
+    assert_eq!(
+        overlay.stage_progress.current_stage,
+        Some(Stage::RenderSubmit),
+        "one-frame execution should end on RenderSubmit"
+    );
+    assert_eq!(
+        overlay.stage_progress.completed_stages,
+        STAGE_ORDER,
+        "overlay should report completed stages in deterministic order"
+    );
+
+    let derived_overlay = RuntimeHudOverlay::from_trace_entries(&execution.trace_entries);
+    assert_eq!(
+        overlay, &derived_overlay,
+        "overlay must be derived directly from runtime trace entries"
+    );
+
+    let overlay_text = overlay.overlay_text();
+    assert!(overlay_text.contains("overlay"));
+    assert!(overlay_text.contains("current_stage=RenderSubmit"));
+    assert!(overlay_text.contains("frame=17"));
+    for stage in STAGE_ORDER {
+        assert!(
+            overlay_text.contains(stage.as_str()),
+            "overlay text should include completed stage {}",
+            stage.as_str()
+        );
+    }
 }
