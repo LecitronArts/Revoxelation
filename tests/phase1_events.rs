@@ -1,13 +1,16 @@
 use revoxelation::runtime::events::{
     is_monotonic, BlockEditCommand, BlockEditOperation, BlockPosition, ChunkCoordinate,
     ChunkLifecycleAction, ChunkLifecycleCommand, CommandEnvelope, CommandOutcome,
-    CommandOutcomeEvent, EventEnvelope, PlayerAction, PlayerActionCommand, RejectionReason,
-    RuntimeCommand, RuntimeEvent, SequenceMetadata,
+    CommandOutcomeEvent, EventBus, EventEnvelope, PlayerAction, PlayerActionCommand,
+    RejectionReason, RuntimeCommand, RuntimeEvent, SequenceMetadata,
 };
 
 #[test]
 fn wave0_events_selector_bootstrap() {
-    let selectors = ["event_serde_roundtrip_models"];
+    let selectors = [
+        "event_serde_roundtrip_models",
+        "invalid_command_rejected_with_reason",
+    ];
 
     for selector in selectors {
         assert!(
@@ -111,5 +114,50 @@ fn event_serde_roundtrip_models() {
     assert!(
         is_monotonic(&sequence_order),
         "event sequence metadata should remain monotonic after serde roundtrip",
+    );
+}
+
+#[test]
+fn invalid_command_rejected_with_reason() {
+    let mut event_bus = EventBus::new(2);
+    let _ = event_bus.publish_command(RuntimeCommand::BlockEdit(BlockEditCommand {
+        actor_entity_id: 5,
+        position: BlockPosition { x: 0, y: 64, z: 0 },
+        edit: BlockEditOperation::Place {
+            block_id: "   ".to_string(),
+        },
+    }));
+
+    event_bus.process_pending_commands();
+    let snapshot = event_bus.snapshot();
+
+    let outcomes = snapshot
+        .emitted_events
+        .iter()
+        .filter_map(|entry| {
+            if let RuntimeEvent::CommandOutcome(outcome) = &entry.event {
+                Some(outcome)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(outcomes.len(), 1, "invalid command should emit one outcome");
+
+    let expected_rejection = CommandOutcome::Rejected {
+        reason: RejectionReason::new(
+            "empty_block_id",
+            "block edit place commands require a non-empty block id",
+        ),
+    };
+    assert_eq!(outcomes[0].outcome.clone(), expected_rejection);
+
+    assert!(
+        snapshot
+            .emitted_events
+            .iter()
+            .all(|entry| !matches!(entry.event, RuntimeEvent::BlockEditApplied(_))),
+        "invalid block edit command should never emit a block edit applied event",
     );
 }
