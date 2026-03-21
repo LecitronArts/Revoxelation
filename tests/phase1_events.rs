@@ -41,6 +41,7 @@ fn event_serde_roundtrip_models() {
             command: RuntimeCommand::ChunkLifecycle(ChunkLifecycleCommand {
                 chunk: ChunkCoordinate { x: 2, y: 0, z: -3 },
                 action: ChunkLifecycleAction::Activate,
+                lod_level: 0,
             }),
         },
         CommandEnvelope {
@@ -91,6 +92,7 @@ fn event_serde_roundtrip_models() {
             event: RuntimeEvent::ChunkLifecycleApplied(ChunkLifecycleCommand {
                 chunk: ChunkCoordinate { x: 2, y: 0, z: -3 },
                 action: ChunkLifecycleAction::Deactivate,
+                lod_level: 0,
             }),
         },
         EventEnvelope {

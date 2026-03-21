@@ -58,6 +58,7 @@ pub enum PlayerAction {
 pub struct ChunkLifecycleCommand {
     pub chunk: ChunkCoordinate,
     pub action: ChunkLifecycleAction,
+    pub lod_level: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

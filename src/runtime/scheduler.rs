@@ -68,6 +68,7 @@ fn seed_input_commands(event_bus: &mut EventBus) {
     let _ = event_bus.publish_command(RuntimeCommand::ChunkLifecycle(ChunkLifecycleCommand {
         chunk: ChunkCoordinate { x: 0, y: 0, z: 0 },
         action: ChunkLifecycleAction::Activate,
+        lod_level: 0,
     }));
 
     let _ = event_bus.publish_command(RuntimeCommand::BlockEdit(BlockEditCommand {
