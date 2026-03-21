@@ -5,6 +5,9 @@
 
 use std::collections::HashSet;
 
+pub const CHUNK_EDGE: usize = 64;
+pub const CHUNK_VOXEL_COUNT: usize = CHUNK_EDGE * CHUNK_EDGE * CHUNK_EDGE;
+
 // ---------------------------------------------------------------------------
 // ChunkKey
 // ---------------------------------------------------------------------------
@@ -24,6 +27,39 @@ pub struct ChunkKey {
 impl ChunkKey {
     pub fn new(x: i32, y: i32, z: i32, lod_level: u8) -> Self {
         Self { x, y, z, lod_level }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkVoxels {
+    pub block_ids: Box<[u8]>,
+}
+
+impl ChunkVoxels {
+    pub fn new(block_ids: Box<[u8]>) -> Result<Self, String> {
+        if block_ids.len() != CHUNK_VOXEL_COUNT {
+            return Err(format!(
+                "chunk payload length mismatch: expected {}, got {}",
+                CHUNK_VOXEL_COUNT,
+                block_ids.len()
+            ));
+        }
+
+        Ok(Self { block_ids })
+    }
+
+    pub fn block(&self, x: u8, y: u8, z: u8) -> u8 {
+        self.block_ids[Self::linear_index(x, y, z)]
+    }
+
+    pub fn linear_index(x: u8, y: u8, z: u8) -> usize {
+        let x = usize::from(x);
+        let y = usize::from(y);
+        let z = usize::from(z);
+        debug_assert!(x < CHUNK_EDGE);
+        debug_assert!(y < CHUNK_EDGE);
+        debug_assert!(z < CHUNK_EDGE);
+        x + (y * CHUNK_EDGE) + (z * CHUNK_EDGE * CHUNK_EDGE)
     }
 }
 
@@ -98,7 +134,10 @@ pub struct LodConfig {
 
 impl LodConfig {
     pub fn new(geometric_error: f32, chunk_world_size: f32) -> Self {
-        Self { geometric_error, chunk_world_size }
+        Self {
+            geometric_error,
+            chunk_world_size,
+        }
     }
 }
 
@@ -126,7 +165,12 @@ impl SseConfig {
         threshold_px: f32,
         frustum_culling: bool,
     ) -> Self {
-        Self { screen_height, fov_y_radians, threshold_px, frustum_culling }
+        Self {
+            screen_height,
+            fov_y_radians,
+            threshold_px,
+            frustum_culling,
+        }
     }
 }
 
@@ -137,8 +181,8 @@ impl SseConfig {
 /// Outcome of an individual chunk load/unload background task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChunkJobOutcome {
-    /// Background generation completed successfully; payload is raw chunk data.
-    Generated(Box<[u8]>),
+    /// Background generation completed successfully; payload is typed chunk data.
+    Generated(ChunkVoxels),
     Loaded,
     Unloaded,
     Cancelled,

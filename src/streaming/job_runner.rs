@@ -5,20 +5,21 @@
 //! before the task fires causes a `Cancelled` result to be sent instead.
 
 use std::sync::{
+    Arc,
     atomic::{AtomicBool, Ordering},
-    mpsc, Arc,
+    mpsc,
 };
 
 use super::{
     job_queue::PrioritizedTask,
-    types::{ChunkJobOutcome, ChunkJobResult},
+    types::{CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkJobResult, ChunkVoxels},
 };
 
 /// Spawn a background chunk job on `pool`.
 ///
 /// * If the cancel flag is `true` when the closure runs, a `Cancelled` result
 ///   is sent.
-/// * Otherwise a `Generated` result with a placeholder 8-byte payload is sent.
+/// * Otherwise a `Generated` result with a dense placeholder chunk payload is sent.
 ///
 /// The returned `Arc<AtomicBool>` is the cancel flag; callers can set it to
 /// `true` to request cancellation of in-flight work.
@@ -34,7 +35,9 @@ pub fn spawn_chunk_job(
         let outcome = if flag_clone.load(Ordering::Relaxed) {
             ChunkJobOutcome::Cancelled
         } else {
-            ChunkJobOutcome::Generated(vec![0u8; 8].into_boxed_slice())
+            let voxels = ChunkVoxels::new(vec![0u8; CHUNK_VOXEL_COUNT].into_boxed_slice())
+                .expect("placeholder chunk payload must match the typed contract");
+            ChunkJobOutcome::Generated(voxels)
         };
         // Send result regardless of outcome; receiver may have dropped.
         let _ = sender.send(ChunkJobResult::new(task.key, outcome));
@@ -94,13 +97,19 @@ mod tests {
         flag.store(true, Ordering::Relaxed);
         // Allow the task time to execute.
         let result = rx.recv_timeout(Duration::from_secs(2));
-        assert!(result.is_ok(), "should still receive a result even when cancelled");
+        assert!(
+            result.is_ok(),
+            "should still receive a result even when cancelled"
+        );
         // Outcome must be Cancelled (if flag was seen in time) or Generated
         // (if the task ran before the flag was set). Either is acceptable; what
         // must NOT happen is a panic or missing result.
         let outcome = result.unwrap().outcome;
         assert!(
-            matches!(outcome, ChunkJobOutcome::Cancelled | ChunkJobOutcome::Generated(_)),
+            matches!(
+                outcome,
+                ChunkJobOutcome::Cancelled | ChunkJobOutcome::Generated(_)
+            ),
             "outcome must be Cancelled or Generated"
         );
     }
