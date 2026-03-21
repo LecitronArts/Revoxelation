@@ -7,7 +7,7 @@ use gpu_allocator::{MemoryLocation, vulkan::{Allocation, AllocationScheme}};
 
 use crate::{
     meshing::{PackedMesh, PackedVertex},
-    streaming::types::ChunkKey,
+    streaming::types::{CHUNK_EDGE, ChunkKey},
 };
 
 use super::{Renderer, create_allocated_buffer, destroy_allocated_buffer};
@@ -25,6 +25,9 @@ pub struct ChunkDrawMetadata {
     pub vertex_offset: i32,
     pub index_count: u32,
     pub lod_level: u32,
+    pub _padding0: u32,
+    pub chunk_origin: [f32; 3],
+    pub chunk_scale: f32,
 }
 
 pub struct SlotUpload {
@@ -83,14 +86,19 @@ impl SlotAllocator {
 
         let first_index = slot_id * index_slot_stride_indices() as u32;
         let vertex_offset = (slot_id * vertex_slot_stride_vertices() as u32) as i32;
+        let chunk_scale = lod_scale(key.lod_level);
+        let chunk_origin = chunk_origin(key, chunk_scale);
         let metadata = ChunkDrawMetadata {
-            aabb_min: mesh.aabb_min,
+            aabb_min: world_aabb(mesh.aabb_min, chunk_origin, chunk_scale),
             slot_id,
-            aabb_max: mesh.aabb_max,
+            aabb_max: world_aabb(mesh.aabb_max, chunk_origin, chunk_scale),
             first_index,
             vertex_offset,
             index_count: mesh.indices.len() as u32,
             lod_level: u32::from(key.lod_level),
+            _padding0: 0,
+            chunk_origin,
+            chunk_scale,
         };
         let indirect = vk::DrawIndexedIndirectCommand {
             index_count: mesh.indices.len() as u32,
@@ -244,6 +252,10 @@ impl ChunkPool {
         self.indirect_buffer
     }
 
+    pub fn metadata_buffer(&self) -> vk::Buffer {
+        self.metadata_buffer
+    }
+
     pub fn vertex_buffer(&self) -> vk::Buffer {
         self.vertex_buffer
     }
@@ -340,6 +352,27 @@ fn vertex_slot_stride_bytes() -> usize {
 
 fn index_slot_stride_bytes() -> usize {
     index_slot_stride_indices() * size_of::<u32>()
+}
+
+fn lod_scale(lod_level: u8) -> f32 {
+    (1_u32 << lod_level) as f32
+}
+
+fn chunk_origin(key: ChunkKey, chunk_scale: f32) -> [f32; 3] {
+    let chunk_world_edge = CHUNK_EDGE as f32 * chunk_scale;
+    [
+        key.x as f32 * chunk_world_edge,
+        key.y as f32 * chunk_world_edge,
+        key.z as f32 * chunk_world_edge,
+    ]
+}
+
+fn world_aabb(local: [f32; 3], origin: [f32; 3], chunk_scale: f32) -> [f32; 3] {
+    [
+        origin[0] + local[0] * chunk_scale,
+        origin[1] + local[1] * chunk_scale,
+        origin[2] + local[2] * chunk_scale,
+    ]
 }
 
 fn write_allocation_bytes(

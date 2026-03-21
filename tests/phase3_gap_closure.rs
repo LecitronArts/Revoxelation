@@ -6,13 +6,14 @@
 
 use std::{sync::mpsc, time::Duration};
 
+use ash::vk;
 use revoxelation::{
     meshing::{PackedMesh, PackedVertex},
-    renderer::chunk_pool::SlotAllocator,
+    renderer::{chunk_pool::SlotAllocator, mesh_pipeline::metadata_descriptor_layout_binding},
     streaming::{
         job_queue::PrioritizedTask,
         job_runner::spawn_chunk_job,
-        types::{CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey},
+        types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey},
     },
 };
 
@@ -157,4 +158,78 @@ fn mesh_03_dense_draw_list_reuse_keeps_other_draw_indices_stable() {
     assert_eq!(allocator.draw_index_for_slot(0), Some(0));
     assert_eq!(allocator.draw_index_for_slot(2), Some(1));
     assert_eq!(allocator.draw_index_for_slot(1), Some(2));
+}
+
+#[test]
+fn mesh_03_chunk_metadata_world_origin_matches_chunk_key() {
+    let mut allocator = SlotAllocator::with_capacity(2);
+    let key = chunk_key(-2, 1, 3, 2);
+    let mesh = sample_packed_mesh(12, 2);
+
+    let upload = allocator
+        .prepare_upload(key, &mesh)
+        .expect("upload should compute chunk metadata");
+
+    let lod_scale = (1_u32 << key.lod_level) as f32;
+    let chunk_world_edge = CHUNK_EDGE as f32 * lod_scale;
+    let expected_origin = [
+        key.x as f32 * chunk_world_edge,
+        key.y as f32 * chunk_world_edge,
+        key.z as f32 * chunk_world_edge,
+    ];
+
+    assert_eq!(upload.metadata.chunk_origin, expected_origin);
+    assert_eq!(
+        upload.metadata.aabb_min,
+        [
+            expected_origin[0] + mesh.aabb_min[0] * lod_scale,
+            expected_origin[1] + mesh.aabb_min[1] * lod_scale,
+            expected_origin[2] + mesh.aabb_min[2] * lod_scale,
+        ]
+    );
+    assert_eq!(
+        upload.metadata.aabb_max,
+        [
+            expected_origin[0] + mesh.aabb_max[0] * lod_scale,
+            expected_origin[1] + mesh.aabb_max[1] * lod_scale,
+            expected_origin[2] + mesh.aabb_max[2] * lod_scale,
+        ]
+    );
+    assert_eq!(
+        allocator.metadata_shadow()[upload.slot_id as usize].chunk_origin,
+        expected_origin
+    );
+}
+
+#[test]
+fn mesh_03_mesh_pipeline_binds_metadata_storage_buffer() {
+    let binding = metadata_descriptor_layout_binding();
+
+    assert_eq!(binding.binding, 0);
+    assert_eq!(binding.descriptor_count, 1);
+    assert_eq!(binding.descriptor_type, vk::DescriptorType::STORAGE_BUFFER);
+    assert_eq!(binding.stage_flags, vk::ShaderStageFlags::VERTEX);
+}
+
+#[test]
+fn mesh_03_vertex_shader_uses_metadata_for_world_placement() {
+    let shader =
+        std::fs::read_to_string("shaders/chunk_mesh.vert").expect("chunk mesh shader should exist");
+
+    assert!(
+        shader.contains("gl_InstanceIndex"),
+        "vertex shader should index chunk metadata per draw instance"
+    );
+    assert!(
+        shader.contains("chunk_origin"),
+        "vertex shader should read chunk world origin from metadata"
+    );
+    assert!(
+        shader.contains("world_position"),
+        "vertex shader should place vertices in world space before projection"
+    );
+    assert!(
+        !shader.contains("vec3 centered = (local - vec3(32.0, 32.0, 32.0)) / vec3(32.0, 32.0, 96.0);"),
+        "vertex shader should no longer treat every chunk as local-only centered geometry"
+    );
 }

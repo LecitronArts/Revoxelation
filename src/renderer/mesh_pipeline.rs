@@ -6,14 +6,79 @@ use super::{Renderer, chunk_pool::ChunkPool};
 pub struct ChunkMeshPipeline {
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
+    pub descriptor_pool: vk::DescriptorPool,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
+    pub descriptor_set: vk::DescriptorSet,
+}
+
+pub fn metadata_descriptor_layout_binding() -> vk::DescriptorSetLayoutBinding<'static> {
+    vk::DescriptorSetLayoutBinding::default()
+        .binding(0)
+        .descriptor_count(1)
+        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+        .stage_flags(vk::ShaderStageFlags::VERTEX)
 }
 
 impl ChunkMeshPipeline {
     pub fn new(renderer: &Renderer) -> Result<Self> {
         let device = &renderer.device_ctx.device;
+        let bindings = [metadata_descriptor_layout_binding()];
+        let descriptor_set_layout = unsafe {
+            device
+                .create_descriptor_set_layout(
+                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+                    None,
+                )
+                .context("failed to create chunk mesh descriptor set layout")?
+        };
+        let pool_sizes = [vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::STORAGE_BUFFER)
+            .descriptor_count(1)];
+        let descriptor_pool = unsafe {
+            device
+                .create_descriptor_pool(
+                    &vk::DescriptorPoolCreateInfo::default()
+                        .pool_sizes(&pool_sizes)
+                        .max_sets(1),
+                    None,
+                )
+                .context("failed to create chunk mesh descriptor pool")?
+        };
+        let descriptor_set_layouts = [descriptor_set_layout];
+        let descriptor_set = unsafe {
+            device
+                .allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfo::default()
+                        .descriptor_pool(descriptor_pool)
+                        .set_layouts(&descriptor_set_layouts),
+                )
+                .context("failed to allocate chunk mesh descriptor set")?
+                .into_iter()
+                .next()
+                .context("chunk mesh descriptor allocation returned no descriptor sets")?
+        };
+        let chunk_pool = renderer
+            .chunk_pool
+            .as_ref()
+            .context("chunk mesh pipeline requires a chunk pool before initialization")?;
+        let metadata_buffer_info = [vk::DescriptorBufferInfo::default()
+            .buffer(chunk_pool.metadata_buffer())
+            .offset(0)
+            .range(vk::WHOLE_SIZE)];
+        let writes = [vk::WriteDescriptorSet::default()
+            .dst_set(descriptor_set)
+            .dst_binding(bindings[0].binding)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(&metadata_buffer_info)];
+        unsafe {
+            device.update_descriptor_sets(&writes, &[]);
+        }
         let pipeline_layout = unsafe {
             device
-                .create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default(), None)
+                .create_pipeline_layout(
+                    &vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_set_layouts),
+                    None,
+                )
                 .context("failed to create chunk mesh pipeline layout")?
         };
 
@@ -107,6 +172,9 @@ impl ChunkMeshPipeline {
         Ok(Self {
             pipeline,
             pipeline_layout,
+            descriptor_pool,
+            descriptor_set_layout,
+            descriptor_set,
         })
     }
 
@@ -124,6 +192,14 @@ impl ChunkMeshPipeline {
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline,
+            );
+            renderer.device_ctx.device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline_layout,
+                0,
+                &[self.descriptor_set],
+                &[],
             );
             renderer.device_ctx.device.cmd_bind_vertex_buffers(
                 cmd,
@@ -154,6 +230,14 @@ impl ChunkMeshPipeline {
                 .device_ctx
                 .device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
+            renderer
+                .device_ctx
+                .device
+                .destroy_descriptor_pool(self.descriptor_pool, None);
+            renderer
+                .device_ctx
+                .device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         }
     }
 }

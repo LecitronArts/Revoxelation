@@ -3,6 +3,23 @@
 layout(location = 0) in uvec2 in_packed;
 layout(location = 0) out vec3 v_color;
 
+struct ChunkDrawMetadata {
+    vec3 aabb_min;
+    uint slot_id;
+    vec3 aabb_max;
+    uint first_index;
+    int vertex_offset;
+    uint index_count;
+    uint lod_level;
+    uint _padding0;
+    vec3 chunk_origin;
+    float chunk_scale;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer ChunkMetadataBuffer {
+    ChunkDrawMetadata metadata[];
+} chunk_metadata;
+
 vec3 decode_position(uint word0) {
     uint x = word0 & 0x3Fu;
     uint y = (word0 >> 6) & 0x3Fu;
@@ -10,11 +27,17 @@ vec3 decode_position(uint word0) {
     return vec3(x, y, z);
 }
 
+vec4 debug_project(vec3 world_position) {
+    vec3 centered = (world_position - vec3(96.0, 48.0, 160.0)) / vec3(224.0, 160.0, 384.0);
+    return vec4(centered.x, -centered.y, centered.z, 1.0);
+}
+
 void main() {
-    vec3 local = decode_position(in_packed.x);
+    ChunkDrawMetadata metadata = chunk_metadata.metadata[gl_InstanceIndex];
+    vec3 local = decode_position(in_packed.x) * metadata.chunk_scale;
     uint block_id = in_packed.y & 0xFFFFu;
-    vec3 centered = (local - vec3(32.0, 32.0, 32.0)) / vec3(32.0, 32.0, 96.0);
-    gl_Position = vec4(centered.x, -centered.y, centered.z, 1.0);
+    vec3 world_position = metadata.chunk_origin + local;
+    gl_Position = debug_project(world_position);
     v_color = vec3(
         float((block_id % 5u) + 1u) / 6.0,
         float(((block_id / 5u) % 5u) + 1u) / 6.0,
