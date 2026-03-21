@@ -150,7 +150,7 @@ impl ChunkPool {
             renderer,
             (vertex_slot_stride_bytes() * MAX_RENDER_CHUNKS) as u64,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
-            MemoryLocation::GpuOnly,
+            MemoryLocation::CpuToGpu,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-vertex",
         )?;
@@ -158,7 +158,7 @@ impl ChunkPool {
             renderer,
             (index_slot_stride_bytes() * MAX_RENDER_CHUNKS) as u64,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
-            MemoryLocation::GpuOnly,
+            MemoryLocation::CpuToGpu,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-index",
         )?;
@@ -166,7 +166,7 @@ impl ChunkPool {
             renderer,
             (size_of::<ChunkDrawMetadata>() * MAX_RENDER_CHUNKS) as u64,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::STORAGE_BUFFER,
-            MemoryLocation::GpuOnly,
+            MemoryLocation::CpuToGpu,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-metadata",
         )?;
@@ -176,7 +176,7 @@ impl ChunkPool {
             vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::INDIRECT_BUFFER,
-            MemoryLocation::GpuOnly,
+            MemoryLocation::CpuToGpu,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-indirect",
         )?;
@@ -210,8 +210,69 @@ impl ChunkPool {
         self.indirect_buffer
     }
 
+    pub fn vertex_buffer(&self) -> vk::Buffer {
+        self.vertex_buffer
+    }
+
+    pub fn index_buffer(&self) -> vk::Buffer {
+        self.index_buffer
+    }
+
     pub fn slot_allocator(&self) -> &SlotAllocator {
         &self.slot_allocator
+    }
+
+    pub fn apply_upload(&mut self, upload: SlotUpload) -> Result<()> {
+        write_allocation_bytes(
+            self.vertex_allocation.as_mut(),
+            upload.vertex_offset_bytes as usize,
+            &upload.vertex_bytes,
+        )?;
+        write_allocation_bytes(
+            self.index_allocation.as_mut(),
+            upload.index_offset_bytes as usize,
+            &upload.index_bytes,
+        )?;
+
+        let metadata = [upload.metadata];
+        let metadata_bytes = cast_slice(&metadata);
+        write_allocation_bytes(
+            self.metadata_allocation.as_mut(),
+            upload.slot_id as usize * size_of::<ChunkDrawMetadata>(),
+            metadata_bytes,
+        )?;
+
+        write_allocation_bytes(
+            self.indirect_allocation.as_mut(),
+            upload.slot_id as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
+            struct_as_bytes(&upload.indirect),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn clear_slot(&mut self, slot_id: u32) -> Result<()> {
+        write_allocation_bytes(
+            self.vertex_allocation.as_mut(),
+            slot_id as usize * vertex_slot_stride_bytes(),
+            &vec![0_u8; vertex_slot_stride_bytes()],
+        )?;
+        write_allocation_bytes(
+            self.index_allocation.as_mut(),
+            slot_id as usize * index_slot_stride_bytes(),
+            &vec![0_u8; index_slot_stride_bytes()],
+        )?;
+        write_allocation_bytes(
+            self.metadata_allocation.as_mut(),
+            slot_id as usize * size_of::<ChunkDrawMetadata>(),
+            cast_slice(&[ChunkDrawMetadata::default()]),
+        )?;
+        write_allocation_bytes(
+            self.indirect_allocation.as_mut(),
+            slot_id as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
+            struct_as_bytes(&vk::DrawIndexedIndirectCommand::default()),
+        )?;
+        Ok(())
     }
 
     pub fn destroy(mut self, renderer: &mut Renderer) -> Result<()> {
@@ -245,4 +306,25 @@ fn vertex_slot_stride_bytes() -> usize {
 
 fn index_slot_stride_bytes() -> usize {
     index_slot_stride_indices() * size_of::<u32>()
+}
+
+fn write_allocation_bytes(
+    allocation: Option<&mut Allocation>,
+    offset: usize,
+    bytes: &[u8],
+) -> Result<()> {
+    let allocation = allocation.ok_or_else(|| anyhow!("missing chunk pool allocation"))?;
+    let mapped = allocation
+        .mapped_slice_mut()
+        .ok_or_else(|| anyhow!("chunk pool allocation is not CPU-visible"))?;
+    let end = offset + bytes.len();
+    if end > mapped.len() {
+        return Err(anyhow!("chunk pool write exceeds allocation bounds"));
+    }
+    mapped[offset..end].copy_from_slice(bytes);
+    Ok(())
+}
+
+fn struct_as_bytes<T>(value: &T) -> &[u8] {
+    unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size_of::<T>()) }
 }

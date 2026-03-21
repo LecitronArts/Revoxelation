@@ -1,3 +1,6 @@
 fn main() {
-    let _ = revoxelation::runtime::run_frame(0);
+    if let Err(err) = revoxelation::app::run() {
+        eprintln!("{err:#}");
+        std::process::exit(1);
+    }
 }

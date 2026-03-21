@@ -485,11 +485,9 @@ fn seed_input_commands(event_bus: &mut EventBus) {
 mod tests {
     use super::MAX_RETRIES;
     use crate::streaming::{
-        job_queue::ChunkJobQueue,
         state_store::ChunkStateStore,
-        types::{ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState},
+        types::{ChunkKey, ChunkState},
     };
-    use std::sync::mpsc;
 
     fn key(n: i32) -> ChunkKey {
         ChunkKey::new(n, 0, 0, 0)

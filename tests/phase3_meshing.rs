@@ -13,7 +13,7 @@ use revoxelation::{
     },
     renderer::{RenderDelta, chunk_pool::SlotAllocator, device::required_device_features_error},
     runtime::scheduler::debug_deactivate_active_chunk_for_tests,
-    streaming::types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkState, ChunkVoxels},
+    streaming::{octree::StreamingOctree, types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkState, ChunkVoxels}},
 };
 
 fn filled_chunk(fill: u8) -> ChunkVoxels {
@@ -482,4 +482,33 @@ fn mesh_03_unload_clears_slot_and_indirect_entry() {
     assert_eq!(allocator.metadata_shadow()[slot].aabb_max, [0.0, 0.0, 0.0]);
     assert_eq!(allocator.indirect_shadow()[slot].index_count, 0);
     assert_eq!(allocator.indirect_shadow()[slot].instance_count, 0);
+}
+
+#[test]
+fn mesh_03_build_script_and_indirect_submit_contract() {
+    assert_eq!(
+        revoxelation::renderer::chunk_pool::MAX_RENDER_CHUNKS,
+        StreamingOctree::build(4, 3).len()
+    );
+
+    let build_script = std::fs::read_to_string("build.rs").expect("build.rs should exist");
+    for shader in revoxelation::renderer::shader_source_files() {
+        assert!(
+            build_script.contains(shader),
+            "build.rs should track shader source {shader}"
+        );
+    }
+
+    assert_eq!(
+        revoxelation::renderer::submit_frame_sequence(),
+        &[
+            "chunk_delta_uploads",
+            "compute_cull",
+            "indirect_barrier",
+            "render_pass",
+            "bind_chunk_pipeline",
+            "draw_indexed_indirect",
+            "egui",
+        ]
+    );
 }

@@ -20,16 +20,38 @@ use crate::{
 };
 
 pub mod chunk_pool;
+pub mod cull_pipeline;
 pub mod device;
 pub mod egui_backend;
 pub mod frame;
 pub mod instance;
+pub mod mesh_pipeline;
 pub mod swapchain;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RenderDelta {
     Upsert { key: ChunkKey, mesh: PackedMesh },
     Remove { key: ChunkKey },
+}
+
+pub fn shader_source_files() -> &'static [&'static str] {
+    &[
+        "shaders/chunk_mesh.vert",
+        "shaders/chunk_mesh.frag",
+        "shaders/chunk_cull.comp",
+    ]
+}
+
+pub fn submit_frame_sequence() -> &'static [&'static str] {
+    &[
+        "chunk_delta_uploads",
+        "compute_cull",
+        "indirect_barrier",
+        "render_pass",
+        "bind_chunk_pipeline",
+        "draw_indexed_indirect",
+        "egui",
+    ]
 }
 
 pub struct Renderer {
@@ -47,6 +69,8 @@ pub struct Renderer {
     pub current_frame: usize,
     pub chunk_pool: Option<chunk_pool::ChunkPool>,
     pub pending_chunk_deltas: VecDeque<RenderDelta>,
+    pub mesh_pipeline: Option<mesh_pipeline::ChunkMeshPipeline>,
+    pub cull_pipeline: Option<cull_pipeline::ChunkCullPipeline>,
     pub egui_backend: Option<egui_backend::EguiAshBackend>,
 }
 
@@ -226,6 +250,8 @@ impl Renderer {
             current_frame: 0,
             chunk_pool: None,
             pending_chunk_deltas: VecDeque::new(),
+            mesh_pipeline: None,
+            cull_pipeline: None,
             egui_backend: None,
         })
     }
@@ -242,6 +268,14 @@ impl Drop for Renderer {
 
             if let Some(chunk_pool) = self.chunk_pool.take() {
                 let _ = chunk_pool.destroy(self);
+            }
+
+            if let Some(mesh_pipeline) = self.mesh_pipeline.take() {
+                mesh_pipeline.destroy(self);
+            }
+
+            if let Some(cull_pipeline) = self.cull_pipeline.take() {
+                cull_pipeline.destroy(self);
             }
 
             for frame in self.frames.iter().rev() {
@@ -330,10 +364,13 @@ impl Renderer {
         while let Some(delta) = self.pending_chunk_deltas.pop_front() {
             match delta {
                 RenderDelta::Upsert { key, mesh } => {
-                    let _ = chunk_pool.prepare_upload(key, &mesh)?;
+                    let upload = chunk_pool.prepare_upload(key, &mesh)?;
+                    chunk_pool.apply_upload(upload)?;
                 }
                 RenderDelta::Remove { key } => {
-                    let _ = chunk_pool.prepare_remove(key);
+                    if let Some(slot_id) = chunk_pool.prepare_remove(key) {
+                        chunk_pool.clear_slot(slot_id)?;
+                    }
                 }
             }
         }
@@ -389,6 +426,28 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
 
         renderer.record_chunk_delta_uploads(command_buffer)?;
 
+        if let (Some(cull_pipeline), Some(chunk_pool)) =
+            (&renderer.cull_pipeline, &renderer.chunk_pool)
+        {
+            cull_pipeline.dispatch(renderer, command_buffer, chunk_pool.active_chunk_count());
+
+            let barriers = [vk::BufferMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ)
+                .buffer(chunk_pool.indirect_buffer())
+                .offset(0)
+                .size(vk::WHOLE_SIZE)];
+            renderer.device_ctx.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::DRAW_INDIRECT,
+                vk::DependencyFlags::empty(),
+                &[],
+                &barriers,
+                &[],
+            );
+        }
+
         let clear_values = [vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [0.1, 0.1, 0.15, 1.0],
@@ -408,6 +467,15 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
             &render_pass_begin,
             vk::SubpassContents::INLINE,
         );
+
+        if let (Some(mesh_pipeline), Some(chunk_pool)) =
+            (&renderer.mesh_pipeline, &renderer.chunk_pool)
+        {
+            let draw_count = chunk_pool.active_chunk_count();
+            if draw_count > 0 {
+                mesh_pipeline.draw(renderer, chunk_pool, command_buffer, draw_count);
+            }
+        }
 
         if let Some(mut egui_backend) = renderer.egui_backend.take() {
             let paint_result = egui_backend.paint(
