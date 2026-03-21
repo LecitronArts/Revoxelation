@@ -80,7 +80,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md - Typed chunk payloads, greedy mesh generation, and neighbor-aware invalidation.
+- [x] 03-01-PLAN.md - Typed chunk payloads, greedy mesh generation, and neighbor-aware invalidation.
 - [ ] 03-02-PLAN.md - Fixed slot-pool renderer delta sync, feature-gated indirect draw, and visible chunk rendering.
 
 ### Phase 4: Movement and Collision Modes
@@ -147,7 +147,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4
 | 1. Runtime Skeleton and Quality Gates | 5/5 | Complete | 2026-03-15 |
 | 2. Streaming Lifecycle and Job Queues | 2/2 | Complete    | 2026-03-21 |
 | 2.5. Vulkan Bootstrap and Render Infrastructure | 2/2 | Complete    | 2026-03-21 |
-| 3. Greedy Meshing and Render Delta Sync | 0/2 | Not started | - |
+| 3. Greedy Meshing and Render Delta Sync | 1/2 | In Progress | - |
 | 4. Movement and Collision Modes | 0/2 | Not started | - |
 | 5. Authoritative Block Editing Feedback | 0/2 | Not started | - |
 | 6. Chunk Persistence and Recovery | 0/2 | Not started | - |

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 02.5 (COMPLETE — advance to 03)
-status: planning
-stopped_at: Completed 02.5-02-PLAN.md; Phase 02.5 fully done
-last_updated: "2026-03-21T14:06:31.930Z"
+current_phase: 03
+status: executing
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-03-21T18:39:08.917Z"
 progress:
   total_phases: 8
   completed_phases: 3
-  total_plans: 9
-  completed_plans: 9
+  total_plans: 11
+  completed_plans: 10
 ---
 
 # Session State
@@ -22,13 +22,13 @@ See: .planning/PROJECT.md
 ## Position
 
 **Milestone:** v1.0 milestone
-**Current phase:** 02.5 (COMPLETE — advance to 03)
-**Status:** Ready to plan
+**Current phase:** 03
+**Status:** Executing Phase 03
 
 ## Session Continuity
 
-Last session: 2026-03-21T13:45:00.000Z
-Stopped at: Completed 02.5-02-PLAN.md; Phase 02.5 fully done
+Last session: 2026-03-21T18:38:41.603Z
+Stopped at: Completed 03-01-PLAN.md
 Resume file: None
 
 ## Session Log
@@ -38,13 +38,17 @@ Resume file: None
 - 2026-03-21: Resume workflow verified Phase 2.5 plans/context exist; primary next action is execution
 - 2026-03-21: Executed 02.5-01-PLAN.md — Vulkan bootstrap (instance, device, swapchain, frame loop)
 - 2026-03-21: Executed 02.5-02-PLAN.md — gpu-allocator + StagingBuffer + EguiAshBackend; Phase 02.5 complete
+- 2026-03-22: Executed 03-01-PLAN.md — typed chunk payloads, meshing invalidation state, and greedy PackedMesh emission
 
 ## Accumulated Decisions
 
 ### Phase 02.5 (Vulkan Bootstrap)
+
 - Switched ash-window to 0.13 / raw-window-handle to 0.6 for ash 0.38 compatibility
 - Global renderer accessor returns Option to prevent panic before Vulkan init
 - ManuallyDrop<Allocator> freed before destroy_device in explicit Drop impl
 - EguiAshBackend uses scratch GPU buffers per paint call (deferred ring buffer to Phase 3)
 - Font atlas uses R8G8B8A8_SRGB matching egui srgba_pixels() output
 - StagingBuffer::copy_to_image placed on StagingBuffer so Phase 3 meshing can reuse it
+- [Phase 03]: Made greedy meshing halo-aware and encoded skirt geometry in the packed vertex contract — Lets later renderer work consume seam-safe meshes without re-deriving border topology.
+- [Phase 03]: Kept meshing dirtiness in a dedicated MeshingState instead of extending ChunkState — Preserves a clean ownership boundary between lifecycle transitions and remesh work.

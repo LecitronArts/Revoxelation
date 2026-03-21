@@ -19,8 +19,8 @@
 
 ### Meshing and Render Sync
 
-- [ ] **MESH-01**: Engine can generate greedy meshes for visible chunk surfaces and update them incrementally.
-- [ ] **MESH-02**: Chunk-border updates correctly invalidate neighbor meshes to avoid visible seams.
+- [x] **MESH-01**: Engine can generate greedy meshes for visible chunk surfaces and update them incrementally.
+- [x] **MESH-02**: Chunk-border updates correctly invalidate neighbor meshes to avoid visible seams.
 - [ ] **MESH-03**: Renderer integration supports chunk-delta updates so chunk edits do not require full world reupload.
 
 ### Movement and Collision
@@ -88,8 +88,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STRM-01 | Phase 2 | Complete |
 | STRM-02 | Phase 2 | Complete |
 | STRM-03 | Phase 2 | Complete |
-| MESH-01 | Phase 3 | Pending |
-| MESH-02 | Phase 3 | Pending |
+| MESH-01 | Phase 3 | Complete |
+| MESH-02 | Phase 3 | Complete |
 | MESH-03 | Phase 3 | Pending |
 | MOVE-01 | Phase 4 | Pending |
 | MOVE-02 | Phase 4 | Pending |
