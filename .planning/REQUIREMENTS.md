@@ -15,7 +15,7 @@
 
 - [x] **STRM-01**: Player movement drives chunk activation/deactivation within configured load and unload radii.
 - [x] **STRM-02**: Chunk load/unload transitions are represented by explicit lifecycle states and revision IDs.
-- [ ] **STRM-03**: Heavy chunk generation work executes through bounded background queues with cancellation/backpressure behavior.
+- [x] **STRM-03**: Heavy chunk generation work executes through bounded background queues with cancellation/backpressure behavior.
 
 ### Meshing and Render Sync
 
@@ -87,7 +87,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ECS-03 | Phase 1 | Complete |
 | STRM-01 | Phase 2 | Complete |
 | STRM-02 | Phase 2 | Complete |
-| STRM-03 | Phase 2 | Pending |
+| STRM-03 | Phase 2 | Complete |
 | MESH-01 | Phase 3 | Pending |
 | MESH-02 | Phase 3 | Pending |
 | MESH-03 | Phase 3 | Pending |
