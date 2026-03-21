@@ -1,0 +1,87 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-03-21T21:42:54.818Z",
+  "phase": "03",
+  "phase_name": "greedy-meshing-and-render-delta-sync",
+  "phase_dir": ".planning/phases/03-greedy-meshing-and-render-delta-sync",
+  "plan": 4,
+  "task": 3,
+  "total_tasks": 3,
+  "status": "paused",
+  "completed_tasks": [
+    {
+      "id": 1,
+      "name": "Execute 03-03 gap-closure plan",
+      "status": "done",
+      "commit": "d7aed28"
+    },
+    {
+      "id": 2,
+      "name": "Execute 03-04 gap-closure plan",
+      "status": "done",
+      "commit": "3355793"
+    }
+  ],
+  "remaining_tasks": [
+    {
+      "id": 3,
+      "name": "Plan and fix the validation-layer bootstrap gap in src/renderer/instance.rs, then re-verify Phase 03",
+      "status": "not_started"
+    }
+  ],
+  "blockers": [
+    {
+      "description": "Phase 03 re-verification still reports gaps_found because src/renderer/instance.rs unconditionally enables VK_LAYER_KHRONOS_validation in debug builds, so cargo run can fail before the window opens on machines without that optional layer.",
+      "type": "technical",
+      "workaround": "Next session should start with $gsd-plan-phase 03 --gaps, scoped to probing instance-layer availability or gracefully disabling the validation layer when absent."
+    }
+  ],
+  "human_actions_pending": [
+    {
+      "action": "After the validation-layer bootstrap fix lands, rerun cargo run and do the visual window checks from 03-VERIFICATION.md.",
+      "context": "Phase 03 code/test gaps are closed, but human runtime verification is still blocked until startup no longer hard-requires VK_LAYER_KHRONOS_validation.",
+      "blocking": true
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Use stable storage slots plus a dense draw list for Phase 03 gap closure.",
+      "rationale": "This removes sparse-slot indirect draw errors without compacting stable GPU storage or expanding scope into later phases.",
+      "phase": "03"
+    },
+    {
+      "decision": "Keep compute semantics minimal and metadata-driven.",
+      "rationale": "Phase 03 only needed end-to-end closure through chunk metadata, dense indirect preparation, and graphics placement, not frustum or camera systems.",
+      "phase": "03"
+    },
+    {
+      "decision": "Treat the missing VK_LAYER_KHRONOS_validation bootstrap failure as a Phase 03 gap, not an environment-only note.",
+      "rationale": "The failure is encoded in src/renderer/instance.rs and blocks the default debug startup path itself.",
+      "phase": "03"
+    }
+  ],
+  "uncommitted_files": [
+    ".planning/PROJECT.md",
+    ".planning/REQUIREMENTS.md",
+    ".planning/codebase/ARCHITECTURE.md",
+    ".planning/codebase/CONCERNS.md",
+    ".planning/codebase/CONVENTIONS.md",
+    ".planning/codebase/INTEGRATIONS.md",
+    ".planning/codebase/STACK.md",
+    ".planning/codebase/STRUCTURE.md",
+    ".planning/codebase/TESTING.md",
+    ".claude/",
+    ".idea/copilot.data.migration.agent.xml",
+    ".idea/copilot.data.migration.ask.xml",
+    ".idea/copilot.data.migration.ask2agent.xml",
+    ".idea/go.imports.xml",
+    ".planning/STATE.md.bak-2026-03-21T11-38-19",
+    ".planning/phases/03-greedy-meshing-and-render-delta-sync/03-02-SUMMARY.md",
+    ".planning/phases/03-greedy-meshing-and-render-delta-sync/03-03-PLAN.md",
+    ".planning/phases/03-greedy-meshing-and-render-delta-sync/03-04-PLAN.md",
+    ".planning/phases/03-greedy-meshing-and-render-delta-sync/03-VERIFICATION.md",
+    "CONOUT$"
+  ],
+  "next_action": "Run $gsd-plan-phase 03 --gaps, keep the new gap plan narrowly focused on src/renderer/instance.rs validation-layer probing/fallback, then execute the resulting gap-only plan and re-run phase verification.",
+  "context_notes": "Both gap-closure execution plans are complete and all automated tests pass: cargo test --test phase3_gap_closure, cargo test --test phase3_meshing, and cargo test. The only remaining blocker is the default debug bootstrap path hard-requiring VK_LAYER_KHRONOS_validation. Do not reopen the renderer/data-path work unless the new gap plan proves it is necessary."
+}
