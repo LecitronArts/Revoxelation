@@ -7,6 +7,9 @@ use std::sync::{
 
 use log::info;
 
+use crate::meshing::{
+    ALL_FACE_MASK, MeshDirtyCause, MeshingState, fine_chunk_boundary_mask,
+};
 use crate::streaming::{
     job_queue::{ChunkJobQueue, PrioritizedTask},
     job_runner::spawn_chunk_job,
@@ -83,9 +86,14 @@ impl StreamingState {
 }
 
 static STREAMING: OnceLock<Mutex<StreamingState>> = OnceLock::new();
+static MESHING: OnceLock<Mutex<MeshingState>> = OnceLock::new();
 
 fn streaming_state() -> &'static Mutex<StreamingState> {
     STREAMING.get_or_init(|| Mutex::new(StreamingState::new()))
+}
+
+fn meshing_state() -> &'static Mutex<MeshingState> {
+    MESHING.get_or_init(|| Mutex::new(MeshingState::default()))
 }
 
 // ---------------------------------------------------------------------------
@@ -253,8 +261,24 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
     ss.cancel_flags.remove(&key);
 
     match result.outcome {
-        ChunkJobOutcome::Generated(_) | ChunkJobOutcome::Loaded => {
+        ChunkJobOutcome::Generated(voxels) => {
             // Loading -> Active
+            let _ = ss.state_store.transition_to(key, ChunkState::Active);
+            let source_revision = ss.state_store.get(&key).map_or(0, |entry| entry.revision);
+            let mut meshing = meshing_state().lock().unwrap();
+            meshing.payloads.insert(key, voxels);
+            meshing.mark_dirty(key, MeshDirtyCause::GeneratedPayload, source_revision);
+            meshing.mark_face_neighbors_dirty(key, ALL_FACE_MASK, source_revision);
+            if key.lod_level == 0 {
+                meshing.mark_coarse_lod_neighbors_dirty(
+                    key,
+                    fine_chunk_boundary_mask(key),
+                    true,
+                    source_revision,
+                );
+            }
+        }
+        ChunkJobOutcome::Loaded => {
             let _ = ss.state_store.transition_to(key, ChunkState::Active);
         }
         ChunkJobOutcome::Cancelled => {
@@ -277,6 +301,20 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
         ChunkJobOutcome::Unloaded => {
             // Loading/Unloading -> Inactive
             let _ = ss.state_store.transition_to(key, ChunkState::Inactive);
+            let source_revision = ss.state_store.get(&key).map_or(0, |entry| entry.revision);
+            let mut meshing = meshing_state().lock().unwrap();
+            meshing.payloads.remove(&key);
+            meshing.dirty.remove(&key);
+            meshing.queued.retain(|queued| *queued != key);
+            meshing.completed_meshes.retain(|mesh| mesh.key != key);
+            if key.lod_level == 0 {
+                meshing.mark_coarse_lod_neighbors_dirty(
+                    key,
+                    fine_chunk_boundary_mask(key),
+                    false,
+                    source_revision,
+                );
+            }
         }
         ChunkJobOutcome::Failed(_msg) => {
             let current_retry = match ss.state_store.get(&key).map(|e| e.state) {
