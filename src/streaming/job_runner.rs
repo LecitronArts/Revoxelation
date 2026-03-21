@@ -12,14 +12,15 @@ use std::sync::{
 
 use super::{
     job_queue::PrioritizedTask,
-    types::{CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkJobResult, ChunkVoxels},
+    types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkVoxels},
 };
 
 /// Spawn a background chunk job on `pool`.
 ///
 /// * If the cancel flag is `true` when the closure runs, a `Cancelled` result
 ///   is sent.
-/// * Otherwise a `Generated` result with a dense placeholder chunk payload is sent.
+/// * Otherwise a `Generated` result with a deterministic non-empty chunk
+///   payload is sent.
 ///
 /// The returned `Arc<AtomicBool>` is the cancel flag; callers can set it to
 /// `true` to request cancellation of in-flight work.
@@ -35,8 +36,7 @@ pub fn spawn_chunk_job(
         let outcome = if flag_clone.load(Ordering::Relaxed) {
             ChunkJobOutcome::Cancelled
         } else {
-            let voxels = ChunkVoxels::new(vec![0u8; CHUNK_VOXEL_COUNT].into_boxed_slice())
-                .expect("placeholder chunk payload must match the typed contract");
+            let voxels = generate_chunk_voxels(task.key);
             ChunkJobOutcome::Generated(voxels)
         };
         // Send result regardless of outcome; receiver may have dropped.
@@ -44,6 +44,49 @@ pub fn spawn_chunk_job(
     });
 
     cancel_flag
+}
+
+fn generate_chunk_voxels(key: ChunkKey) -> ChunkVoxels {
+    let mut block_ids = vec![0_u8; CHUNK_VOXEL_COUNT];
+    let seed = chunk_seed(key);
+    let floor_y = (seed % 4) as u8;
+    let floor_block = 1 + (seed % 5) as u8;
+    let pillar_block = 6 + ((seed >> 3) % 5) as u8;
+
+    for z in 0..CHUNK_EDGE as u8 {
+        for x in 0..CHUNK_EDGE as u8 {
+            block_ids[ChunkVoxels::linear_index(x, floor_y, z)] = floor_block;
+        }
+    }
+
+    let pillar_a = [
+        ((seed >> 5) % (CHUNK_EDGE as u32 - 4) + 2) as u8,
+        ((seed >> 11) % (CHUNK_EDGE as u32 - 4) + 2) as u8,
+    ];
+    let pillar_b = [
+        ((seed >> 17) % (CHUNK_EDGE as u32 - 4) + 2) as u8,
+        ((seed >> 23) % (CHUNK_EDGE as u32 - 4) + 2) as u8,
+    ];
+    let pillar_a_height = floor_y.saturating_add(8 + ((seed >> 7) % 12) as u8);
+    let pillar_b_height = floor_y.saturating_add(6 + ((seed >> 13) % 10) as u8);
+
+    for y in floor_y..=pillar_a_height.min((CHUNK_EDGE - 1) as u8) {
+        block_ids[ChunkVoxels::linear_index(pillar_a[0], y, pillar_a[1])] = pillar_block;
+    }
+    for y in floor_y..=pillar_b_height.min((CHUNK_EDGE - 1) as u8) {
+        block_ids[ChunkVoxels::linear_index(pillar_b[0], y, pillar_b[1])] = floor_block;
+    }
+
+    ChunkVoxels::new(block_ids.into_boxed_slice())
+        .expect("generated chunk payload must match the typed contract")
+}
+
+fn chunk_seed(key: ChunkKey) -> u32 {
+    let mut seed = key.x as u32;
+    seed = seed.wrapping_mul(0x9E37_79B9).rotate_left(5) ^ key.y as u32;
+    seed = seed.wrapping_mul(0x85EB_CA6B).rotate_left(11) ^ key.z as u32;
+    seed = seed.wrapping_mul(0xC2B2_AE35).rotate_left(17) ^ u32::from(key.lod_level);
+    seed
 }
 
 // ---------------------------------------------------------------------------

@@ -41,6 +41,8 @@ pub struct SlotAllocator {
     chunk_to_slot: HashMap<ChunkKey, u32>,
     slot_to_chunk: Vec<Option<ChunkKey>>,
     free_slots: Vec<u32>,
+    slot_to_draw_index: Vec<Option<u32>>,
+    draw_index_to_slot: Vec<u32>,
     metadata_shadow: Vec<ChunkDrawMetadata>,
     indirect_shadow: Vec<vk::DrawIndexedIndirectCommand>,
 }
@@ -51,6 +53,8 @@ impl SlotAllocator {
             chunk_to_slot: HashMap::new(),
             slot_to_chunk: vec![None; capacity],
             free_slots: (0..capacity as u32).rev().collect(),
+            slot_to_draw_index: vec![None; capacity],
+            draw_index_to_slot: Vec::with_capacity(capacity),
             metadata_shadow: vec![ChunkDrawMetadata::default(); capacity],
             indirect_shadow: vec![vk::DrawIndexedIndirectCommand::default(); capacity],
         }
@@ -58,7 +62,11 @@ impl SlotAllocator {
 
     pub fn prepare_upload(&mut self, key: ChunkKey, mesh: &PackedMesh) -> Result<SlotUpload> {
         let slot_id = match self.chunk_to_slot.get(&key).copied() {
-            Some(slot_id) => slot_id,
+            Some(slot_id) => {
+                self.slot_to_draw_index[slot_id as usize]
+                    .ok_or_else(|| anyhow!("slot {slot_id} is active but missing a draw index"))?;
+                slot_id
+            }
             None => {
                 let slot_id = self
                     .free_slots
@@ -66,6 +74,9 @@ impl SlotAllocator {
                     .ok_or_else(|| anyhow!("chunk pool exhausted at {} slots", self.slot_to_chunk.len()))?;
                 self.chunk_to_slot.insert(key, slot_id);
                 self.slot_to_chunk[slot_id as usize] = Some(key);
+                let draw_index = self.draw_index_to_slot.len() as u32;
+                self.slot_to_draw_index[slot_id as usize] = Some(draw_index);
+                self.draw_index_to_slot.push(slot_id);
                 slot_id
             }
         };
@@ -109,6 +120,13 @@ impl SlotAllocator {
     pub fn prepare_remove(&mut self, key: ChunkKey) -> Option<u32> {
         let slot_id = self.chunk_to_slot.remove(&key)?;
         self.slot_to_chunk[slot_id as usize] = None;
+        let draw_index = self.slot_to_draw_index[slot_id as usize].take()?;
+        let removed_draw_index = draw_index as usize;
+        let last_slot = self.draw_index_to_slot.pop()?;
+        if removed_draw_index < self.draw_index_to_slot.len() {
+            self.draw_index_to_slot[removed_draw_index] = last_slot;
+            self.slot_to_draw_index[last_slot as usize] = Some(draw_index);
+        }
         self.free_slots.push(slot_id);
         self.metadata_shadow[slot_id as usize] = ChunkDrawMetadata::default();
         self.indirect_shadow[slot_id as usize] = vk::DrawIndexedIndirectCommand::default();
@@ -129,6 +147,18 @@ impl SlotAllocator {
 
     pub fn active_chunk_count(&self) -> u32 {
         self.chunk_to_slot.len() as u32
+    }
+
+    pub fn active_draw_count(&self) -> u32 {
+        self.draw_index_to_slot.len() as u32
+    }
+
+    pub fn draw_slots_shadow(&self) -> &[u32] {
+        &self.draw_index_to_slot
+    }
+
+    pub fn draw_index_for_slot(&self, slot_id: u32) -> Option<u32> {
+        self.slot_to_draw_index.get(slot_id as usize).copied().flatten()
     }
 }
 
@@ -204,6 +234,10 @@ impl ChunkPool {
 
     pub fn active_chunk_count(&self) -> u32 {
         self.slot_allocator.active_chunk_count()
+    }
+
+    pub fn active_draw_count(&self) -> u32 {
+        self.slot_allocator.active_draw_count()
     }
 
     pub fn indirect_buffer(&self) -> vk::Buffer {
