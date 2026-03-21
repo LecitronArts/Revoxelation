@@ -32,12 +32,32 @@ pub struct ChunkDrawMetadata {
 
 pub struct SlotUpload {
     pub slot_id: u32,
+    pub draw_slot_write: Option<DrawSlotWrite>,
+    pub dense_indirect_write: DenseIndirectWrite,
     pub vertex_offset_bytes: vk::DeviceSize,
     pub index_offset_bytes: vk::DeviceSize,
     pub vertex_bytes: Box<[u8]>,
     pub index_bytes: Box<[u8]>,
     pub metadata: ChunkDrawMetadata,
     pub indirect: vk::DrawIndexedIndirectCommand,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawSlotWrite {
+    pub draw_index: u32,
+    pub slot_id: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DenseIndirectWrite {
+    pub draw_index: u32,
+    pub command: vk::DrawIndexedIndirectCommand,
+}
+
+pub struct SlotRemove {
+    pub slot_id: u32,
+    pub draw_slot_writes: Vec<DrawSlotWrite>,
+    pub dense_indirect_writes: Vec<DenseIndirectWrite>,
 }
 
 pub struct SlotAllocator {
@@ -64,11 +84,11 @@ impl SlotAllocator {
     }
 
     pub fn prepare_upload(&mut self, key: ChunkKey, mesh: &PackedMesh) -> Result<SlotUpload> {
-        let slot_id = match self.chunk_to_slot.get(&key).copied() {
+        let (slot_id, draw_index, draw_slot_write) = match self.chunk_to_slot.get(&key).copied() {
             Some(slot_id) => {
-                self.slot_to_draw_index[slot_id as usize]
+                let draw_index = self.slot_to_draw_index[slot_id as usize]
                     .ok_or_else(|| anyhow!("slot {slot_id} is active but missing a draw index"))?;
-                slot_id
+                (slot_id, draw_index, None)
             }
             None => {
                 let slot_id = self
@@ -80,7 +100,14 @@ impl SlotAllocator {
                 let draw_index = self.draw_index_to_slot.len() as u32;
                 self.slot_to_draw_index[slot_id as usize] = Some(draw_index);
                 self.draw_index_to_slot.push(slot_id);
-                slot_id
+                (
+                    slot_id,
+                    draw_index,
+                    Some(DrawSlotWrite {
+                        draw_index,
+                        slot_id,
+                    }),
+                )
             }
         };
 
@@ -116,6 +143,11 @@ impl SlotAllocator {
 
         Ok(SlotUpload {
             slot_id,
+            draw_slot_write,
+            dense_indirect_write: DenseIndirectWrite {
+                draw_index,
+                command: indirect,
+            },
             vertex_offset_bytes: u64::from(slot_id) * vertex_slot_stride_bytes() as u64,
             index_offset_bytes: u64::from(slot_id) * index_slot_stride_bytes() as u64,
             vertex_bytes,
@@ -177,8 +209,13 @@ pub struct ChunkPool {
     index_allocation: Option<Allocation>,
     metadata_buffer: vk::Buffer,
     metadata_allocation: Option<Allocation>,
-    indirect_buffer: vk::Buffer,
-    indirect_allocation: Option<Allocation>,
+    indirect_template_buffer: vk::Buffer,
+    indirect_template_allocation: Option<Allocation>,
+    draw_slot_buffer: vk::Buffer,
+    draw_slot_allocation: Option<Allocation>,
+    dense_indirect_buffer: vk::Buffer,
+    dense_indirect_allocation: Option<Allocation>,
+    dense_indirect_shadow: Vec<vk::DrawIndexedIndirectCommand>,
     slot_allocator: SlotAllocator,
 }
 
@@ -208,7 +245,7 @@ impl ChunkPool {
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-metadata",
         )?;
-        let (indirect_buffer, indirect_allocation) = create_allocated_buffer(
+        let (indirect_template_buffer, indirect_template_allocation) = create_allocated_buffer(
             renderer,
             (size_of::<vk::DrawIndexedIndirectCommand>() * MAX_RENDER_CHUNKS) as u64,
             vk::BufferUsageFlags::TRANSFER_DST
@@ -216,7 +253,25 @@ impl ChunkPool {
                 | vk::BufferUsageFlags::INDIRECT_BUFFER,
             MemoryLocation::CpuToGpu,
             AllocationScheme::GpuAllocatorManaged,
-            "chunk-pool-indirect",
+            "chunk-pool-indirect-template",
+        )?;
+        let (draw_slot_buffer, draw_slot_allocation) = create_allocated_buffer(
+            renderer,
+            (size_of::<u32>() * MAX_RENDER_CHUNKS) as u64,
+            vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::STORAGE_BUFFER,
+            MemoryLocation::CpuToGpu,
+            AllocationScheme::GpuAllocatorManaged,
+            "chunk-pool-draw-slots",
+        )?;
+        let (dense_indirect_buffer, dense_indirect_allocation) = create_allocated_buffer(
+            renderer,
+            (size_of::<vk::DrawIndexedIndirectCommand>() * MAX_RENDER_CHUNKS) as u64,
+            vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::INDIRECT_BUFFER,
+            MemoryLocation::CpuToGpu,
+            AllocationScheme::GpuAllocatorManaged,
+            "chunk-pool-dense-indirect",
         )?;
 
         Ok(Self {
@@ -226,8 +281,13 @@ impl ChunkPool {
             index_allocation: Some(index_allocation),
             metadata_buffer,
             metadata_allocation: Some(metadata_allocation),
-            indirect_buffer,
-            indirect_allocation: Some(indirect_allocation),
+            indirect_template_buffer,
+            indirect_template_allocation: Some(indirect_template_allocation),
+            draw_slot_buffer,
+            draw_slot_allocation: Some(draw_slot_allocation),
+            dense_indirect_buffer,
+            dense_indirect_allocation: Some(dense_indirect_allocation),
+            dense_indirect_shadow: vec![vk::DrawIndexedIndirectCommand::default(); MAX_RENDER_CHUNKS],
             slot_allocator: SlotAllocator::with_capacity(MAX_RENDER_CHUNKS),
         })
     }
@@ -236,8 +296,48 @@ impl ChunkPool {
         self.slot_allocator.prepare_upload(key, mesh)
     }
 
-    pub fn prepare_remove(&mut self, key: ChunkKey) -> Option<u32> {
-        self.slot_allocator.prepare_remove(key)
+    pub fn prepare_remove(&mut self, key: ChunkKey) -> Option<SlotRemove> {
+        let slot_id = self.slot_allocator.slot_for(key)?;
+        let draw_index = self.slot_allocator.draw_index_for_slot(slot_id)?;
+        let last_draw_index = self.slot_allocator.active_draw_count().checked_sub(1)?;
+        let moved_slot = if draw_index != last_draw_index {
+            self.slot_allocator
+                .draw_slots_shadow()
+                .get(last_draw_index as usize)
+                .copied()
+        } else {
+            None
+        };
+
+        self.slot_allocator.prepare_remove(key)?;
+
+        let mut draw_slot_writes = Vec::with_capacity(if moved_slot.is_some() { 2 } else { 1 });
+        let mut dense_indirect_writes =
+            Vec::with_capacity(if moved_slot.is_some() { 2 } else { 1 });
+        if let Some(moved_slot) = moved_slot {
+            draw_slot_writes.push(DrawSlotWrite {
+                draw_index,
+                slot_id: moved_slot,
+            });
+            dense_indirect_writes.push(DenseIndirectWrite {
+                draw_index,
+                command: self.slot_allocator.indirect_shadow()[moved_slot as usize],
+            });
+        }
+        draw_slot_writes.push(DrawSlotWrite {
+            draw_index: last_draw_index,
+            slot_id: 0,
+        });
+        dense_indirect_writes.push(DenseIndirectWrite {
+            draw_index: last_draw_index,
+            command: vk::DrawIndexedIndirectCommand::default(),
+        });
+
+        Some(SlotRemove {
+            slot_id,
+            draw_slot_writes,
+            dense_indirect_writes,
+        })
     }
 
     pub fn active_chunk_count(&self) -> u32 {
@@ -248,8 +348,16 @@ impl ChunkPool {
         self.slot_allocator.active_draw_count()
     }
 
-    pub fn indirect_buffer(&self) -> vk::Buffer {
-        self.indirect_buffer
+    pub fn indirect_template_buffer(&self) -> vk::Buffer {
+        self.indirect_template_buffer
+    }
+
+    pub fn draw_slot_buffer(&self) -> vk::Buffer {
+        self.draw_slot_buffer
+    }
+
+    pub fn dense_indirect_buffer(&self) -> vk::Buffer {
+        self.dense_indirect_buffer
     }
 
     pub fn metadata_buffer(&self) -> vk::Buffer {
@@ -269,31 +377,58 @@ impl ChunkPool {
     }
 
     pub fn apply_upload(&mut self, upload: SlotUpload) -> Result<()> {
+        let SlotUpload {
+            slot_id,
+            draw_slot_write,
+            dense_indirect_write,
+            vertex_offset_bytes,
+            index_offset_bytes,
+            vertex_bytes,
+            index_bytes,
+            metadata,
+            indirect,
+        } = upload;
         write_allocation_bytes(
             self.vertex_allocation.as_mut(),
-            upload.vertex_offset_bytes as usize,
-            &upload.vertex_bytes,
+            vertex_offset_bytes as usize,
+            &vertex_bytes,
         )?;
         write_allocation_bytes(
             self.index_allocation.as_mut(),
-            upload.index_offset_bytes as usize,
-            &upload.index_bytes,
+            index_offset_bytes as usize,
+            &index_bytes,
         )?;
 
-        let metadata = [upload.metadata];
+        let metadata = [metadata];
         let metadata_bytes = cast_slice(&metadata);
         write_allocation_bytes(
             self.metadata_allocation.as_mut(),
-            upload.slot_id as usize * size_of::<ChunkDrawMetadata>(),
+            slot_id as usize * size_of::<ChunkDrawMetadata>(),
             metadata_bytes,
         )?;
 
         write_allocation_bytes(
-            self.indirect_allocation.as_mut(),
-            upload.slot_id as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
-            struct_as_bytes(&upload.indirect),
+            self.indirect_template_allocation.as_mut(),
+            slot_id as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
+            struct_as_bytes(&indirect),
         )?;
 
+        if let Some(draw_slot_write) = draw_slot_write {
+            self.write_draw_slot(draw_slot_write)?;
+        }
+        self.write_dense_indirect(dense_indirect_write)?;
+
+        Ok(())
+    }
+
+    pub fn apply_remove(&mut self, remove: SlotRemove) -> Result<()> {
+        self.clear_slot(remove.slot_id)?;
+        for draw_slot_write in remove.draw_slot_writes {
+            self.write_draw_slot(draw_slot_write)?;
+        }
+        for dense_indirect_write in remove.dense_indirect_writes {
+            self.write_dense_indirect(dense_indirect_write)?;
+        }
         Ok(())
     }
 
@@ -314,16 +449,40 @@ impl ChunkPool {
             cast_slice(&[ChunkDrawMetadata::default()]),
         )?;
         write_allocation_bytes(
-            self.indirect_allocation.as_mut(),
+            self.indirect_template_allocation.as_mut(),
             slot_id as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
             struct_as_bytes(&vk::DrawIndexedIndirectCommand::default()),
         )?;
         Ok(())
     }
 
+    fn write_draw_slot(&mut self, write: DrawSlotWrite) -> Result<()> {
+        let draw_slot = [write.slot_id];
+        write_allocation_bytes(
+            self.draw_slot_allocation.as_mut(),
+            write.draw_index as usize * size_of::<u32>(),
+            cast_slice(&draw_slot),
+        )
+    }
+
+    fn write_dense_indirect(&mut self, write: DenseIndirectWrite) -> Result<()> {
+        self.dense_indirect_shadow[write.draw_index as usize] = write.command;
+        write_allocation_bytes(
+            self.dense_indirect_allocation.as_mut(),
+            write.draw_index as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
+            struct_as_bytes(&write.command),
+        )
+    }
+
     pub fn destroy(mut self, renderer: &mut Renderer) -> Result<()> {
-        if let Some(allocation) = self.indirect_allocation.take() {
-            destroy_allocated_buffer(renderer, self.indirect_buffer, allocation)?;
+        if let Some(allocation) = self.dense_indirect_allocation.take() {
+            destroy_allocated_buffer(renderer, self.dense_indirect_buffer, allocation)?;
+        }
+        if let Some(allocation) = self.draw_slot_allocation.take() {
+            destroy_allocated_buffer(renderer, self.draw_slot_buffer, allocation)?;
+        }
+        if let Some(allocation) = self.indirect_template_allocation.take() {
+            destroy_allocated_buffer(renderer, self.indirect_template_buffer, allocation)?;
         }
         if let Some(allocation) = self.metadata_allocation.take() {
             destroy_allocated_buffer(renderer, self.metadata_buffer, allocation)?;

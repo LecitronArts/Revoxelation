@@ -1,6 +1,49 @@
 #version 450
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+struct ChunkDrawMetadata {
+    vec3 aabb_min;
+    uint slot_id;
+    vec3 aabb_max;
+    uint first_index;
+    int vertex_offset;
+    uint index_count;
+    uint lod_level;
+    uint _padding0;
+    vec3 chunk_origin;
+    float chunk_scale;
+};
+
+struct DrawIndexedIndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer ChunkMetadataBuffer {
+    ChunkDrawMetadata metadata[];
+} chunk_metadata;
+
+layout(std430, set = 0, binding = 1) readonly buffer ChunkIndirectTemplateBuffer {
+    DrawIndexedIndirectCommand indirect_templates[];
+} chunk_templates;
+
+layout(std430, set = 0, binding = 2) readonly buffer ChunkDrawSlotBuffer {
+    uint draw_slots[];
+} chunk_draw_slots;
+
+layout(std430, set = 0, binding = 3) buffer ChunkDenseIndirectBuffer {
+    DrawIndexedIndirectCommand dense_indirect[];
+} chunk_dense_indirect;
 
 void main() {
+    uint dense_index = gl_GlobalInvocationID.x;
+    uint slot_id = chunk_draw_slots.draw_slots[dense_index];
+    ChunkDrawMetadata metadata = chunk_metadata.metadata[slot_id];
+    DrawIndexedIndirectCommand command = chunk_templates.indirect_templates[slot_id];
+    command.instanceCount = metadata.index_count > 0u && command.indexCount > 0u ? 1u : 0u;
+    chunk_dense_indirect.dense_indirect[dense_index] = command;
 }

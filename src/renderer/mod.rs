@@ -368,8 +368,8 @@ impl Renderer {
                     chunk_pool.apply_upload(upload)?;
                 }
                 RenderDelta::Remove { key } => {
-                    if let Some(slot_id) = chunk_pool.prepare_remove(key) {
-                        chunk_pool.clear_slot(slot_id)?;
+                    if let Some(remove) = chunk_pool.prepare_remove(key) {
+                        chunk_pool.apply_remove(remove)?;
                     }
                 }
             }
@@ -429,12 +429,12 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
         if let (Some(cull_pipeline), Some(chunk_pool)) =
             (&renderer.cull_pipeline, &renderer.chunk_pool)
         {
-            cull_pipeline.dispatch(renderer, command_buffer, chunk_pool.active_chunk_count());
+            cull_pipeline.dispatch(renderer, command_buffer, chunk_pool.active_draw_count());
 
             let barriers = [vk::BufferMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ)
-                .buffer(chunk_pool.indirect_buffer())
+                .buffer(chunk_pool.dense_indirect_buffer())
                 .offset(0)
                 .size(vk::WHOLE_SIZE)];
             renderer.device_ctx.device.cmd_pipeline_barrier(
@@ -471,7 +471,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
         if let (Some(mesh_pipeline), Some(chunk_pool)) =
             (&renderer.mesh_pipeline, &renderer.chunk_pool)
         {
-            let draw_count = chunk_pool.active_chunk_count();
+            let draw_count = chunk_pool.active_draw_count();
             if draw_count > 0 {
                 mesh_pipeline.draw(renderer, chunk_pool, command_buffer, draw_count);
             }
