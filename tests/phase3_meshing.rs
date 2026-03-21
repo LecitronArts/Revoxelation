@@ -8,13 +8,38 @@ use std::mem::size_of;
 use revoxelation::{
     meshing::{
         FACE_NEG_X, FACE_NEG_Y, FACE_NEG_Z, FACE_POS_X, FACE_POS_Y, FACE_POS_Z, MeshDirtyCause,
-        MeshingState, PackedVertex, fine_chunk_boundary_mask, pack_vertex,
+        MeshDirtyRecord, MeshingState, PackedVertex, build_greedy_mesh, fine_chunk_boundary_mask,
+        pack_vertex,
     },
     streaming::types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkState, ChunkVoxels},
 };
 
 fn filled_chunk(fill: u8) -> ChunkVoxels {
     ChunkVoxels::new(vec![fill; CHUNK_VOXEL_COUNT].into_boxed_slice()).expect("valid chunk payload")
+}
+
+fn chunk_with_blocks(blocks: &[(u8, u8, u8, u8)]) -> ChunkVoxels {
+    let mut block_ids = vec![0; CHUNK_VOXEL_COUNT];
+    for &(x, y, z, block_id) in blocks {
+        let index = ChunkVoxels::linear_index(x, y, z);
+        block_ids[index] = block_id;
+    }
+    ChunkVoxels::new(block_ids.into_boxed_slice()).expect("synthetic chunk fixture must be valid")
+}
+
+fn clean_dirty_record() -> MeshDirtyRecord {
+    MeshDirtyRecord {
+        causes: Vec::new(),
+        source_revision: 1,
+        finer_neighbor_face_mask: 0,
+    }
+}
+
+fn skirt_vertex_count(vertices: &[PackedVertex]) -> usize {
+    vertices
+        .iter()
+        .filter(|vertex| vertex.0[0] & (1 << 24) != 0)
+        .count()
 }
 
 fn chunk_key(x: i32, y: i32, z: i32, lod_level: u8) -> ChunkKey {
@@ -207,4 +232,124 @@ fn mesh_02_finer_neighbor_face_mask_updates_coarse_chunk() {
             },
         ]
     );
+}
+
+#[test]
+fn mesh_01_greedy_meshing_emits_expected_quads() {
+    let isolated = chunk_with_blocks(&[(1, 1, 1, 2)]);
+    let isolated_mesh = build_greedy_mesh(
+        &isolated,
+        &revoxelation::meshing::ChunkNeighborSet::default(),
+        &clean_dirty_record(),
+    );
+    assert_eq!(isolated_mesh.quad_count, 6);
+    assert_eq!(isolated_mesh.indices.len(), 36);
+    assert_eq!(isolated_mesh.aabb_min, [1.0, 1.0, 1.0]);
+    assert_eq!(isolated_mesh.aabb_max, [2.0, 2.0, 2.0]);
+
+    let mut slab_blocks = Vec::new();
+    for x in 1..=2 {
+        for y in 1..=2 {
+            slab_blocks.push((x, y, 1, 3));
+        }
+    }
+    let slab = chunk_with_blocks(&slab_blocks);
+    let slab_mesh = build_greedy_mesh(
+        &slab,
+        &revoxelation::meshing::ChunkNeighborSet::default(),
+        &clean_dirty_record(),
+    );
+    assert_eq!(slab_mesh.quad_count, 6, "2x2x1 slab should merge into 6 quads");
+    assert!(
+        slab_mesh.quad_count < 16,
+        "greedy meshing should beat the naive visible-face count"
+    );
+
+    let seam_center = chunk_with_blocks(&[(63, 10, 10, 5)]);
+    let seam_neighbor = chunk_with_blocks(&[(0, 10, 10, 5)]);
+    let seam_mesh = build_greedy_mesh(
+        &seam_center,
+        &revoxelation::meshing::ChunkNeighborSet {
+            px: Some(&seam_neighbor),
+            ..Default::default()
+        },
+        &clean_dirty_record(),
+    );
+    assert_eq!(
+        seam_mesh.quad_count, 5,
+        "halo neighbor data should suppress the shared +X border face"
+    );
+}
+
+#[test]
+fn mesh_02_coarse_chunk_generates_skirts_only_for_flagged_faces() {
+    let coarse_chunk = filled_chunk(1);
+    let no_skirts = build_greedy_mesh(
+        &coarse_chunk,
+        &revoxelation::meshing::ChunkNeighborSet::default(),
+        &clean_dirty_record(),
+    );
+    assert_eq!(no_skirts.quad_count, 6);
+    assert_eq!(skirt_vertex_count(&no_skirts.vertices), 0);
+
+    let dirty = MeshDirtyRecord {
+        causes: vec![MeshDirtyCause::FinerNeighborMaskChanged {
+            face_mask: FACE_NEG_X | FACE_POS_Z,
+            active: true,
+        }],
+        source_revision: 2,
+        finer_neighbor_face_mask: FACE_NEG_X | FACE_POS_Z,
+    };
+    let with_skirts = build_greedy_mesh(
+        &coarse_chunk,
+        &revoxelation::meshing::ChunkNeighborSet {
+            finer_neighbor_face_mask: FACE_NEG_X | FACE_POS_Z,
+            ..Default::default()
+        },
+        &dirty,
+    );
+    assert_eq!(with_skirts.quad_count, 8);
+    assert_eq!(skirt_vertex_count(&with_skirts.vertices), 8);
+}
+
+#[test]
+fn mesh_02_skirt_face_mask_clears_when_finer_neighbor_unloads() {
+    let coarse_chunk = filled_chunk(1);
+    let coarse_key = chunk_key(0, 0, 0, 1);
+    let mut meshing = MeshingState::default();
+    meshing.update_finer_neighbor_face_mask(coarse_key, FACE_NEG_X, true, 31);
+    let dirty_with_skirt = meshing
+        .dirty
+        .get(&coarse_key)
+        .cloned()
+        .expect("coarse chunk should record the activated finer neighbor mask");
+
+    let with_skirt = build_greedy_mesh(
+        &coarse_chunk,
+        &revoxelation::meshing::ChunkNeighborSet {
+            finer_neighbor_face_mask: dirty_with_skirt.finer_neighbor_face_mask,
+            ..Default::default()
+        },
+        &dirty_with_skirt,
+    );
+    assert_eq!(with_skirt.quad_count, 7);
+    assert_eq!(skirt_vertex_count(&with_skirt.vertices), 4);
+
+    meshing.update_finer_neighbor_face_mask(coarse_key, FACE_NEG_X, false, 32);
+    let dirty_without_skirt = meshing
+        .dirty
+        .get(&coarse_key)
+        .cloned()
+        .expect("coarse chunk should keep the dirty record after the mask changes");
+    let without_skirt = build_greedy_mesh(
+        &coarse_chunk,
+        &revoxelation::meshing::ChunkNeighborSet {
+            finer_neighbor_face_mask: dirty_without_skirt.finer_neighbor_face_mask,
+            ..Default::default()
+        },
+        &dirty_without_skirt,
+    );
+    assert_eq!(dirty_without_skirt.finer_neighbor_face_mask, 0);
+    assert_eq!(without_skirt.quad_count, 6);
+    assert_eq!(skirt_vertex_count(&without_skirt.vertices), 0);
 }

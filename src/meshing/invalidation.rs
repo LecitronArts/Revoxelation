@@ -47,7 +47,7 @@ pub struct MeshingState {
 
 impl MeshingState {
     pub fn mark_dirty(&mut self, key: ChunkKey, cause: MeshDirtyCause, source_revision: u64) {
-        let should_queue = !self.dirty.contains_key(&key);
+        let should_queue = !self.queued.iter().any(|queued| *queued == key);
         let entry = self
             .dirty
             .entry(key)
@@ -90,7 +90,7 @@ impl MeshingState {
         active: bool,
         source_revision: u64,
     ) {
-        let should_queue = !self.dirty.contains_key(&coarse_key);
+        let should_queue = !self.queued.iter().any(|queued| *queued == coarse_key);
         let entry = self
             .dirty
             .entry(coarse_key)

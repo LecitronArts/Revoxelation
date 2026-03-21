@@ -8,7 +8,8 @@ use std::sync::{
 use log::info;
 
 use crate::meshing::{
-    ALL_FACE_MASK, MeshDirtyCause, MeshingState, fine_chunk_boundary_mask,
+    ALL_FACE_MASK, ChunkNeighborSet, MeshDirtyCause, MeshingJobResult, MeshingState,
+    build_greedy_mesh, fine_chunk_boundary_mask,
 };
 use crate::streaming::{
     job_queue::{ChunkJobQueue, PrioritizedTask},
@@ -252,6 +253,64 @@ fn run_mesh_sync(frame_index: u64) {
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => break,
         }
+    }
+
+    let dirty_batch = {
+        let mut meshing = meshing_state().lock().unwrap();
+        meshing.take_dirty_batch(PER_FRAME_CAP)
+    };
+
+    for key in dirty_batch {
+        let maybe_mesh = {
+            let meshing = meshing_state().lock().unwrap();
+            match meshing.dirty.get(&key).cloned() {
+                Some(dirty_record) => match meshing.payloads.get(&key) {
+                    Some(chunk) => {
+                        let neighbors = ChunkNeighborSet {
+                            px: meshing
+                                .payloads
+                                .get(&ChunkKey::new(key.x + 1, key.y, key.z, key.lod_level)),
+                            nx: meshing
+                                .payloads
+                                .get(&ChunkKey::new(key.x - 1, key.y, key.z, key.lod_level)),
+                            py: meshing
+                                .payloads
+                                .get(&ChunkKey::new(key.x, key.y + 1, key.z, key.lod_level)),
+                            ny: meshing
+                                .payloads
+                                .get(&ChunkKey::new(key.x, key.y - 1, key.z, key.lod_level)),
+                            pz: meshing
+                                .payloads
+                                .get(&ChunkKey::new(key.x, key.y, key.z + 1, key.lod_level)),
+                            nz: meshing
+                                .payloads
+                                .get(&ChunkKey::new(key.x, key.y, key.z - 1, key.lod_level)),
+                            finer_neighbor_face_mask: dirty_record.finer_neighbor_face_mask,
+                        };
+                        Some((build_greedy_mesh(chunk, &neighbors, &dirty_record), dirty_record))
+                    }
+                    None => None,
+                },
+                None => None,
+            }
+        };
+
+        let Some((mesh, dirty_record)) = maybe_mesh else {
+            continue;
+        };
+
+        let source_revision = ss
+            .state_store
+            .get(&key)
+            .map_or(dirty_record.source_revision, |entry| entry.revision);
+        let mut meshing = meshing_state().lock().unwrap();
+        meshing.completed_meshes.retain(|completed| completed.key != key);
+        meshing.completed_meshes.push(MeshingJobResult {
+            key,
+            mesh,
+            source_revision,
+        });
+        meshing.dirty.remove(&key);
     }
 }
 
