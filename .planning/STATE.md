@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 02.5
-status: complete
-stopped_at: Completed 02.5-02-PLAN.md — Phase 02.5 fully complete
-last_updated: "2026-03-21T13:45:00.000Z"
+current_phase: 02.5 (COMPLETE — advance to 03)
+status: planning
+stopped_at: Completed 02.5-02-PLAN.md; Phase 02.5 fully done
+last_updated: "2026-03-21T14:06:31.930Z"
 progress:
   total_phases: 8
   completed_phases: 3
@@ -23,7 +23,7 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 02.5 (COMPLETE — advance to 03)
-**Status:** Phase 02.5 complete; next phase is 03 (Greedy Meshing and Render Delta Sync)
+**Status:** Ready to plan
 
 ## Session Continuity
 
