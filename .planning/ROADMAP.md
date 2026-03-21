@@ -14,6 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Runtime Skeleton and Quality Gates** - Establish deterministic stage execution, stable subsystem boundaries, and mandatory workflow gates.
 - [x] **Phase 2: Streaming Lifecycle and Job Queues** - Make player-driven chunk activation work with explicit lifecycle states and bounded background work.
+- [ ] **Phase 2.5: Vulkan Bootstrap and Render Infrastructure** (INSERTED) - Replace wgpu with raw Vulkan (ash) and establish gpu-allocator-backed staging pipeline and egui-ash integration.
 - [ ] **Phase 3: Greedy Meshing and Render Delta Sync** - Produce greedy chunk meshes and push only chunk deltas to the renderer.
 - [ ] **Phase 4: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
 - [ ] **Phase 5: Authoritative Block Editing Feedback** - Apply block edits authoritatively and reflect them visually near-immediately.
@@ -54,9 +55,23 @@ Plans:
 - [ ] 02-01-PLAN.md — Types, ChunkStateStore, SSE octree traversal, active-set diff (Wave 1)
 - [ ] 02-02-PLAN.md — ChunkJobQueue, rayon runner, scheduler wiring, integration test (Wave 2)
 
+### Phase 2.5: Vulkan Bootstrap and Render Infrastructure (INSERTED)
+**Goal**: Replace wgpu dependency with raw Vulkan (ash) and establish the gpu-allocator-backed staging pipeline and egui-ash UI integration that Phase 3 meshing will write into.
+**Depends on**: Phase 2
+**Requirements**: VK-01, VK-02, VK-03
+**Success Criteria** (what must be TRUE):
+  1. Window renders a clear frame via ash Vulkan without wgpu dependency.
+  2. gpu-allocator manages all device/staging memory; no manual DeviceMemory calls.
+  3. egui renders HUD overlay through ash backend.
+**Plans**: 2 plans
+
+Plans:
+- [x] 02.5-01: Vulkan instance, device, swapchain, render pass, frame loop.
+- [x] 02.5-02: gpu-allocator staging buffer pipeline + egui-ash integration.
+
 ### Phase 3: Greedy Meshing and Render Delta Sync
 **Goal**: Visible voxel surfaces are meshed efficiently and renderer sync updates only affected chunks instead of full-world uploads.
-**Depends on**: Phase 2
+**Depends on**: Phase 2.5
 **Requirements**: MESH-01, MESH-02, MESH-03
 **Success Criteria** (what must be TRUE):
   1. Visible chunk surfaces render using greedy meshing with incremental updates.
@@ -125,12 +140,13 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 2 -> 2.1 -> 2.2 -> 3 -> 3.1 -> 4
+Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Runtime Skeleton and Quality Gates | 5/5 | Complete | 2026-03-15 |
 | 2. Streaming Lifecycle and Job Queues | 2/2 | Complete    | 2026-03-21 |
+| 2.5. Vulkan Bootstrap and Render Infrastructure | 2/2 | Complete    | 2026-03-21 |
 | 3. Greedy Meshing and Render Delta Sync | 0/2 | Not started | - |
 | 4. Movement and Collision Modes | 0/2 | Not started | - |
 | 5. Authoritative Block Editing Feedback | 0/2 | Not started | - |
