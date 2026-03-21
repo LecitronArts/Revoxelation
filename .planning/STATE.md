@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-03-21T10:44:00Z"
-last_activity: 2026-03-21 - Completed Phase 2 Plan 01 streaming module scaffold, state store, SSE octree.
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-03-21T11:02:54Z"
+last_activity: 2026-03-21 - Completed Phase 2 Plan 02 job queue, rayon runner, WorldUpdate/MeshSync wiring.
 progress:
   total_phases: 7
   completed_phases: 1
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 ## Current Position
 
 Phase: 2 of 7 (Streaming Lifecycle and Job Queues)
-Plan: 1 of N in current phase
-Status: Phase 2 Plan 1 complete
-Last activity: 2026-03-21 - Completed Phase 2 Plan 01 streaming module scaffold, state store, SSE octree.
+Plan: 2 of 2 in current phase
+Status: Phase 2 Plan 2 complete
+Last activity: 2026-03-21 - Completed Phase 2 Plan 02 job queue, rayon runner, WorldUpdate/MeshSync wiring.
 
 Progress: [##] 17%
 
@@ -44,7 +44,7 @@ Progress: [##] 17%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 5 | 27 min | 5.4 min |
-| 2 | 1 | 6 min | 6 min |
+| 2 | 2 | 18 min | 9 min |
 | 3 | 0 | 0 min | 0 min |
 | 4 | 0 | 0 min | 0 min |
 | 5 | 0 | 0 min | 0 min |
@@ -86,7 +86,10 @@ Recent decisions affecting current work:
 - [Phase 02-streaming-lifecycle-and-job-queues]: StreamingOctree built coarsest-to-finest so parent indices are always resolved before children are inserted.
 - [Phase 02-streaming-lifecycle-and-job-queues]: compute_sse returns f32::MAX (not NaN) for zero/negative dist and infinite geometric_error; never panics.
 - [Phase 02-streaming-lifecycle-and-job-queues]: diff_active_set uses a camera_dist_fn closure for testability without requiring a camera struct dependency.
-- [Phase 02-streaming-lifecycle-and-job-queues]: ChunkLifecycleCommand extended with lod_level: u8; all existing callers updated to use lod_level: 0.
+- [Phase 02-streaming-lifecycle-and-job-queues]: ChunkState::Error promoted to struct variant with retry_count/next_retry_frame for inline retry bookkeeping.
+- [Phase 02-streaming-lifecycle-and-job-queues]: ChunkJobOutcome::Generated(Box<[u8]>) added for explicit background generation payloads.
+- [Phase 02-streaming-lifecycle-and-job-queues]: Drain-then-spawn ordering in WorldUpdate: all state mutations complete before pool borrow to satisfy borrow checker.
+- [Phase 02-streaming-lifecycle-and-job-queues]: active_set() added to ChunkStateStore returning HashSet of Active-state chunk keys.
 
 ### Pending Todos
 
@@ -98,9 +101,9 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-21T10:44:00Z
-Stopped at: Completed 02-01-PLAN.md
-Resume file: .planning/phases/02-streaming-lifecycle-and-job-queues/02-01-SUMMARY.md
+Last session: 2026-03-21T11:02:54Z
+Stopped at: Completed 02-02-PLAN.md
+Resume file: .planning/phases/02-streaming-lifecycle-and-job-queues/02-02-SUMMARY.md
 
 
 

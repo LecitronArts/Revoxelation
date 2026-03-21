@@ -13,7 +13,7 @@ This roadmap delivers a modular non-Bevy Rust voxel engine foundation by stabili
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Runtime Skeleton and Quality Gates** - Establish deterministic stage execution, stable subsystem boundaries, and mandatory workflow gates.
-- [ ] **Phase 2: Streaming Lifecycle and Job Queues** - Make player-driven chunk activation work with explicit lifecycle states and bounded background work.
+- [x] **Phase 2: Streaming Lifecycle and Job Queues** - Make player-driven chunk activation work with explicit lifecycle states and bounded background work.
 - [ ] **Phase 3: Greedy Meshing and Render Delta Sync** - Produce greedy chunk meshes and push only chunk deltas to the renderer.
 - [ ] **Phase 4: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
 - [ ] **Phase 5: Authoritative Block Editing Feedback** - Apply block edits authoritatively and reflect them visually near-immediately.
@@ -130,7 +130,7 @@ Phases execute in numeric order: 2 -> 2.1 -> 2.2 -> 3 -> 3.1 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Runtime Skeleton and Quality Gates | 5/5 | Complete | 2026-03-15 |
-| 2. Streaming Lifecycle and Job Queues | 1/2 | In progress | - |
+| 2. Streaming Lifecycle and Job Queues | 2/2 | Complete | 2026-03-21 |
 | 3. Greedy Meshing and Render Delta Sync | 0/2 | Not started | - |
 | 4. Movement and Collision Modes | 0/2 | Not started | - |
 | 5. Authoritative Block Editing Feedback | 0/2 | Not started | - |
