@@ -1,20 +1,28 @@
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
+
+#[cfg(debug_assertions)]
+use std::ffi::CStr;
+#[cfg(debug_assertions)]
 use std::os::raw::c_void;
 
 use anyhow::{Context, Result};
-use ash::{Entry, Instance, ext, vk};
+use ash::{Entry, Instance, vk};
 
 pub fn create_instance(
     entry: &Entry,
     display_handle: raw_window_handle::RawDisplayHandle,
 ) -> Result<Instance> {
     let app_name = CString::new("Revoxelation").expect("static app name is valid");
-    let mut extension_names = ash_window::enumerate_required_extensions(display_handle)
+    let extension_names = ash_window::enumerate_required_extensions(display_handle)
         .context("failed to enumerate required Vulkan surface extensions")?
         .to_vec();
 
     #[cfg(debug_assertions)]
-    extension_names.push(ext::debug_utils::NAME.as_ptr());
+    let extension_names = {
+        let mut extension_names = extension_names;
+        extension_names.push(ash::ext::debug_utils::NAME.as_ptr());
+        extension_names
+    };
 
     #[cfg(debug_assertions)]
     let validation_layer = CString::new("VK_LAYER_KHRONOS_validation").expect("static layer name");
@@ -45,7 +53,7 @@ pub fn setup_debug_messenger(
     entry: &Entry,
     instance: &Instance,
 ) -> Result<vk::DebugUtilsMessengerEXT> {
-    let debug_utils_loader = ext::debug_utils::Instance::new(entry, instance);
+    let debug_utils_loader = ash::ext::debug_utils::Instance::new(entry, instance);
     let create_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
         .message_severity(
             vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
