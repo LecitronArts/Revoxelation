@@ -1,6 +1,4 @@
-use super::command::{
-    BlockEditOperation, ChunkLifecycleAction, PlayerAction, RuntimeCommand,
-};
+use super::command::{BlockEditOperation, ChunkLifecycleAction, PlayerAction, RuntimeCommand};
 use super::event::RejectionReason;
 
 pub fn validate(command: &RuntimeCommand) -> Result<(), RejectionReason> {

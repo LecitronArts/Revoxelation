@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::{
-    octree::{StreamingOctree},
+    octree::StreamingOctree,
     types::{ChunkKey, LodConfig, SseConfig},
 };
 
@@ -102,7 +102,10 @@ pub fn diff_active_set(
         .copied()
         .collect();
 
-    ActiveSetDiff { to_activate, to_deactivate }
+    ActiveSetDiff {
+        to_activate,
+        to_deactivate,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -138,10 +141,7 @@ mod tests {
         let sse = compute_sse(&lod, &cfg, 10.0);
         // expected: (4.0 * 1080.0) / (2 * 10.0 * tan(PI/4))
         //         = 4320 / 20 = 216.0
-        assert!(
-            (sse - 216.0).abs() < 0.01,
-            "expected ~216.0, got {sse}"
-        );
+        assert!((sse - 216.0).abs() < 0.01, "expected ~216.0, got {sse}");
     }
 
     // -----------------------------------------------------------------------
@@ -181,13 +181,7 @@ mod tests {
         let current_active: HashSet<ChunkKey> = HashSet::new();
 
         // dist = 10.0 everywhere => SSE = 216 >> 2 => all nodes desired
-        let diff = diff_active_set(
-            &octree,
-            &lod_configs,
-            &cfg,
-            &current_active,
-            |_| 10.0,
-        );
+        let diff = diff_active_set(&octree, &lod_configs, &cfg, &current_active, |_| 10.0);
 
         assert!(!diff.to_activate.is_empty(), "should activate all nodes");
         assert!(diff.to_deactivate.is_empty());
@@ -203,17 +197,10 @@ mod tests {
         let cfg = base_cfg();
 
         // Prime current_active with all octree nodes
-        let current_active: HashSet<ChunkKey> =
-            octree.nodes().iter().map(|n| n.key).collect();
+        let current_active: HashSet<ChunkKey> = octree.nodes().iter().map(|n| n.key).collect();
 
         // Same dist => same desired set => nothing to activate or deactivate
-        let diff = diff_active_set(
-            &octree,
-            &lod_configs,
-            &cfg,
-            &current_active,
-            |_| 10.0,
-        );
+        let diff = diff_active_set(&octree, &lod_configs, &cfg, &current_active, |_| 10.0);
 
         assert!(diff.to_activate.is_empty(), "nothing new to activate");
         assert!(diff.to_deactivate.is_empty(), "nothing to deactivate");

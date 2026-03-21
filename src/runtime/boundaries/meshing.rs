@@ -1,4 +1,6 @@
-use super::{BoundaryRegistryCore, DomainSystem, RegisteredSystem, RegistrationError, RuntimeDomain};
+use super::{
+    BoundaryRegistryCore, DomainSystem, RegisteredSystem, RegistrationError, RuntimeDomain,
+};
 
 #[derive(Debug, Clone)]
 pub struct MeshingBoundaryRegistry {
@@ -34,7 +36,9 @@ impl DomainSystem for MeshSyncSystem {
 }
 
 /// Register all mesh sync systems into `reg`.
-pub fn register_mesh_sync_systems(reg: &mut MeshingBoundaryRegistry) -> Result<(), RegistrationError> {
+pub fn register_mesh_sync_systems(
+    reg: &mut MeshingBoundaryRegistry,
+) -> Result<(), RegistrationError> {
     reg.register::<MeshSyncSystem>()
 }
 

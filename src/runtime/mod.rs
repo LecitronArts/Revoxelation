@@ -7,6 +7,6 @@ pub mod systems;
 pub mod trace;
 
 pub use observability::{RuntimeHudOverlay, RuntimeOverlayStageProgress};
-pub use scheduler::{run_frame, FrameExecution};
-pub use stages::{Stage, STAGE_ORDER};
+pub use scheduler::{FrameExecution, run_frame};
+pub use stages::{STAGE_ORDER, Stage};
 pub use trace::{TraceEntry, TransitionKind};

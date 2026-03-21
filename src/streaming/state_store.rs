@@ -178,7 +178,9 @@ mod tests {
         let mut store = ChunkStateStore::new();
         let k = key(2);
         store.insert_inactive(k);
-        let err = store.transition_to(k, Loading).expect_err("must be rejected");
+        let err = store
+            .transition_to(k, Loading)
+            .expect_err("must be rejected");
         assert_eq!(err.from, Inactive);
         assert_eq!(err.to, Loading);
     }
@@ -212,7 +214,12 @@ mod tests {
         store.transition_to(k, Loading).unwrap();
         store.transition_to(k, Active).unwrap(); // rev -> 1
         store.transition_to(k, Unloading).unwrap();
-        let entry = store.transition_to(k, Inactive).expect("Unloading->Inactive ok");
-        assert_eq!(entry.revision, 2, "revision must increment again on Inactive entry");
+        let entry = store
+            .transition_to(k, Inactive)
+            .expect("Unloading->Inactive ok");
+        assert_eq!(
+            entry.revision, 2,
+            "revision must increment again on Inactive entry"
+        );
     }
 }

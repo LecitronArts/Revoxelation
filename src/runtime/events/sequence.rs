@@ -40,7 +40,7 @@ impl SequenceClock {
 }
 
 pub fn is_monotonic(entries: &[SequenceMetadata]) -> bool {
-    entries
-        .windows(2)
-        .all(|pair| pair[0].sequence < pair[1].sequence && pair[0].frame_index <= pair[1].frame_index)
+    entries.windows(2).all(|pair| {
+        pair[0].sequence < pair[1].sequence && pair[0].frame_index <= pair[1].frame_index
+    })
 }

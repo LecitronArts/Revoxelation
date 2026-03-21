@@ -23,7 +23,11 @@ pub struct OctreeNode {
 
 impl OctreeNode {
     pub fn new(key: ChunkKey, parent: Option<usize>) -> Self {
-        Self { key, parent, children: Vec::new() }
+        Self {
+            key,
+            parent,
+            children: Vec::new(),
+        }
     }
 }
 
@@ -69,8 +73,9 @@ impl StreamingOctree {
 
         // level_start[l] = first index in `nodes` for LOD l
         let mut level_start: Vec<usize> = vec![0; levels as usize];
-        let mut level_index: Vec<std::collections::HashMap<(i32,i32,i32), usize>> =
-            (0..levels).map(|_| std::collections::HashMap::new()).collect();
+        let mut level_index: Vec<std::collections::HashMap<(i32, i32, i32), usize>> = (0..levels)
+            .map(|_| std::collections::HashMap::new())
+            .collect();
 
         // Insert nodes coarsest -> finest so parent indices are known.
         for lod in (0..levels).rev() {
@@ -138,7 +143,11 @@ impl StreamingOctree {
 fn div_floor(a: i32, b: i32) -> i32 {
     let d = a / b;
     let r = a % b;
-    if (r != 0) && ((r < 0) != (b < 0)) { d - 1 } else { d }
+    if (r != 0) && ((r < 0) != (b < 0)) {
+        d - 1
+    } else {
+        d
+    }
 }
 
 #[cfg(test)]

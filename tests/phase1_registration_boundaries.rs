@@ -28,12 +28,20 @@ fn boundary_registers_in_domain_systems() {
     assert_eq!(world[0].declared_domain, RuntimeDomain::World);
 
     let meshing = registry.meshing().systems();
-    assert_eq!(meshing.len(), 1, "meshing boundary should register one system");
+    assert_eq!(
+        meshing.len(),
+        1,
+        "meshing boundary should register one system"
+    );
     assert_eq!(meshing[0].name, "meshing_placeholder");
     assert_eq!(meshing[0].declared_domain, RuntimeDomain::Meshing);
 
     let collision = registry.collision().systems();
-    assert_eq!(collision.len(), 1, "collision boundary should register one system");
+    assert_eq!(
+        collision.len(),
+        1,
+        "collision boundary should register one system"
+    );
     assert_eq!(collision[0].name, "collision_placeholder");
     assert_eq!(collision[0].declared_domain, RuntimeDomain::Collision);
 

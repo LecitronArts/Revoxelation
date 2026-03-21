@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::command::{
-    BlockEditCommand, ChunkLifecycleCommand, CommandKind, PlayerActionCommand,
-};
+use super::command::{BlockEditCommand, ChunkLifecycleCommand, CommandKind, PlayerActionCommand};
 use super::sequence::SequenceMetadata;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

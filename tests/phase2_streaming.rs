@@ -15,10 +15,18 @@ use revoxelation::runtime::scheduler::run_frame;
 #[test]
 fn full_round_trip() {
     let r0 = run_frame(2000);
-    assert_eq!(r0.executed_stages.len(), 5, "frame 2000 must execute all 5 stages");
+    assert_eq!(
+        r0.executed_stages.len(),
+        5,
+        "frame 2000 must execute all 5 stages"
+    );
 
     let r1 = run_frame(2001);
-    assert_eq!(r1.executed_stages.len(), 5, "frame 2001 must execute all 5 stages");
+    assert_eq!(
+        r1.executed_stages.len(),
+        5,
+        "frame 2001 must execute all 5 stages"
+    );
 }
 
 // ---------------------------------------------------------------------------

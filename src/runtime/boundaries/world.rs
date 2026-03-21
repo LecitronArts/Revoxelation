@@ -1,4 +1,6 @@
-use super::{BoundaryRegistryCore, DomainSystem, RegisteredSystem, RegistrationError, RuntimeDomain};
+use super::{
+    BoundaryRegistryCore, DomainSystem, RegisteredSystem, RegistrationError, RuntimeDomain,
+};
 
 #[derive(Debug, Clone)]
 pub struct WorldBoundaryRegistry {
@@ -34,7 +36,9 @@ impl DomainSystem for WorldStreamingSystem {
 }
 
 /// Register all world streaming systems into `reg`.
-pub fn register_streaming_systems(reg: &mut WorldBoundaryRegistry) -> Result<(), RegistrationError> {
+pub fn register_streaming_systems(
+    reg: &mut WorldBoundaryRegistry,
+) -> Result<(), RegistrationError> {
     reg.register::<WorldStreamingSystem>()
 }
 

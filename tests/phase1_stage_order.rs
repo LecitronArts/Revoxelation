@@ -1,4 +1,4 @@
-use revoxelation::runtime::{run_frame, Stage, STAGE_ORDER};
+use revoxelation::runtime::{STAGE_ORDER, Stage, run_frame};
 
 #[test]
 fn stage_order_locked_to_input_sim_world_meshsync_render() {

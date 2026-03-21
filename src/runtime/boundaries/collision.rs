@@ -1,4 +1,6 @@
-use super::{BoundaryRegistryCore, DomainSystem, RegisteredSystem, RegistrationError, RuntimeDomain};
+use super::{
+    BoundaryRegistryCore, DomainSystem, RegisteredSystem, RegistrationError, RuntimeDomain,
+};
 
 #[derive(Debug, Clone)]
 pub struct CollisionBoundaryRegistry {

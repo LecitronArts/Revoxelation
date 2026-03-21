@@ -320,6 +320,26 @@ impl Renderer {
     pub fn enqueue_chunk_delta(&mut self, delta: RenderDelta) {
         self.pending_chunk_deltas.push_back(delta);
     }
+
+    fn record_chunk_delta_uploads(&mut self, _cmd: vk::CommandBuffer) -> Result<()> {
+        let Some(chunk_pool) = self.chunk_pool.as_mut() else {
+            self.pending_chunk_deltas.clear();
+            return Ok(());
+        };
+
+        while let Some(delta) = self.pending_chunk_deltas.pop_front() {
+            match delta {
+                RenderDelta::Upsert { key, mesh } => {
+                    let _ = chunk_pool.prepare_upload(key, &mesh)?;
+                }
+                RenderDelta::Remove { key } => {
+                    let _ = chunk_pool.prepare_remove(key);
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
@@ -366,6 +386,8 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
             .device
             .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
             .context("failed to begin Vulkan command buffer")?;
+
+        renderer.record_chunk_delta_uploads(command_buffer)?;
 
         let clear_values = [vk::ClearValue {
             color: vk::ClearColorValue {

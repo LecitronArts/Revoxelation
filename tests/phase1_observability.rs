@@ -1,4 +1,4 @@
-use revoxelation::runtime::{run_frame, RuntimeHudOverlay, Stage, TransitionKind, STAGE_ORDER};
+use revoxelation::runtime::{RuntimeHudOverlay, STAGE_ORDER, Stage, TransitionKind, run_frame};
 
 #[test]
 fn structured_logs_include_frame_stage_event() {
@@ -70,8 +70,7 @@ fn hud_overlay_exposes_stage_progress() {
         "one-frame execution should end on RenderSubmit"
     );
     assert_eq!(
-        overlay.stage_progress.completed_stages,
-        STAGE_ORDER,
+        overlay.stage_progress.completed_stages, STAGE_ORDER,
         "overlay should report completed stages in deterministic order"
     );
 

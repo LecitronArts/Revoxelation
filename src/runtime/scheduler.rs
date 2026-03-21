@@ -11,6 +11,7 @@ use crate::meshing::{
     ALL_FACE_MASK, ChunkNeighborSet, MeshDirtyCause, MeshingJobResult, MeshingState,
     build_greedy_mesh, fine_chunk_boundary_mask,
 };
+use crate::renderer::RenderDelta;
 use crate::streaming::{
     job_queue::{ChunkJobQueue, PrioritizedTask},
     job_runner::spawn_chunk_job,
@@ -60,6 +61,7 @@ pub struct StreamingState {
     pub result_sender: mpsc::Sender<ChunkJobResult>,
     pub result_receiver: mpsc::Receiver<ChunkJobResult>,
     pub rayon_pool: rayon::ThreadPool,
+    pub pending_render_deltas: std::collections::VecDeque<RenderDelta>,
 }
 
 impl StreamingState {
@@ -82,6 +84,7 @@ impl StreamingState {
                 .num_threads(4)
                 .build()
                 .unwrap(),
+            pending_render_deltas: std::collections::VecDeque::new(),
         }
     }
 }
@@ -132,6 +135,7 @@ pub fn run_frame(frame_index: u64) -> FrameExecution {
                 let _ = event_bus.consume_emitted();
                 if let Some(renderer) = crate::renderer::renderer_state() {
                     if let Ok(mut renderer) = renderer.lock() {
+                        drain_pending_render_deltas_into_renderer(&mut renderer);
                         let _ = crate::renderer::submit_frame(&mut renderer, frame_index);
                     }
                 }
@@ -187,12 +191,7 @@ fn run_world_update(frame_index: u64) {
 
     // Deactivate chunks no longer needed.
     for key in &diff.to_deactivate {
-        // Cancel in-flight job if present.
-        if let Some(flag) = ss.cancel_flags.get(key) {
-            flag.store(true, Ordering::Relaxed);
-        }
-        // Remove from queue if still queued.
-        ss.job_queue.cancel_queued(*key);
+        deactivate_chunk(&mut ss, *key);
     }
 
     // Activate new chunks: insert into state store, then enqueue.
@@ -307,10 +306,12 @@ fn run_mesh_sync(frame_index: u64) {
         meshing.completed_meshes.retain(|completed| completed.key != key);
         meshing.completed_meshes.push(MeshingJobResult {
             key,
-            mesh,
+            mesh: mesh.clone(),
             source_revision,
         });
         meshing.dirty.remove(&key);
+        ss.pending_render_deltas
+            .push_back(RenderDelta::Upsert { key, mesh });
     }
 }
 
@@ -374,6 +375,7 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
                     source_revision,
                 );
             }
+            ss.pending_render_deltas.push_back(RenderDelta::Remove { key });
         }
         ChunkJobOutcome::Failed(_msg) => {
             let current_retry = match ss.state_store.get(&key).map(|e| e.state) {
@@ -401,6 +403,53 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
             }
         }
     }
+}
+
+fn deactivate_chunk(ss: &mut StreamingState, key: ChunkKey) {
+    if let Some(flag) = ss.cancel_flags.get(&key) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    ss.job_queue.cancel_queued(key);
+
+    let state = ss.state_store.get(&key).map(|entry| entry.state);
+    if matches!(
+        state,
+        Some(ChunkState::Active | ChunkState::Upgrading | ChunkState::Downgrading)
+    ) {
+        let _ = ss.state_store.transition_to(key, ChunkState::Unloading);
+        let _ = ss
+            .result_sender
+            .send(ChunkJobResult::new(key, ChunkJobOutcome::Unloaded));
+    }
+}
+
+fn drain_pending_render_deltas_into_renderer(renderer: &mut crate::renderer::Renderer) {
+    let mut ss = streaming_state().lock().unwrap();
+    while let Some(delta) = ss.pending_render_deltas.pop_front() {
+        renderer.enqueue_chunk_delta(delta);
+    }
+}
+
+pub fn debug_deactivate_active_chunk_for_tests(key: ChunkKey, frame_index: u64) -> Vec<RenderDelta> {
+    {
+        let mut ss = streaming_state().lock().unwrap();
+        *ss = StreamingState::new();
+        ss.state_store.insert_inactive(key);
+        ss.state_store.transition_to(key, ChunkState::Queued).unwrap();
+        ss.state_store.transition_to(key, ChunkState::Loading).unwrap();
+        ss.state_store.transition_to(key, ChunkState::Active).unwrap();
+        deactivate_chunk(&mut ss, key);
+    }
+
+    {
+        let mut meshing = meshing_state().lock().unwrap();
+        *meshing = MeshingState::default();
+    }
+
+    run_mesh_sync(frame_index);
+
+    let mut ss = streaming_state().lock().unwrap();
+    ss.pending_render_deltas.drain(..).collect()
 }
 
 // ---------------------------------------------------------------------------

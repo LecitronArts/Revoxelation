@@ -11,7 +11,8 @@ use revoxelation::{
         MeshDirtyRecord, MeshingState, PackedMesh, PackedVertex, build_greedy_mesh,
         fine_chunk_boundary_mask, pack_vertex,
     },
-    renderer::{chunk_pool::SlotAllocator, device::required_device_features_error},
+    renderer::{RenderDelta, chunk_pool::SlotAllocator, device::required_device_features_error},
+    runtime::scheduler::debug_deactivate_active_chunk_for_tests,
     streaming::types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkState, ChunkVoxels},
 };
 
@@ -404,4 +405,81 @@ fn mesh_03_vulkan_feature_gate_is_fail_fast() {
         required_device_features_error(),
         "Vulkan device missing required features: samplerAnisotropy, multiDrawIndirect, drawIndirectFirstInstance"
     );
+}
+
+#[test]
+fn mesh_03_deactivated_active_chunk_enqueues_remove_delta() {
+    let key = chunk_key(8, 0, 0, 0);
+    let deltas = debug_deactivate_active_chunk_for_tests(key, 3000);
+    assert_eq!(deltas, vec![RenderDelta::Remove { key }]);
+}
+
+#[test]
+fn mesh_03_delta_sync_updates_only_dirty_slots() {
+    let mut allocator = SlotAllocator::with_capacity(4);
+    let first = chunk_key(0, 0, 0, 0);
+    let second = chunk_key(1, 0, 0, 0);
+
+    allocator
+        .prepare_upload(first, &sample_packed_mesh(6, 1))
+        .expect("first upload should succeed");
+    allocator
+        .prepare_upload(second, &sample_packed_mesh(6, 1))
+        .expect("second upload should succeed");
+
+    let second_slot = allocator.slot_for(second).expect("second chunk slot exists") as usize;
+    let second_metadata_before = allocator.metadata_shadow()[second_slot];
+    let second_indirect_before = allocator.indirect_shadow()[second_slot];
+
+    allocator
+        .prepare_upload(first, &sample_packed_mesh(12, 2))
+        .expect("remeshing first chunk should overwrite its own slot only");
+
+    assert_eq!(allocator.metadata_shadow()[second_slot], second_metadata_before);
+    assert_eq!(
+        allocator.indirect_shadow()[second_slot].index_count,
+        second_indirect_before.index_count
+    );
+    assert_eq!(
+        allocator.indirect_shadow()[second_slot].instance_count,
+        second_indirect_before.instance_count
+    );
+    assert_eq!(
+        allocator.indirect_shadow()[second_slot].first_index,
+        second_indirect_before.first_index
+    );
+    assert_eq!(
+        allocator.indirect_shadow()[second_slot].vertex_offset,
+        second_indirect_before.vertex_offset
+    );
+    assert_eq!(
+        allocator.indirect_shadow()[second_slot].first_instance,
+        second_indirect_before.first_instance
+    );
+    assert_eq!(
+        allocator.metadata_shadow()[allocator.slot_for(first).expect("first slot exists") as usize]
+            .index_count,
+        12
+    );
+}
+
+#[test]
+fn mesh_03_unload_clears_slot_and_indirect_entry() {
+    let mut allocator = SlotAllocator::with_capacity(2);
+    let key = chunk_key(2, 0, 0, 0);
+
+    allocator
+        .prepare_upload(key, &sample_packed_mesh(12, 2))
+        .expect("upload should allocate a slot");
+    let slot = allocator.slot_for(key).expect("slot exists") as usize;
+
+    allocator
+        .prepare_remove(key)
+        .expect("remove should clear the active slot");
+
+    assert_eq!(allocator.metadata_shadow()[slot].index_count, 0);
+    assert_eq!(allocator.metadata_shadow()[slot].aabb_min, [0.0, 0.0, 0.0]);
+    assert_eq!(allocator.metadata_shadow()[slot].aabb_max, [0.0, 0.0, 0.0]);
+    assert_eq!(allocator.indirect_shadow()[slot].index_count, 0);
+    assert_eq!(allocator.indirect_shadow()[slot].instance_count, 0);
 }

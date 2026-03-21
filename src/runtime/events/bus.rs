@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use super::command::{CommandEnvelope, RuntimeCommand};
 use super::event::{CommandOutcome, CommandOutcomeEvent, EventEnvelope, RuntimeEvent};
-use super::sequence::{is_monotonic, SequenceClock, SequenceMetadata};
+use super::sequence::{SequenceClock, SequenceMetadata, is_monotonic};
 use super::validation::validate;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -111,9 +111,7 @@ impl EventBus {
     fn acceptance_event(command: RuntimeCommand) -> RuntimeEvent {
         match command {
             RuntimeCommand::PlayerAction(payload) => RuntimeEvent::PlayerActionApplied(payload),
-            RuntimeCommand::ChunkLifecycle(payload) => {
-                RuntimeEvent::ChunkLifecycleApplied(payload)
-            }
+            RuntimeCommand::ChunkLifecycle(payload) => RuntimeEvent::ChunkLifecycleApplied(payload),
             RuntimeCommand::BlockEdit(payload) => RuntimeEvent::BlockEditApplied(payload),
         }
     }

@@ -108,8 +108,7 @@ impl ChunkJobQueue {
     pub fn cancel_queued(&self, key: ChunkKey) -> bool {
         let mut heap = self.inner.lock().unwrap();
         let before = heap.len();
-        let remaining: Vec<PrioritizedTask> =
-            heap.drain().filter(|t| t.key != key).collect();
+        let remaining: Vec<PrioritizedTask> = heap.drain().filter(|t| t.key != key).collect();
         let found = remaining.len() < before;
         for t in remaining {
             heap.push(t);
@@ -155,7 +154,11 @@ mod tests {
         // Queue full; third enqueue should evict sse=1.0
         let evicted = q.enqueue(task(3, 3.0));
         assert!(evicted.is_some(), "expected an eviction");
-        assert_eq!(evicted.unwrap().sse_bits, 1.0f32.to_bits(), "evicted task should have lowest SSE");
+        assert_eq!(
+            evicted.unwrap().sse_bits,
+            1.0f32.to_bits(),
+            "evicted task should have lowest SSE"
+        );
         assert_eq!(q.len(), 2);
     }
 
@@ -171,7 +174,11 @@ mod tests {
         let drained = q.drain_up_to(2);
         assert_eq!(drained.len(), 2);
         // First should be highest SSE = 3.0
-        assert_eq!(drained[0].sse_bits, 3.0f32.to_bits(), "first drained should be highest SSE");
+        assert_eq!(
+            drained[0].sse_bits,
+            3.0f32.to_bits(),
+            "first drained should be highest SSE"
+        );
     }
 
     // -----------------------------------------------------------------------

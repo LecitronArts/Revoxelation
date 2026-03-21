@@ -76,7 +76,11 @@ impl BoundaryRegistryCore {
             )));
         }
 
-        if self.systems.iter().any(|registered| registered.name == name) {
+        if self
+            .systems
+            .iter()
+            .any(|registered| registered.name == name)
+        {
             return Err(RegistrationError::with_reason(format!(
                 "duplicate registration rejected: system `{name}` already registered in `{}` boundary",
                 self.domain.as_str()
