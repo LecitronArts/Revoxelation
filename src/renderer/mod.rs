@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     mem::ManuallyDrop,
     ptr::addr_of_mut,
     sync::{Mutex, OnceLock},
@@ -13,11 +14,23 @@ use gpu_allocator::{
     },
 };
 
+use crate::{
+    meshing::PackedMesh,
+    streaming::types::ChunkKey,
+};
+
+pub mod chunk_pool;
 pub mod device;
 pub mod egui_backend;
 pub mod frame;
 pub mod instance;
 pub mod swapchain;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RenderDelta {
+    Upsert { key: ChunkKey, mesh: PackedMesh },
+    Remove { key: ChunkKey },
+}
 
 pub struct Renderer {
     pub entry: ash::Entry,
@@ -32,6 +45,8 @@ pub struct Renderer {
     pub allocator: ManuallyDrop<Allocator>,
     pub frames: [frame::FrameData; 2],
     pub current_frame: usize,
+    pub chunk_pool: Option<chunk_pool::ChunkPool>,
+    pub pending_chunk_deltas: VecDeque<RenderDelta>,
     pub egui_backend: Option<egui_backend::EguiAshBackend>,
 }
 
@@ -209,6 +224,8 @@ impl Renderer {
             allocator: ManuallyDrop::new(allocator),
             frames,
             current_frame: 0,
+            chunk_pool: None,
+            pending_chunk_deltas: VecDeque::new(),
             egui_backend: None,
         })
     }
@@ -221,6 +238,10 @@ impl Drop for Renderer {
 
             if let Some(egui_backend) = self.egui_backend.take() {
                 let _ = egui_backend.destroy(self);
+            }
+
+            if let Some(chunk_pool) = self.chunk_pool.take() {
+                let _ = chunk_pool.destroy(self);
             }
 
             for frame in self.frames.iter().rev() {
@@ -293,6 +314,12 @@ pub fn install_renderer(renderer: Renderer) -> Result<()> {
 
 pub fn renderer_state() -> Option<&'static Mutex<Renderer>> {
     RENDERER.get()
+}
+
+impl Renderer {
+    pub fn enqueue_chunk_delta(&mut self, delta: RenderDelta) {
+        self.pending_chunk_deltas.push_back(delta);
+    }
 }
 
 pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {

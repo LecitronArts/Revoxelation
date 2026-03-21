@@ -8,9 +8,10 @@ use std::mem::size_of;
 use revoxelation::{
     meshing::{
         FACE_NEG_X, FACE_NEG_Y, FACE_NEG_Z, FACE_POS_X, FACE_POS_Y, FACE_POS_Z, MeshDirtyCause,
-        MeshDirtyRecord, MeshingState, PackedVertex, build_greedy_mesh, fine_chunk_boundary_mask,
-        pack_vertex,
+        MeshDirtyRecord, MeshingState, PackedMesh, PackedVertex, build_greedy_mesh,
+        fine_chunk_boundary_mask, pack_vertex,
     },
+    renderer::{chunk_pool::SlotAllocator, device::required_device_features_error},
     streaming::types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkState, ChunkVoxels},
 };
 
@@ -56,6 +57,17 @@ fn chunk_state_name(state: ChunkState) -> &'static str {
         ChunkState::Downgrading => "Downgrading",
         ChunkState::Unloading => "Unloading",
         ChunkState::Error { .. } => "Error",
+    }
+}
+
+fn sample_packed_mesh(index_count: usize, quad_count: u32) -> PackedMesh {
+    let vertex_count = (index_count / 6) * 4;
+    PackedMesh {
+        vertices: vec![PackedVertex([0, 0]); vertex_count].into_boxed_slice(),
+        indices: (0..index_count as u32).collect::<Vec<_>>().into_boxed_slice(),
+        quad_count,
+        aabb_min: [1.0, 2.0, 3.0],
+        aabb_max: [4.0, 5.0, 6.0],
     }
 }
 
@@ -352,4 +364,44 @@ fn mesh_02_skirt_face_mask_clears_when_finer_neighbor_unloads() {
     assert_eq!(dirty_without_skirt.finer_neighbor_face_mask, 0);
     assert_eq!(without_skirt.quad_count, 6);
     assert_eq!(skirt_vertex_count(&without_skirt.vertices), 0);
+}
+
+#[test]
+fn mesh_03_chunk_pool_slot_reuse_clears_metadata() {
+    let mut allocator = SlotAllocator::with_capacity(2);
+    let first_key = chunk_key(0, 0, 0, 0);
+    let second_key = chunk_key(1, 0, 0, 0);
+
+    let upload = allocator
+        .prepare_upload(first_key, &sample_packed_mesh(6, 1))
+        .expect("first chunk upload should allocate a slot");
+    assert_eq!(upload.slot_id, 0);
+    assert_eq!(allocator.active_chunk_count(), 1);
+    assert_eq!(allocator.metadata_shadow()[0].index_count, 6);
+    assert_eq!(allocator.indirect_shadow()[0].instance_count, 1);
+
+    let removed = allocator
+        .prepare_remove(first_key)
+        .expect("removing an active chunk should free its slot");
+    assert_eq!(removed, 0);
+    assert_eq!(allocator.active_chunk_count(), 0);
+    assert_eq!(allocator.metadata_shadow()[0].aabb_min, [0.0, 0.0, 0.0]);
+    assert_eq!(allocator.metadata_shadow()[0].aabb_max, [0.0, 0.0, 0.0]);
+    assert_eq!(allocator.metadata_shadow()[0].index_count, 0);
+    assert_eq!(allocator.indirect_shadow()[0].instance_count, 0);
+
+    let reused = allocator
+        .prepare_upload(second_key, &sample_packed_mesh(12, 2))
+        .expect("freed slot should be reusable");
+    assert_eq!(reused.slot_id, 0);
+    assert_eq!(allocator.slot_for(second_key), Some(0));
+    assert_eq!(allocator.metadata_shadow()[0].index_count, 12);
+}
+
+#[test]
+fn mesh_03_vulkan_feature_gate_is_fail_fast() {
+    assert_eq!(
+        required_device_features_error(),
+        "Vulkan device missing required features: samplerAnisotropy, multiDrawIndirect, drawIndirectFirstInstance"
+    );
 }

@@ -13,6 +13,10 @@ pub struct DeviceContext {
     pub present_family: u32,
 }
 
+pub fn required_device_features_error() -> &'static str {
+    "Vulkan device missing required features: samplerAnisotropy, multiDrawIndirect, drawIndirectFirstInstance"
+}
+
 pub fn pick_physical_device(
     instance: &Instance,
     surface_loader: &khr::surface::Instance,
@@ -25,6 +29,7 @@ pub fn pick_physical_device(
     };
 
     let mut selected: Option<(vk::PhysicalDevice, u32, u32, bool)> = None;
+    let mut saw_missing_required_features = false;
     for physical_device in physical_devices {
         let Some((graphics_family, present_family)) =
             find_queue_families(instance, surface_loader, surface, physical_device)?
@@ -37,6 +42,11 @@ pub fn pick_physical_device(
         }
 
         if !supports_swapchain(surface_loader, physical_device, surface)? {
+            continue;
+        }
+
+        if !supports_required_features(instance, physical_device) {
+            saw_missing_required_features = true;
             continue;
         }
 
@@ -63,8 +73,13 @@ pub fn pick_physical_device(
         }
     }
 
-    let (physical_device, graphics_family, present_family, _) = selected
-        .ok_or_else(|| anyhow!("no Vulkan device supports graphics, present, and swapchain"))?;
+    let (physical_device, graphics_family, present_family, _) = selected.ok_or_else(|| {
+        if saw_missing_required_features {
+            anyhow!(required_device_features_error())
+        } else {
+            anyhow!("no Vulkan device supports graphics, present, and swapchain")
+        }
+    })?;
 
     let queue_priorities = [1.0_f32];
     let queue_create_infos: Vec<_> = BTreeSet::from([graphics_family, present_family])
@@ -77,7 +92,10 @@ pub fn pick_physical_device(
         .collect();
 
     let required_extensions = [khr::swapchain::NAME.as_ptr()];
-    let device_features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
+    let device_features = vk::PhysicalDeviceFeatures::default()
+        .sampler_anisotropy(true)
+        .multi_draw_indirect(true)
+        .draw_indirect_first_instance(true);
     let create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_create_infos)
         .enabled_extension_names(&required_extensions)
@@ -100,6 +118,13 @@ pub fn pick_physical_device(
         graphics_family,
         present_family,
     })
+}
+
+fn supports_required_features(instance: &Instance, physical_device: vk::PhysicalDevice) -> bool {
+    let features = unsafe { instance.get_physical_device_features(physical_device) };
+    features.sampler_anisotropy == vk::TRUE
+        && features.multi_draw_indirect == vk::TRUE
+        && features.draw_indirect_first_instance == vk::TRUE
 }
 
 fn find_queue_families(
