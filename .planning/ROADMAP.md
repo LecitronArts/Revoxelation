@@ -80,8 +80,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: Implement greedy mesh generation and neighbor-aware invalidation.
-- [ ] 03-02: Integrate chunk-delta renderer sync path with incremental GPU updates.
+- [ ] 03-01-PLAN.md - Typed chunk payloads, greedy mesh generation, and neighbor-aware invalidation.
+- [ ] 03-02-PLAN.md - Fixed slot-pool renderer delta sync, feature-gated indirect draw, and visible chunk rendering.
 
 ### Phase 4: Movement and Collision Modes
 **Goal**: Players can navigate the world with reliable fly/gravity modes and collision behavior that remains stable during chunk streaming transitions.
