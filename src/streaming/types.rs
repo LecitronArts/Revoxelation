@@ -53,7 +53,11 @@ pub enum ChunkState {
     Upgrading,
     Downgrading,
     Unloading,
-    Error,
+    /// Background job failed; tracks retry bookkeeping.
+    Error {
+        retry_count: u32,
+        next_retry_frame: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +137,8 @@ impl SseConfig {
 /// Outcome of an individual chunk load/unload background task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChunkJobOutcome {
+    /// Background generation completed successfully; payload is raw chunk data.
+    Generated(Box<[u8]>),
     Loaded,
     Unloaded,
     Cancelled,

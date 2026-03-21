@@ -45,7 +45,7 @@ fn is_valid_transition(from: ChunkState, to: ChunkState) -> bool {
             | (Queued, Loading)
             | (Queued, Inactive)
             | (Loading, Active)
-            | (Loading, Error)
+            | (Loading, Error { .. })
             | (Active, Upgrading)
             | (Active, Downgrading)
             | (Active, Unloading)
@@ -54,8 +54,8 @@ fn is_valid_transition(from: ChunkState, to: ChunkState) -> bool {
             | (Downgrading, Active)
             | (Downgrading, Unloading)
             | (Unloading, Inactive)
-            | (Error, Queued)
-            | (Error, Inactive)
+            | (Error { .. }, Queued)
+            | (Error { .. }, Inactive)
     )
 }
 
