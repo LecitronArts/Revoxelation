@@ -233,3 +233,114 @@ fn mesh_03_vertex_shader_uses_metadata_for_world_placement() {
         "vertex shader should no longer treat every chunk as local-only centered geometry"
     );
 }
+
+#[test]
+fn mesh_03_cull_shader_consumes_metadata_and_dense_draw_slots() {
+    let shader =
+        std::fs::read_to_string("shaders/chunk_cull.comp").expect("chunk cull shader should exist");
+    let pipeline_source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
+        .expect("chunk cull pipeline source should exist");
+
+    assert!(
+        shader.contains("ChunkDrawMetadata"),
+        "compute shader should declare the metadata layout it consumes"
+    );
+    assert!(
+        shader.contains("draw_slots"),
+        "compute shader should read the dense draw-slot list"
+    );
+    assert!(
+        shader.contains("indirect_templates"),
+        "compute shader should read stable indirect templates"
+    );
+    assert!(
+        shader.contains("dense_indirect"),
+        "compute shader should write dense indirect commands"
+    );
+    assert!(
+        shader.contains("gl_GlobalInvocationID.x"),
+        "compute shader should address dense draw indices"
+    );
+    assert!(
+        shader.contains("instanceCount"),
+        "compute shader should control per-command visibility through instanceCount"
+    );
+    assert!(
+        pipeline_source.contains("DescriptorSetLayout"),
+        "cull pipeline should define a descriptor-backed compute layout"
+    );
+    assert!(
+        pipeline_source.contains("STORAGE_BUFFER"),
+        "cull pipeline should bind storage buffers for compute"
+    );
+}
+
+#[test]
+fn mesh_03_submit_frame_uses_dense_indirect_draw_count() {
+    let renderer_source =
+        std::fs::read_to_string("src/renderer/mod.rs").expect("renderer module should exist");
+    let mesh_source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("chunk mesh pipeline source should exist");
+
+    assert!(
+        renderer_source.contains("active_draw_count()"),
+        "submit_frame should use the dense draw count rather than sparse active slots"
+    );
+    assert!(
+        renderer_source.contains("dense_indirect_buffer()"),
+        "submit_frame should barrier the dense indirect output buffer"
+    );
+    assert!(
+        mesh_source.contains("dense_indirect_buffer()"),
+        "graphics draw should read commands from the dense indirect buffer"
+    );
+    assert!(
+        !renderer_source.contains("let draw_count = chunk_pool.active_chunk_count();"),
+        "submit_frame should not derive indirect draw count from sparse stable slot ownership"
+    );
+}
+
+#[test]
+fn mesh_03_sparse_slot_remove_keeps_dense_indirect_order_valid() {
+    let mut allocator = SlotAllocator::with_capacity(4);
+    let first = chunk_key(0, 0, 0, 0);
+    let second = chunk_key(1, 0, 0, 0);
+    let third = chunk_key(2, 0, 0, 0);
+
+    allocator
+        .prepare_upload(first, &sample_packed_mesh(6, 1))
+        .expect("first upload should succeed");
+    allocator
+        .prepare_upload(second, &sample_packed_mesh(12, 2))
+        .expect("second upload should succeed");
+    allocator
+        .prepare_upload(third, &sample_packed_mesh(18, 3))
+        .expect("third upload should succeed");
+
+    allocator
+        .prepare_remove(second)
+        .expect("removing a middle stable slot should succeed");
+
+    let first_slot = allocator
+        .slot_for(first)
+        .expect("first chunk should retain its stable slot");
+    let third_slot = allocator
+        .slot_for(third)
+        .expect("third chunk should retain its stable slot");
+    assert_eq!(
+        allocator.draw_slots_shadow(),
+        &[first_slot, third_slot],
+        "dense draw order should stay compact after removing a middle stable slot"
+    );
+
+    let chunk_pool_source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("chunk pool source should exist");
+    assert!(
+        chunk_pool_source.contains("draw_slot_buffer"),
+        "chunk pool should maintain a GPU-visible dense draw-slot buffer"
+    );
+    assert!(
+        chunk_pool_source.contains("dense_indirect_buffer"),
+        "chunk pool should maintain a GPU-visible dense indirect command buffer"
+    );
+}
