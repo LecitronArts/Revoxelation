@@ -1,9 +1,20 @@
-use std::sync::{Mutex, OnceLock};
+use std::{
+    mem::ManuallyDrop,
+    ptr::addr_of_mut,
+    sync::{Mutex, OnceLock},
+};
 
 use anyhow::{Context, Result, anyhow};
 use ash::{ext, khr, vk};
+use gpu_allocator::{
+    MemoryLocation,
+    vulkan::{
+        Allocation, AllocationCreateDesc, AllocationScheme, Allocator, AllocatorCreateDesc,
+    },
+};
 
 pub mod device;
+pub mod egui_backend;
 pub mod frame;
 pub mod instance;
 pub mod swapchain;
@@ -18,8 +29,113 @@ pub struct Renderer {
     pub device_ctx: device::DeviceContext,
     pub swapchain_ctx: swapchain::SwapchainContext,
     pub command_pool: vk::CommandPool,
+    pub allocator: ManuallyDrop<Allocator>,
     pub frames: [frame::FrameData; 2],
     pub current_frame: usize,
+    pub egui_backend: Option<egui_backend::EguiAshBackend>,
+}
+
+pub struct StagingBuffer {
+    pub buffer: vk::Buffer,
+    pub allocation: Allocation,
+    pub size: vk::DeviceSize,
+}
+
+impl StagingBuffer {
+    pub fn new(renderer: &mut Renderer, size: vk::DeviceSize) -> Result<Self> {
+        let (buffer, allocation) = create_allocated_buffer(
+            renderer,
+            size,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            MemoryLocation::CpuToGpu,
+            AllocationScheme::GpuAllocatorManaged,
+            "staging",
+        )?;
+
+        Ok(Self {
+            buffer,
+            allocation,
+            size,
+        })
+    }
+
+    pub fn write(&mut self, data: &[u8]) {
+        assert!(
+            data.len() as u64 <= self.size,
+            "staging write exceeds allocation size"
+        );
+
+        if let Some(mapped) = self.allocation.mapped_slice_mut() {
+            mapped[..data.len()].copy_from_slice(data);
+        }
+    }
+
+    pub fn copy_to(&self, renderer: &Renderer, dst: vk::Buffer, size: vk::DeviceSize) -> Result<()> {
+        submit_one_shot_commands(renderer, |device, command_buffer| {
+            let regions = [vk::BufferCopy::default().size(size)];
+            unsafe {
+                device.cmd_copy_buffer(command_buffer, self.buffer, dst, &regions);
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn copy_to_image(
+        &self,
+        renderer: &Renderer,
+        image: vk::Image,
+        extent: vk::Extent3D,
+        offset: [u32; 2],
+        old_layout: vk::ImageLayout,
+    ) -> Result<()> {
+        submit_one_shot_commands(renderer, |device, command_buffer| {
+            transition_image_layout(
+                device,
+                command_buffer,
+                image,
+                old_layout,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
+
+            let subresource = vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1);
+            let regions = [vk::BufferImageCopy::default()
+                .buffer_offset(0)
+                .image_subresource(subresource)
+                .image_offset(vk::Offset3D {
+                    x: offset[0] as i32,
+                    y: offset[1] as i32,
+                    z: 0,
+                })
+                .image_extent(extent)];
+
+            unsafe {
+                device.cmd_copy_buffer_to_image(
+                    command_buffer,
+                    self.buffer,
+                    image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &regions,
+                );
+            }
+
+            transition_image_layout(
+                device,
+                command_buffer,
+                image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+            Ok(())
+        })
+    }
+
+    pub fn destroy(self, renderer: &mut Renderer) -> Result<()> {
+        destroy_allocated_buffer(renderer, self.buffer, self.allocation)
+    }
 }
 
 impl Renderer {
@@ -59,6 +175,15 @@ impl Renderer {
                 )
                 .context("failed to create Vulkan command pool")?
         };
+        let allocator = Allocator::new(&AllocatorCreateDesc {
+            instance: instance.clone(),
+            device: device_ctx.device.clone(),
+            physical_device: device_ctx.physical_device,
+            debug_settings: Default::default(),
+            buffer_device_address: false,
+            allocation_sizes: Default::default(),
+        })
+        .map_err(|error| anyhow!("failed to create Vulkan allocator: {error}"))?;
         let swapchain_ctx = swapchain::create_swapchain_context(
             &instance,
             &device_ctx,
@@ -81,8 +206,10 @@ impl Renderer {
             device_ctx,
             swapchain_ctx,
             command_pool,
+            allocator: ManuallyDrop::new(allocator),
             frames,
             current_frame: 0,
+            egui_backend: None,
         })
     }
 }
@@ -91,6 +218,10 @@ impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
             let _ = self.device_ctx.device.device_wait_idle();
+
+            if let Some(egui_backend) = self.egui_backend.take() {
+                let _ = egui_backend.destroy(self);
+            }
 
             for frame in self.frames.iter().rev() {
                 self.device_ctx.device.destroy_fence(frame.in_flight, None);
@@ -133,6 +264,7 @@ impl Drop for Renderer {
                 self.command_pool = vk::CommandPool::null();
             }
 
+            ManuallyDrop::drop(&mut self.allocator);
             self.device_ctx.device.destroy_device(None);
 
             if self.surface != vk::SurfaceKHR::null() {
@@ -164,16 +296,21 @@ pub fn renderer_state() -> Option<&'static Mutex<Renderer>> {
 }
 
 pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
-    let device = &renderer.device_ctx.device;
-    let frame = &renderer.frames[renderer.current_frame];
-    let wait_semaphores = [frame.image_available];
-    let signal_semaphores = [frame.render_finished];
+    let current_frame = renderer.current_frame;
+    let command_buffer = renderer.frames[current_frame].command_buffer;
+    let image_available = renderer.frames[current_frame].image_available;
+    let render_finished = renderer.frames[current_frame].render_finished;
+    let in_flight = renderer.frames[current_frame].in_flight;
+    let wait_semaphores = [image_available];
+    let signal_semaphores = [render_finished];
     let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-    let command_buffers = [frame.command_buffer];
+    let command_buffers = [command_buffer];
 
     unsafe {
-        device
-            .wait_for_fences(&[frame.in_flight], true, u64::MAX)
+        renderer
+            .device_ctx
+            .device
+            .wait_for_fences(&[in_flight], true, u64::MAX)
             .context("failed waiting for Vulkan in-flight fence")?;
 
         let (image_index, _) = renderer
@@ -182,19 +319,25 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
             .acquire_next_image(
                 renderer.swapchain_ctx.swapchain,
                 u64::MAX,
-                frame.image_available,
+                image_available,
                 vk::Fence::null(),
             )
             .context("failed to acquire Vulkan swapchain image")?;
 
-        device
-            .reset_fences(&[frame.in_flight])
+        renderer
+            .device_ctx
+            .device
+            .reset_fences(&[in_flight])
             .context("failed to reset Vulkan in-flight fence")?;
-        device
-            .reset_command_buffer(frame.command_buffer, vk::CommandBufferResetFlags::empty())
+        renderer
+            .device_ctx
+            .device
+            .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
             .context("failed to reset Vulkan command buffer")?;
-        device
-            .begin_command_buffer(frame.command_buffer, &vk::CommandBufferBeginInfo::default())
+        renderer
+            .device_ctx
+            .device
+            .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
             .context("failed to begin Vulkan command buffer")?;
 
         let clear_values = [vk::ClearValue {
@@ -211,14 +354,32 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
             })
             .clear_values(&clear_values);
 
-        device.cmd_begin_render_pass(
-            frame.command_buffer,
+        renderer.device_ctx.device.cmd_begin_render_pass(
+            command_buffer,
             &render_pass_begin,
             vk::SubpassContents::INLINE,
         );
-        device.cmd_end_render_pass(frame.command_buffer);
-        device
-            .end_command_buffer(frame.command_buffer)
+
+        if let Some(mut egui_backend) = renderer.egui_backend.take() {
+            let paint_result = egui_backend.paint(
+                renderer,
+                command_buffer,
+                egui::TexturesDelta::default(),
+                Vec::new(),
+                [
+                    renderer.swapchain_ctx.extent.width as f32,
+                    renderer.swapchain_ctx.extent.height as f32,
+                ],
+            );
+            renderer.egui_backend = Some(egui_backend);
+            paint_result?;
+        }
+
+        renderer.device_ctx.device.cmd_end_render_pass(command_buffer);
+        renderer
+            .device_ctx
+            .device
+            .end_command_buffer(command_buffer)
             .context("failed to end Vulkan command buffer")?;
 
         let submit_infos = [vk::SubmitInfo::default()
@@ -226,11 +387,13 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
             .wait_dst_stage_mask(&wait_stages)
             .command_buffers(&command_buffers)
             .signal_semaphores(&signal_semaphores)];
-        device
+        renderer
+            .device_ctx
+            .device
             .queue_submit(
                 renderer.device_ctx.graphics_queue,
                 &submit_infos,
-                frame.in_flight,
+                in_flight,
             )
             .context("failed to submit Vulkan graphics queue")?;
 
@@ -251,4 +414,264 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
 
     renderer.current_frame = (renderer.current_frame + 1) % renderer.frames.len();
     Ok(())
+}
+
+pub(crate) fn create_allocated_buffer(
+    renderer: &mut Renderer,
+    size: vk::DeviceSize,
+    usage: vk::BufferUsageFlags,
+    location: MemoryLocation,
+    allocation_scheme: AllocationScheme,
+    name: &'static str,
+) -> Result<(vk::Buffer, Allocation)> {
+    let buffer = unsafe {
+        renderer
+            .device_ctx
+            .device
+            .create_buffer(
+                &vk::BufferCreateInfo::default()
+                    .size(size)
+                    .usage(usage)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE),
+                None,
+            )
+            .context("failed to create Vulkan buffer")?
+    };
+
+    let requirements = unsafe {
+        renderer
+            .device_ctx
+            .device
+            .get_buffer_memory_requirements(buffer)
+    };
+    let allocation = allocator_mut(renderer)
+        .allocate(&AllocationCreateDesc {
+            name,
+            requirements,
+            location,
+            linear: true,
+            allocation_scheme,
+        })
+        .map_err(|error| anyhow!("failed to allocate Vulkan buffer memory: {error}"))?;
+
+    unsafe {
+        renderer
+            .device_ctx
+            .device
+            .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
+            .context("failed to bind Vulkan buffer memory")?;
+    }
+
+    Ok((buffer, allocation))
+}
+
+pub(crate) fn destroy_allocated_buffer(
+    renderer: &mut Renderer,
+    buffer: vk::Buffer,
+    allocation: Allocation,
+) -> Result<()> {
+    allocator_mut(renderer)
+        .free(allocation)
+        .map_err(|error| anyhow!("failed to free Vulkan buffer allocation: {error}"))?;
+    unsafe {
+        renderer.device_ctx.device.destroy_buffer(buffer, None);
+    }
+    Ok(())
+}
+
+pub(crate) fn create_allocated_image(
+    renderer: &mut Renderer,
+    extent: vk::Extent3D,
+    format: vk::Format,
+    usage: vk::ImageUsageFlags,
+    allocation_scheme: AllocationScheme,
+    name: &'static str,
+) -> Result<(vk::Image, Allocation)> {
+    let image = unsafe {
+        renderer
+            .device_ctx
+            .device
+            .create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(format)
+                    .extent(extent)
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(usage)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+            .context("failed to create Vulkan image")?
+    };
+
+    let requirements = unsafe {
+        renderer
+            .device_ctx
+            .device
+            .get_image_memory_requirements(image)
+    };
+    let allocation_scheme = match allocation_scheme {
+        AllocationScheme::DedicatedImage(_) => AllocationScheme::DedicatedImage(image),
+        other => other,
+    };
+    let allocation = allocator_mut(renderer)
+        .allocate(&AllocationCreateDesc {
+            name,
+            requirements,
+            location: MemoryLocation::GpuOnly,
+            linear: false,
+            allocation_scheme,
+        })
+        .map_err(|error| anyhow!("failed to allocate Vulkan image memory: {error}"))?;
+
+    unsafe {
+        renderer
+            .device_ctx
+            .device
+            .bind_image_memory(image, allocation.memory(), allocation.offset())
+            .context("failed to bind Vulkan image memory")?;
+    }
+
+    Ok((image, allocation))
+}
+
+pub(crate) fn destroy_allocated_image(
+    renderer: &mut Renderer,
+    image: vk::Image,
+    allocation: Allocation,
+) -> Result<()> {
+    allocator_mut(renderer)
+        .free(allocation)
+        .map_err(|error| anyhow!("failed to free Vulkan image allocation: {error}"))?;
+    unsafe {
+        renderer.device_ctx.device.destroy_image(image, None);
+    }
+    Ok(())
+}
+
+pub(crate) fn allocator_mut(renderer: &mut Renderer) -> &mut Allocator {
+    unsafe { &mut *addr_of_mut!(renderer.allocator).cast::<Allocator>() }
+}
+
+pub(crate) fn submit_one_shot_commands<F>(renderer: &Renderer, record: F) -> Result<()>
+where
+    F: FnOnce(&ash::Device, vk::CommandBuffer) -> Result<()>,
+{
+    let device = &renderer.device_ctx.device;
+    let command_buffer = unsafe {
+        device
+            .allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::default()
+                    .command_pool(renderer.command_pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1),
+            )
+            .context("failed to allocate one-shot command buffer")?
+            .into_iter()
+            .next()
+            .context("one-shot command allocation returned no buffers")?
+    };
+
+    unsafe {
+        device
+            .begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+            .context("failed to begin one-shot command buffer")?;
+    }
+
+    record(device, command_buffer)?;
+
+    unsafe {
+        device
+            .end_command_buffer(command_buffer)
+            .context("failed to end one-shot command buffer")?;
+
+        let command_buffers = [command_buffer];
+        let submit_infos = [vk::SubmitInfo::default().command_buffers(&command_buffers)];
+        device
+            .queue_submit(renderer.device_ctx.graphics_queue, &submit_infos, vk::Fence::null())
+            .context("failed to submit one-shot command buffer")?;
+        device
+            .queue_wait_idle(renderer.device_ctx.graphics_queue)
+            .context("failed waiting for one-shot command buffer")?;
+        device.free_command_buffers(renderer.command_pool, &command_buffers);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn transition_image_layout(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    image: vk::Image,
+    old_layout: vk::ImageLayout,
+    new_layout: vk::ImageLayout,
+) {
+    let (src_access_mask, dst_access_mask, src_stage_mask, dst_stage_mask) =
+        match (old_layout, new_layout) {
+            (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
+                vk::AccessFlags::empty(),
+                vk::AccessFlags::TRANSFER_WRITE,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+            ),
+            (
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            ) => (
+                vk::AccessFlags::SHADER_READ,
+                vk::AccessFlags::TRANSFER_WRITE,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::PipelineStageFlags::TRANSFER,
+            ),
+            (
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ) => (
+                vk::AccessFlags::TRANSFER_WRITE,
+                vk::AccessFlags::SHADER_READ,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+            ),
+            _ => (
+                vk::AccessFlags::empty(),
+                vk::AccessFlags::empty(),
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            ),
+        };
+
+    let barriers = [vk::ImageMemoryBarrier::default()
+        .old_layout(old_layout)
+        .new_layout(new_layout)
+        .src_access_mask(src_access_mask)
+        .dst_access_mask(dst_access_mask)
+        .image(image)
+        .subresource_range(
+            vk::ImageSubresourceRange::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1),
+        )];
+
+    unsafe {
+        device.cmd_pipeline_barrier(
+            command_buffer,
+            src_stage_mask,
+            dst_stage_mask,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &barriers,
+        );
+    }
 }
