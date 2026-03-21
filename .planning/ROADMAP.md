@@ -12,7 +12,7 @@ This roadmap delivers a modular non-Bevy Rust voxel engine foundation by stabili
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Runtime Skeleton and Quality Gates** - Establish deterministic stage execution, stable subsystem boundaries, and mandatory workflow gates.
+- [x] **Phase 1: Runtime Skeleton and Quality Gates** - Establish deterministic stage execution, stable subsystem boundaries, and mandatory workflow gates.
 - [ ] **Phase 2: Streaming Lifecycle and Job Queues** - Make player-driven chunk activation work with explicit lifecycle states and bounded background work.
 - [ ] **Phase 3: Greedy Meshing and Render Delta Sync** - Produce greedy chunk meshes and push only chunk deltas to the renderer.
 - [ ] **Phase 4: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
@@ -38,7 +38,7 @@ Plans:
 - [x] 01-02: Implement serializable domain events and quality-gate enforcement hooks.
 - [x] 01-03: Implement boundary-safe runtime system registration and architecture notes.
 - [x] 01-04: Implement serializable event contracts and validation paths.
-- [ ] 01-05: Implement quality-gate enforcement artifacts and final phase checks.
+- [x] 01-05: Implement quality-gate enforcement artifacts and final phase checks.
 
 ### Phase 2: Streaming Lifecycle and Job Queues
 **Goal**: Player movement reliably controls active chunks through explicit lifecycle states while heavy world work stays bounded off the frame thread.
@@ -51,8 +51,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 02-01: Implement active-set planning and chunk lifecycle state machine with revisions.
-- [ ] 02-02: Implement bounded background queue execution with cancellation and backpressure.
+- [ ] 02-01-PLAN.md — Types, ChunkStateStore, SSE octree traversal, active-set diff (Wave 1)
+- [ ] 02-02-PLAN.md — ChunkJobQueue, rayon runner, scheduler wiring, integration test (Wave 2)
 
 ### Phase 3: Greedy Meshing and Render Delta Sync
 **Goal**: Visible voxel surfaces are meshed efficiently and renderer sync updates only affected chunks instead of full-world uploads.
@@ -129,7 +129,7 @@ Phases execute in numeric order: 2 -> 2.1 -> 2.2 -> 3 -> 3.1 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Runtime Skeleton and Quality Gates | 4/5 | In progress | - |
+| 1. Runtime Skeleton and Quality Gates | 5/5 | Complete | 2026-03-15 |
 | 2. Streaming Lifecycle and Job Queues | 0/2 | Not started | - |
 | 3. Greedy Meshing and Render Delta Sync | 0/2 | Not started | - |
 | 4. Movement and Collision Modes | 0/2 | Not started | - |
