@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 03
 status: executing
-stopped_at: Completed 03-01-PLAN.md
-last_updated: "2026-03-21T18:39:08.917Z"
+stopped_at: Completed 03-03-PLAN.md
+last_updated: "2026-03-21T20:59:36.614Z"
 progress:
   total_phases: 8
   completed_phases: 3
-  total_plans: 11
-  completed_plans: 10
+  total_plans: 13
+  completed_plans: 12
 ---
 
 # Session State
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md
 
 ## Session Continuity
 
-Last session: 2026-03-21T18:38:41.603Z
-Stopped at: Completed 03-01-PLAN.md
+Last session: 2026-03-22T04:59:36.6145684+08:00
+Stopped at: Completed 03-03-PLAN.md
 Resume file: None
 
 ## Session Log
@@ -39,6 +39,12 @@ Resume file: None
 - 2026-03-21: Executed 02.5-01-PLAN.md â€” Vulkan bootstrap (instance, device, swapchain, frame loop)
 - 2026-03-21: Executed 02.5-02-PLAN.md â€” gpu-allocator + StagingBuffer + EguiAshBackend; Phase 02.5 complete
 - 2026-03-22: Executed 03-01-PLAN.md â€” typed chunk payloads, meshing invalidation state, and greedy PackedMesh emission
+
+- 2026-03-22: Resume workflow reconciled artifacts; Phase 03 summaries are complete, no active handoff/interrupted agent, and the next step is transitioning to Phase 04 planning
+
+- 2026-03-22: Executed 03-02-PLAN.md éˆ¥?slot-pool renderer delta sync, shader build pipeline, and visible Vulkan app bootstrap
+- 2026-03-22: Re-checked Phase 03 verification debt against current code and tests; end-to-end renderer gaps remain, and planning docs were reconciled accordingly
+- 2026-03-22: Executed 03-03-PLAN.md â€” deterministic chunk payloads, dense draw bookkeeping over stable slots, and metadata-driven world placement
 
 ## Accumulated Decisions
 
@@ -52,3 +58,8 @@ Resume file: None
 - StagingBuffer::copy_to_image placed on StagingBuffer so Phase 3 meshing can reuse it
 - [Phase 03]: Made greedy meshing halo-aware and encoded skirt geometry in the packed vertex contract â€” Lets later renderer work consume seam-safe meshes without re-deriving border topology.
 - [Phase 03]: Kept meshing dirtiness in a dedicated MeshingState instead of extending ChunkState â€” Preserves a clean ownership boundary between lifecycle transitions and remesh work.
+- [Phase 03]: Compiled chunk shaders at build time and bootstrapped a real winit Vulkan window path â€” Locks shader sources to the repo and gives later phases a visible renderer entrypoint instead of a single-frame stub.
+- [Phase 03]: Used a shared chunk slot pool and per-chunk indirect commands for renderer updates â€” Keeps remesh and unload work scoped to the affected slot instead of rebuilding whole-world buffers.
+- [Phase 03]: Used a ChunkKey-derived synthetic floor-and-pillars payload for generated chunks ¡ª Proves the live meshing/render path without introducing terrain generation scope.
+- [Phase 03]: Split dense draw bookkeeping from stable slot ownership ¡ª Lets renderer submission stay hole-free while GPU storage remains keyed by stable slot_id.
+- [Phase 03]: Bound chunk metadata as a vertex-stage storage buffer and used gl_InstanceIndex for world placement ¡ª Closes the graphics placement contract without adding camera or culling scope.

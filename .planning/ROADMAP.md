@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Runtime Skeleton and Quality Gates** - Establish deterministic stage execution, stable subsystem boundaries, and mandatory workflow gates.
 - [x] **Phase 2: Streaming Lifecycle and Job Queues** - Make player-driven chunk activation work with explicit lifecycle states and bounded background work.
-- [ ] **Phase 2.5: Vulkan Bootstrap and Render Infrastructure** (INSERTED) - Replace wgpu with raw Vulkan (ash) and establish gpu-allocator-backed staging pipeline and egui-ash integration.
+- [x] **Phase 2.5: Vulkan Bootstrap and Render Infrastructure** (INSERTED) - Replace wgpu with raw Vulkan (ash) and establish gpu-allocator-backed staging pipeline and egui-ash integration.
 - [ ] **Phase 3: Greedy Meshing and Render Delta Sync** - Produce greedy chunk meshes and push only chunk deltas to the renderer.
 - [ ] **Phase 4: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
 - [ ] **Phase 5: Authoritative Block Editing Feedback** - Apply block edits authoritatively and reflect them visually near-immediately.
@@ -77,11 +77,13 @@ Plans:
   1. Visible chunk surfaces render using greedy meshing with incremental updates.
   2. Border changes invalidate neighbor chunks correctly so seams are not visible at chunk edges.
   3. Chunk edits and streaming updates apply through chunk-delta renderer uploads without full-world reupload.
-**Plans**: 2 plans
+**Plans**: 4 plans
 
 Plans:
 - [x] 03-01-PLAN.md - Typed chunk payloads, greedy mesh generation, and neighbor-aware invalidation.
-- [ ] 03-02-PLAN.md - Fixed slot-pool renderer delta sync, feature-gated indirect draw, and visible chunk rendering.
+- [x] 03-02-PLAN.md - Fixed slot-pool renderer delta sync, feature-gated indirect draw, and visible chunk rendering.
+- [x] 03-03-PLAN.md - Deterministic chunk payloads, dense draw bookkeeping, and metadata-driven world placement.
+- [ ] 03-04-PLAN.md - Compute visibility wiring and dense indirect submission completion.
 
 ### Phase 4: Movement and Collision Modes
 **Goal**: Players can navigate the world with reliable fly/gravity modes and collision behavior that remains stable during chunk streaming transitions.
@@ -147,7 +149,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4
 | 1. Runtime Skeleton and Quality Gates | 5/5 | Complete | 2026-03-15 |
 | 2. Streaming Lifecycle and Job Queues | 2/2 | Complete    | 2026-03-21 |
 | 2.5. Vulkan Bootstrap and Render Infrastructure | 2/2 | Complete    | 2026-03-21 |
-| 3. Greedy Meshing and Render Delta Sync | 1/2 | In Progress | - |
+| 3. Greedy Meshing and Render Delta Sync | 3/4 | In Progress | - |
 | 4. Movement and Collision Modes | 0/2 | Not started | - |
 | 5. Authoritative Block Editing Feedback | 0/2 | Not started | - |
 | 6. Chunk Persistence and Recovery | 0/2 | Not started | - |
