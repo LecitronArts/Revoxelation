@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{
+    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
-    mpsc, Arc, Mutex, OnceLock,
+    mpsc,
 };
 
 use log::info;
@@ -12,19 +13,17 @@ use crate::streaming::{
     octree::StreamingOctree,
     sse::diff_active_set,
     state_store::ChunkStateStore,
-    types::{
-        ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState, LodConfig, SseConfig,
-    },
+    types::{ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState, LodConfig, SseConfig},
 };
 
 use super::{
     events::{
-        BlockEditCommand, BlockEditOperation, BlockPosition, ChunkCoordinate,
-        ChunkLifecycleAction, ChunkLifecycleCommand, EventBus, EventBusSnapshot, PlayerAction,
-        PlayerActionCommand, RuntimeCommand,
+        BlockEditCommand, BlockEditOperation, BlockPosition, ChunkCoordinate, ChunkLifecycleAction,
+        ChunkLifecycleCommand, EventBus, EventBusSnapshot, PlayerAction, PlayerActionCommand,
+        RuntimeCommand,
     },
     observability::RuntimeHudOverlay,
-    stages::{Stage, STAGE_ORDER},
+    stages::{STAGE_ORDER, Stage},
     trace::{TraceEntry, TransitionKind},
 };
 
@@ -122,6 +121,11 @@ pub fn run_frame(frame_index: u64) -> FrameExecution {
             Stage::Simulation => event_bus.process_pending_commands(),
             Stage::RenderSubmit => {
                 let _ = event_bus.consume_emitted();
+                if let Some(renderer) = crate::renderer::renderer_state() {
+                    if let Ok(mut renderer) = renderer.lock() {
+                        let _ = crate::renderer::submit_frame(&mut renderer, frame_index);
+                    }
+                }
             }
             Stage::WorldUpdate => run_world_update(frame_index),
             Stage::MeshSync => run_mesh_sync(frame_index),
@@ -333,24 +337,20 @@ fn seed_input_commands(event_bus: &mut EventBus) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
+    use super::MAX_RETRIES;
     use crate::streaming::{
         job_queue::ChunkJobQueue,
         state_store::ChunkStateStore,
         types::{ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState},
     };
-    use super::MAX_RETRIES;
+    use std::sync::mpsc;
 
     fn key(n: i32) -> ChunkKey {
         ChunkKey::new(n, 0, 0, 0)
     }
 
     // Helper: apply the MeshSync Failed-outcome logic directly without run_frame.
-    fn apply_failed(
-        store: &mut ChunkStateStore,
-        key: ChunkKey,
-        frame_index: u64,
-    ) {
+    fn apply_failed(store: &mut ChunkStateStore, key: ChunkKey, frame_index: u64) {
         let current_retry = match store.get(&key).map(|e| e.state) {
             Some(ChunkState::Error { retry_count, .. }) => retry_count,
             _ => 0,
@@ -414,8 +414,14 @@ mod tests {
 
         let entry = store.get(&k).expect("entry must exist");
         match entry.state {
-            ChunkState::Error { retry_count, next_retry_frame } => {
-                assert_eq!(retry_count, 1, "retry_count should be 1 after first failure");
+            ChunkState::Error {
+                retry_count,
+                next_retry_frame,
+            } => {
+                assert_eq!(
+                    retry_count, 1,
+                    "retry_count should be 1 after first failure"
+                );
                 // next_retry_frame = frame + 2^0 = frame + 1
                 assert_eq!(
                     next_retry_frame,
