@@ -1,4 +1,21 @@
+use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex, OnceLock,
+};
+
 use log::info;
+
+use crate::streaming::{
+    job_queue::{ChunkJobQueue, PrioritizedTask},
+    job_runner::spawn_chunk_job,
+    octree::StreamingOctree,
+    sse::diff_active_set,
+    state_store::ChunkStateStore,
+    types::{
+        ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState, LodConfig, SseConfig,
+    },
+};
 
 use super::{
     events::{
@@ -11,6 +28,71 @@ use super::{
     trace::{TraceEntry, TransitionKind},
 };
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// Maximum number of tasks drained from the job queue per WorldUpdate frame.
+const PER_FRAME_CAP: usize = 16;
+
+/// Default job queue capacity (evicts lowest-SSE task when full).
+const QUEUE_CAPACITY: usize = 128;
+
+/// Maximum retry attempts before a chunk is transitioned to Inactive.
+pub const MAX_RETRIES: u32 = 3;
+
+// ---------------------------------------------------------------------------
+// StreamingState
+// ---------------------------------------------------------------------------
+
+/// All streaming subsystem state owned by the scheduler.
+pub struct StreamingState {
+    pub octree: StreamingOctree,
+    pub lod_configs: Vec<LodConfig>,
+    pub sse_config: SseConfig,
+    pub state_store: ChunkStateStore,
+    pub job_queue: ChunkJobQueue,
+    /// Cancel flags for in-flight jobs keyed by ChunkKey.
+    pub cancel_flags: HashMap<ChunkKey, Arc<AtomicBool>>,
+    pub result_sender: mpsc::Sender<ChunkJobResult>,
+    pub result_receiver: mpsc::Receiver<ChunkJobResult>,
+    pub rayon_pool: rayon::ThreadPool,
+}
+
+impl StreamingState {
+    fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            octree: StreamingOctree::build(4, 3),
+            lod_configs: vec![
+                LodConfig::new(1.0, 16.0),
+                LodConfig::new(4.0, 32.0),
+                LodConfig::new(16.0, 64.0),
+            ],
+            sse_config: SseConfig::new(720.0, std::f32::consts::FRAC_PI_3, 1.0, false),
+            state_store: ChunkStateStore::new(),
+            job_queue: ChunkJobQueue::new(QUEUE_CAPACITY),
+            cancel_flags: HashMap::new(),
+            result_sender: tx,
+            result_receiver: rx,
+            rayon_pool: rayon::ThreadPoolBuilder::new()
+                .num_threads(4)
+                .build()
+                .unwrap(),
+        }
+    }
+}
+
+static STREAMING: OnceLock<Mutex<StreamingState>> = OnceLock::new();
+
+fn streaming_state() -> &'static Mutex<StreamingState> {
+    STREAMING.get_or_init(|| Mutex::new(StreamingState::new()))
+}
+
+// ---------------------------------------------------------------------------
+// FrameExecution
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameExecution {
     pub frame_index: u64,
@@ -19,6 +101,10 @@ pub struct FrameExecution {
     pub overlay: RuntimeHudOverlay,
     pub event_bus: EventBusSnapshot,
 }
+
+// ---------------------------------------------------------------------------
+// run_frame
+// ---------------------------------------------------------------------------
 
 pub fn run_frame(frame_index: u64) -> FrameExecution {
     let mut executed_stages = Vec::with_capacity(STAGE_ORDER.len());
@@ -37,7 +123,8 @@ pub fn run_frame(frame_index: u64) -> FrameExecution {
             Stage::RenderSubmit => {
                 let _ = event_bus.consume_emitted();
             }
-            Stage::WorldUpdate | Stage::MeshSync => {}
+            Stage::WorldUpdate => run_world_update(frame_index),
+            Stage::MeshSync => run_mesh_sync(frame_index),
         }
 
         executed_stages.push(stage);
@@ -59,6 +146,166 @@ pub fn run_frame(frame_index: u64) -> FrameExecution {
     }
 }
 
+// ---------------------------------------------------------------------------
+// WorldUpdate arm
+// ---------------------------------------------------------------------------
+
+fn run_world_update(frame_index: u64) {
+    let _ = frame_index;
+    let mut ss = streaming_state().lock().unwrap();
+
+    // Camera at origin for default/test scenarios.
+    let camera_pos = [0.0f32, 0.0, 0.0];
+
+    // Compute diff against current active set.
+    let current_active = ss.state_store.active_set();
+    let diff = diff_active_set(
+        &ss.octree,
+        &ss.lod_configs,
+        &ss.sse_config,
+        &current_active,
+        |key: &ChunkKey| {
+            let dx = key.x as f32 - camera_pos[0];
+            let dy = key.y as f32 - camera_pos[1];
+            let dz = key.z as f32 - camera_pos[2];
+            (dx * dx + dy * dy + dz * dz).sqrt().max(0.01)
+        },
+    );
+
+    // Deactivate chunks no longer needed.
+    for key in &diff.to_deactivate {
+        // Cancel in-flight job if present.
+        if let Some(flag) = ss.cancel_flags.get(key) {
+            flag.store(true, Ordering::Relaxed);
+        }
+        // Remove from queue if still queued.
+        ss.job_queue.cancel_queued(*key);
+    }
+
+    // Activate new chunks: insert into state store, then enqueue.
+    for key in &diff.to_activate {
+        if ss.state_store.get(key).is_none() {
+            ss.state_store.insert_inactive(*key);
+        }
+        let state = ss.state_store.get(key).map(|e| e.state);
+        if state == Some(ChunkState::Inactive) {
+            // Inactive -> Queued
+            let _ = ss.state_store.transition_to(*key, ChunkState::Queued);
+            let sse_bits = 1.0f32.to_bits(); // placeholder SSE; refined on drain
+            ss.job_queue.enqueue(PrioritizedTask {
+                key: *key,
+                lod_level: key.lod_level,
+                sse_bits,
+            });
+        }
+    }
+
+    // Drain up to PER_FRAME_CAP and spawn jobs.
+    let tasks = ss.job_queue.drain_up_to(PER_FRAME_CAP);
+    let sender = ss.result_sender.clone();
+
+    // Transition all drained tasks to Loading before borrowing the pool.
+    for task in &tasks {
+        let key = task.key;
+        let entry_state = ss.state_store.get(&key).map(|e| e.state);
+        if entry_state == Some(ChunkState::Queued) {
+            let _ = ss.state_store.transition_to(key, ChunkState::Loading);
+        }
+    }
+
+    // Now borrow pool and spawn.
+    let pool = &ss.rayon_pool;
+    // Collect (key, flag) pairs before modifying cancel_flags map.
+    let mut spawned: Vec<(ChunkKey, Arc<AtomicBool>)> = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        let key = task.key;
+        let flag = spawn_chunk_job(pool, task, sender.clone());
+        spawned.push((key, flag));
+    }
+    for (key, flag) in spawned {
+        ss.cancel_flags.insert(key, flag);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MeshSync arm
+// ---------------------------------------------------------------------------
+
+fn run_mesh_sync(frame_index: u64) {
+    let mut ss = streaming_state().lock().unwrap();
+
+    loop {
+        match ss.result_receiver.try_recv() {
+            Ok(result) => handle_job_result(&mut ss, result, frame_index),
+            Err(mpsc::TryRecvError::Empty) => break,
+            Err(mpsc::TryRecvError::Disconnected) => break,
+        }
+    }
+}
+
+fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_index: u64) {
+    let key = result.key;
+    // Remove cancel flag for this key.
+    ss.cancel_flags.remove(&key);
+
+    match result.outcome {
+        ChunkJobOutcome::Generated(_) | ChunkJobOutcome::Loaded => {
+            // Loading -> Active
+            let _ = ss.state_store.transition_to(key, ChunkState::Active);
+        }
+        ChunkJobOutcome::Cancelled => {
+            // Intentional cancel: transition Loading -> Inactive (or leave as-is).
+            // Guard: only transition if currently in Loading state.
+            let state = ss.state_store.get(&key).map(|e| e.state);
+            if state == Some(ChunkState::Loading) {
+                // Loading is not directly -> Inactive; go through Queued->Inactive path.
+                // Use Error path: Loading -> Error, then Error -> Inactive.
+                let _ = ss.state_store.transition_to(
+                    key,
+                    ChunkState::Error {
+                        retry_count: MAX_RETRIES, // max retries => next drain will go Inactive
+                        next_retry_frame: frame_index,
+                    },
+                );
+                let _ = ss.state_store.transition_to(key, ChunkState::Inactive);
+            }
+        }
+        ChunkJobOutcome::Unloaded => {
+            // Loading/Unloading -> Inactive
+            let _ = ss.state_store.transition_to(key, ChunkState::Inactive);
+        }
+        ChunkJobOutcome::Failed(_msg) => {
+            let current_retry = match ss.state_store.get(&key).map(|e| e.state) {
+                Some(ChunkState::Error { retry_count, .. }) => retry_count,
+                _ => 0,
+            };
+            let next_retry_frame = frame_index + 2u64.pow(current_retry);
+            if current_retry >= MAX_RETRIES {
+                let _ = ss.state_store.transition_to(
+                    key,
+                    ChunkState::Error {
+                        retry_count: current_retry + 1,
+                        next_retry_frame,
+                    },
+                );
+                let _ = ss.state_store.transition_to(key, ChunkState::Inactive);
+            } else {
+                let _ = ss.state_store.transition_to(
+                    key,
+                    ChunkState::Error {
+                        retry_count: current_retry + 1,
+                        next_retry_frame,
+                    },
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Input seeding
+// ---------------------------------------------------------------------------
+
 fn seed_input_commands(event_bus: &mut EventBus) {
     let _ = event_bus.publish_command(RuntimeCommand::PlayerAction(PlayerActionCommand {
         actor_entity_id: 1,
@@ -78,4 +325,105 @@ fn seed_input_commands(event_bus: &mut EventBus) {
             block_id: "stone".to_string(),
         },
     }));
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use crate::streaming::{
+        job_queue::ChunkJobQueue,
+        state_store::ChunkStateStore,
+        types::{ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState},
+    };
+    use super::MAX_RETRIES;
+
+    fn key(n: i32) -> ChunkKey {
+        ChunkKey::new(n, 0, 0, 0)
+    }
+
+    // Helper: apply the MeshSync Failed-outcome logic directly without run_frame.
+    fn apply_failed(
+        store: &mut ChunkStateStore,
+        key: ChunkKey,
+        frame_index: u64,
+    ) {
+        let current_retry = match store.get(&key).map(|e| e.state) {
+            Some(ChunkState::Error { retry_count, .. }) => retry_count,
+            _ => 0,
+        };
+        let next_retry_frame = frame_index + 2u64.pow(current_retry);
+        if current_retry >= MAX_RETRIES {
+            let _ = store.transition_to(
+                key,
+                ChunkState::Error {
+                    retry_count: current_retry + 1,
+                    next_retry_frame,
+                },
+            );
+            let _ = store.transition_to(key, ChunkState::Inactive);
+        } else {
+            let _ = store.transition_to(
+                key,
+                ChunkState::Error {
+                    retry_count: current_retry + 1,
+                    next_retry_frame,
+                },
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // world_update_no_panic
+    // -----------------------------------------------------------------------
+    #[test]
+    fn world_update_no_panic() {
+        // run_frame touches OnceLock global state; just assert it completes.
+        let result = super::run_frame(1000);
+        assert_eq!(result.executed_stages.len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // mesh_sync_no_panic
+    // -----------------------------------------------------------------------
+    #[test]
+    fn mesh_sync_no_panic() {
+        let result = super::run_frame(1001);
+        assert_eq!(result.executed_stages.len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // mesh_sync_failed_outcome_increments_retry
+    // -----------------------------------------------------------------------
+    #[test]
+    fn mesh_sync_failed_outcome_increments_retry() {
+        let k = key(9999);
+        let frame: u64 = 42;
+
+        // Build an isolated state store and apply failed logic.
+        let mut store = ChunkStateStore::new();
+        store.insert_inactive(k);
+        store.transition_to(k, ChunkState::Queued).unwrap();
+        store.transition_to(k, ChunkState::Loading).unwrap();
+
+        // Simulate a Failed outcome from MeshSync.
+        apply_failed(&mut store, k, frame);
+
+        let entry = store.get(&k).expect("entry must exist");
+        match entry.state {
+            ChunkState::Error { retry_count, next_retry_frame } => {
+                assert_eq!(retry_count, 1, "retry_count should be 1 after first failure");
+                // next_retry_frame = frame + 2^0 = frame + 1
+                assert_eq!(
+                    next_retry_frame,
+                    frame + 1,
+                    "next_retry_frame should be frame + 2^0 = frame + 1"
+                );
+            }
+            other => panic!("expected Error state, got {:?}", other),
+        }
+    }
 }

@@ -132,6 +132,15 @@ impl ChunkStateStore {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// Return the set of keys whose current state is `Active`.
+    pub fn active_set(&self) -> std::collections::HashSet<ChunkKey> {
+        self.entries
+            .iter()
+            .filter(|(_, e)| e.state == ChunkState::Active)
+            .map(|(k, _)| *k)
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
