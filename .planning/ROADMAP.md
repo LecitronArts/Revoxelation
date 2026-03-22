@@ -77,13 +77,15 @@ Plans:
   1. Visible chunk surfaces render using greedy meshing with incremental updates.
   2. Border changes invalidate neighbor chunks correctly so seams are not visible at chunk edges.
   3. Chunk edits and streaming updates apply through chunk-delta renderer uploads without full-world reupload.
-**Plans**: 4 plans
+**Plans**: 7 plans executed
 
 Plans:
 - [x] 03-01-PLAN.md - Typed chunk payloads, greedy mesh generation, and neighbor-aware invalidation.
 - [x] 03-02-PLAN.md - Fixed slot-pool renderer delta sync, feature-gated indirect draw, and visible chunk rendering.
 - [x] 03-03-PLAN.md - Deterministic chunk payloads, dense draw bookkeeping, and metadata-driven world placement.
 - [x] 03-04-PLAN.md - Compute visibility wiring and dense indirect submission completion.
+- [x] 03-05-PLAN.md - Optional validation-layer bootstrap so the default debug renderer path opens even when the layer is absent.
+- [x] 03-07-PLAN.md - Gap closure: 7-bit pack_vertex, non-degenerate pack_quad corners, vertex shader face-offset decode, CLOCKWISE front face.
 
 ### Phase 4: Movement and Collision Modes
 **Goal**: Players can navigate the world with reliable fly/gravity modes and collision behavior that remains stable during chunk streaming transitions.
@@ -149,7 +151,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4
 | 1. Runtime Skeleton and Quality Gates | 5/5 | Complete | 2026-03-15 |
 | 2. Streaming Lifecycle and Job Queues | 2/2 | Complete    | 2026-03-21 |
 | 2.5. Vulkan Bootstrap and Render Infrastructure | 2/2 | Complete    | 2026-03-21 |
-| 3. Greedy Meshing and Render Delta Sync | 4/4 | Ready for verification | - |
+| 3. Greedy Meshing and Render Delta Sync | 7/7 | Human verification required | - |
 | 4. Movement and Collision Modes | 0/2 | Not started | - |
 | 5. Authoritative Block Editing Feedback | 0/2 | Not started | - |
 | 6. Chunk Persistence and Recovery | 0/2 | Not started | - |
