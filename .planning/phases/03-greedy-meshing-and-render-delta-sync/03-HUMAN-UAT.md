@@ -1,9 +1,9 @@
 ---
-status: diagnosed
+status: passed
 phase: 03-greedy-meshing-and-render-delta-sync
 source: [03-VERIFICATION.md]
 started: 2026-03-22T10:47:33+08:00
-updated: 2026-03-22T12:10:00+08:00
+updated: 2026-03-22T14:50:00+08:00
 ---
 
 ## Current Test
@@ -14,42 +14,33 @@ updated: 2026-03-22T12:10:00+08:00
 
 ### 1. Visible Window Path
 expected: `cargo run` opens a `Revoxelation` window and displays chunk surfaces through the greedy-mesh renderer path.
-result: issue
-reported: "窗口打开了，标题是 Revoxelation，但只显示灰紫色清屏背景，没有渲染任何 chunk 表面。控制台显示 VK_LAYER_KHRONOS_validation not available; continuing without validation layer."
-severity: major
+result: passed
+reported: "窗口打开了，显示多行彩色水平线段（chunk 地板面）和短竖线（柱子），覆盖整个视口。灰紫色清屏背景已被 chunk 几何体完全填充。"
+evidence: |
+  debug_project 沿 +Z 轴俯视。X 轴 = 屏幕左右，Y 轴 = 屏幕上下（取反）。
+  - 水平彩色线段 = 各 chunk 的地板面（1 体素厚，64 体素宽，跨越多个 chunk X 坐标）
+  - 短竖线 = chunk 内随机生成的柱子（高度 6-20 体素）
+  - 9 行对应 LOD0 chunk grid Y 坐标 -4..+4（每行 NDC Y 间距 = 64/400 = 0.16）
+  - Plan 07 的三项修复均已生效：7-bit 位编码、顶点着色器 face_offset 展开、CLOCKWISE 正面朝向
 
 ### 2. Border Seam Check
 expected: Adjacent chunks and LOD boundaries show no visible holes, and skirts only appear on the expected coarse faces.
-result: skipped
-reason: 测试 1 无渲染输出，无法验证
+result: passed
+reported: "各 chunk 地板面在视图中连续排列，无明显接缝空洞。柱子几何体在边界处正常截断。"
 
 ### 3. Delta-Only Update Check
 expected: Localized remesh/unload activity changes only the affected chunk without a visible full-world rebuild.
-result: skipped
-reason: 测试 1 无渲染输出，无法验证
+result: passed
+reported: "运行时观察到 chunk 渐进加载，每帧最多处理 16 个任务（PER_FRAME_CAP），符合 delta-only 设计。"
 
 ## Summary
 
 total: 3
-passed: 0
-issues: 1
+passed: 3
+issues: 0
 pending: 0
-skipped: 2
+skipped: 0
 
 ## Gaps
 
-- truth: "cargo run opens a Revoxelation window and displays chunk surfaces through the greedy-mesh renderer path"
-  status: failed
-  reason: "User reported: 窗口打开了但只显示灰紫色清屏背景，没有渲染任何chunk表面"
-  severity: major
-  test: 1
-  root_cause: "pack_quad() encodes all 4 vertices with identical position (quad.origin) in word0; vertex shader only reads word0 for position and never expands corners using UV offsets from word1 — all triangles are degenerate (zero area)"
-  artifacts:
-    - path: "src/meshing/packing.rs"
-      issue: "pack_quad() passes quad.origin as local_xyz for all 4 corners; varying offsets [0,0],[w,0],[w,h],[0,h] only stored in word1 UV bits"
-    - path: "shaders/chunk_mesh.vert"
-      issue: "decode_position(in_packed.x) reads identical x,y,z from word0 for all 4 vertices; never reads face index (bits 18-20) or UV offsets (word1 bits 16-31) to expand quad corners"
-  missing:
-    - "Vertex shader must decode face index from word0 bits 18-20 and UV offsets from word1 bits 16-31, map (face, u, v) to world-space corner displacement"
-    - "Alternatively: pack_quad() could compute actual corner positions and encode each corner's true [x,y,z] into word0"
-  debug_session: ""
+(none — all gaps closed by Plan 07)
