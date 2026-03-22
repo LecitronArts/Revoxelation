@@ -555,3 +555,29 @@ fn mesh_01_greedy_mesh_single_block_has_nonzero_position_spread() {
         );
     }
 }
+
+#[test]
+fn mesh_01_vertex_shader_decodes_7_bit_positions_and_expands_face_offset() {
+    let shader = std::fs::read_to_string("shaders/chunk_mesh.vert")
+        .expect("chunk mesh shader should exist");
+    assert!(
+        shader.contains("0x7Fu"),
+        "decode_position must use 7-bit mask 0x7F"
+    );
+    assert!(
+        shader.contains(">> 7"),
+        "decode_position must shift Y by 7 bits"
+    );
+    assert!(
+        shader.contains(">> 14"),
+        "decode_position must shift Z by 14 bits"
+    );
+    assert!(
+        shader.contains("face_offset"),
+        "vertex shader must compute a face-normal offset for positive faces"
+    );
+    assert!(
+        !shader.contains("0x3Fu"),
+        "vertex shader must not use old 6-bit masks"
+    );
+}
