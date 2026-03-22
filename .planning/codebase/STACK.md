@@ -1,66 +1,60 @@
 # Revoxelation Tech Stack
 
 ## Snapshot
-- Project type: native desktop Rust application focused on GPU compute voxel path tracing.
+- Project type: native desktop Rust voxel runtime with a fixed-stage frame loop and an `ash`/Vulkan renderer.
 - Primary crate: `revoxelation` in `Cargo.toml`.
-- Rust edition: `2024` in `Cargo.toml`.
-- Entrypoint: `src/main.rs` initializes logging and delegates to `app::run`.
+- Rust edition: `2024`.
+- Entrypoints: `src/main.rs` calls `revoxelation::app::run`, and `src/app.rs` owns runtime startup.
 
 ## Language and Runtime
-- Language: Rust (`src/main.rs`, `src/app.rs`, `src/renderer/**`, `src/world/mod.rs`).
-- Shader language: WGSL in `src/shaders/trace.wgsl`, `src/shaders/reistir.wgsl`, `src/shaders/svgf.wgsl`.
-- Runtime model: single-process desktop app with event loop in `src/app.rs`.
-- Async bootstrap is resolved synchronously via `pollster::block_on` in `src/app.rs`.
+- Language: Rust across `src/lib.rs`, `src/app.rs`, `src/runtime/**`, `src/streaming/**`, `src/meshing/**`, and `src/renderer/**`.
+- Shader language: GLSL sources in `shaders/chunk_mesh.vert`, `shaders/chunk_mesh.frag`, and `shaders/chunk_cull.comp`.
+- Shader build flow: `build.rs` compiles GLSL into SPIR-V with `shaderc`, and renderer pipelines load the compiled bytes with `include_bytes!(concat!(env!("OUT_DIR"), ...))`.
+- Runtime model: single-process desktop app with a `winit` event loop and a five-stage frame scheduler.
 
 ## Build and Dependency Layer
-- Build tool: Cargo (`Cargo.toml`, `Cargo.lock`).
-- Core crates declared in `Cargo.toml`:
-- `wgpu` + `winit` for GPU and window/event integration (`src/renderer/core/bootstrap/device_setup.rs`, `src/app.rs`).
-- `egui`, `egui-wgpu`, `egui-winit` for in-app debug/control UI (`src/app.rs`, `src/renderer/core/bootstrap/mod.rs`, `src/renderer/core/frame_exec.rs`).
-- `hecs` for ECS-style camera logic (`src/ecs.rs`).
-- `glam` for math vectors and camera transforms (`src/ecs.rs`, `src/renderer/camera.rs`, `src/renderer/core/frame_exec.rs`).
-- `dashmap`, `rayon`, `noise`, `rand` for concurrent procedural world generation (`src/world/mod.rs`).
-- `bytemuck` for safe byte casting/POD layout over GPU buffers (`src/renderer/protocol/types.rs`, `src/renderer/world/upload.rs`).
-- `anyhow` for fallible app/renderer setup (`src/app.rs`, `src/renderer/core/bootstrap/device_setup.rs`).
-- `log` + `env_logger` for diagnostics (`src/main.rs`, `src/app.rs`, `src/renderer/core/world_ops.rs`).
+- Build tool: Cargo (`Cargo.toml`, `Cargo.lock`, `build.rs`).
+- GPU and platform crates:
+  - `ash`, `ash-window`, `gpu-allocator`, `raw-window-handle` for Vulkan instance/device/surface/memory management.
+  - `winit` for window creation and OS event dispatch.
+- Runtime and data crates:
+  - `dashmap`, `rayon`, `noise`, `rand` for chunk state tracking, background generation, and procedural payload production.
+  - `serde` and `serde_json` (tests) for runtime command/event serialization checks.
+- Utility crates:
+  - `anyhow` for fallible setup and bootstrap paths.
+  - `bytemuck` for POD GPU-facing structs and byte casting.
+  - `glam` for math support where needed.
+  - `egui` for UI data structures consumed by the custom Vulkan backend.
+  - `log` for runtime stage tracing.
+- Dependency note: `hecs` remains declared in `Cargo.toml`, but the current source tree does not wire a live ECS runtime around it.
 
 ## Rendering Stack
-- GPU API abstraction: `wgpu` device/surface/pipeline lifecycle in `src/renderer/core/bootstrap/device_setup.rs`.
-- Compute pipelines are built in `src/renderer/core/bootstrap/compute_pipelines.rs`.
-- Pipeline layouts come from protocol binding constants in `src/renderer/core/bootstrap/pipeline_layouts.rs`.
-- Shader modules are created from WGSL sources in `src/renderer/core/bootstrap/shader_modules.rs`.
-- Per-frame command recording and dispatch occur in `src/renderer/core/frame_exec.rs`.
-- Pass modules are split into trace/ReSTIR/SVGF in `src/renderer/passes/trace.rs`, `src/renderer/passes/reistir.rs`, `src/renderer/passes/svgf.rs`.
+- Vulkan bootstrap: `src/renderer/instance.rs`, `src/renderer/device.rs`, `src/renderer/swapchain.rs`, and `src/renderer/frame.rs`.
+- Renderer owner: `src/renderer/mod.rs` (`Renderer`) holds Vulkan objects, synchronization primitives, allocator state, and optional rendering subsystems.
+- Chunk rendering path:
+  - slot-backed GPU buffers in `src/renderer/chunk_pool.rs`
+  - graphics pipeline in `src/renderer/mesh_pipeline.rs`
+  - compute culling pipeline in `src/renderer/cull_pipeline.rs`
+  - frame submission and presentation in `src/renderer/mod.rs`
+- Upload helpers: `StagingBuffer` plus buffer/image allocation helpers in `src/renderer/mod.rs`.
+- UI backend: `src/renderer/egui_backend.rs` manages font texture uploads and scratch GPU buffers for egui meshes.
 
-## World/Data Stack
-- World storage: chunk map in `DashMap<ChunkCoord, Arc<Chunk>>` at `src/world/mod.rs`.
-- World generation worker uses `std::thread::spawn` + Rayon parallel iteration in `src/world/mod.rs`.
-- Noise-based terrain/cave synthesis uses `OpenSimplex` in `src/world/mod.rs`.
-- CPU world payload construction happens in `src/renderer/world/payload_builder.rs`.
-- Upload planning and GPU buffer/texture creation happen in `src/renderer/world/upload.rs`.
-
-## UI and Input Stack
-- Window/event handling: `winit` in `src/app.rs`.
-- UI state and controls: `egui` panel in `src/app.rs`.
-- Egui platform bridge: `egui_winit::State` in `src/app.rs`.
-- Egui GPU rendering: `egui_wgpu::Renderer` setup in `src/renderer/core/bootstrap/mod.rs` and render usage in `src/renderer/core/frame_exec.rs`.
-
-## Protocol and Memory Layout Stack
-- Shared CPU-side protocol structs live in `src/renderer/protocol/types.rs`.
-- Binding slot constants live in `src/renderer/protocol/bindings.rs`.
-- Frame history slot helpers live in `src/renderer/protocol/mod.rs`.
-- Bind group construction that enforces protocol order is in `src/renderer/resources/bind_groups.rs`.
+## Runtime, Streaming, and Meshing Stack
+- App orchestration: `src/app.rs` builds the window, creates renderer subsystems, installs global renderer state, and drives redraws.
+- Frame scheduler: `src/runtime/scheduler.rs` executes `Input -> Simulation -> WorldUpdate -> MeshSync -> RenderSubmit`.
+- Runtime support: `src/runtime/boundaries/**`, `src/runtime/events/**`, `src/runtime/trace.rs`, and `src/runtime/observability/**`.
+- Streaming subsystem: `src/streaming/octree.rs`, `src/streaming/sse.rs`, `src/streaming/state_store.rs`, `src/streaming/job_queue.rs`, `src/streaming/job_runner.rs`, and `src/streaming/types.rs`.
+- Meshing subsystem: `src/meshing/greedy.rs`, `src/meshing/invalidation.rs`, and `src/meshing/packing.rs`.
+- Render bridge: `RenderDelta` values produced by runtime/meshing are drained into the renderer and applied to the chunk pool before draw submission.
 
 ## Testing and Quality Signals
-- The codebase uses inline module tests (`#[cfg(test)]`) heavily in:
-- `src/world/mod.rs`
-- `src/renderer/core/renderer.rs`
-- `src/renderer/core/world_ops.rs`
-- `src/renderer/core/frame_exec.rs`
-- `src/renderer/protocol/mod.rs`
-- `src/renderer/core/bootstrap/pipeline_layouts.rs`
+- Integration tests live under `tests/`:
+  - `tests/phase1_*.rs` for stage order, boundaries, observability, events, and quality gates
+  - `tests/phase2_streaming.rs` for world-update/mesh-sync round trips
+  - `tests/phase25_vulkan.rs` for Vulkan API compile checks
+  - `tests/phase3_meshing.rs` for typed voxel payloads, greedy meshing, slot reuse, and Vulkan feature gating
+- Inline unit tests live in `src/streaming/*.rs`, `src/runtime/scheduler.rs`, and `src/runtime/boundaries/*.rs`.
 
 ## Not Present in Current Stack
-- No web framework/server runtime found in `src/**`.
-- No external database client crates in `Cargo.toml`.
-- No HTTP client/server crate usage found in `src/**`.
+- No Bevy or external game engine integration is present.
+- No network server, database client, or web framework is present in the current runtime.

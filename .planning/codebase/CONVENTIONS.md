@@ -1,57 +1,48 @@
 # Revoxelation Coding Conventions
 
 ## Scope and language profile
-- The codebase is Rust-only and centered in `src/` with binary entry in `src/main.rs`.
-- The crate currently uses Rust `edition = "2024"` in `Cargo.toml`.
-- Dependencies suggest a real-time renderer architecture (`wgpu`, `winit`, `egui`, `anyhow`, `log`).
+- The codebase is Rust-first and exported from `src/lib.rs`, with a thin binary entry in `src/main.rs`.
+- The crate uses Rust `edition = "2024"` in `Cargo.toml`.
+- Current architectural conventions assume a `winit` application shell, a fixed-stage runtime, and an `ash`/Vulkan renderer.
 
 ## Module and file organization
-- Top-level modules are declared in `src/main.rs` as `mod app; mod ecs; mod renderer; mod world;`.
-- Public renderer surface is organized via `src/renderer/mod.rs`:
-  - public submodules: `camera`, `core`, `lifecycle`, `protocol`, `resources`, `world`
-  - internal-only modules: `light_sampler`, `passes`, `reservoir`
-- Re-export pattern is used to keep public API stable:
-  - `src/renderer/mod.rs` re-exports `Renderer`, `RendererSettings`, diagnostics/event types.
-  - `src/renderer/core/renderer.rs` also re-exports from `state` for local consistency.
+- Top-level library modules are `app`, `runtime`, `streaming`, `meshing`, and `renderer`.
+- `src/app.rs` stays focused on OS-facing startup and redraw plumbing; it should not own streaming policy or deep Vulkan setup details.
+- `src/runtime/**` owns stage sequencing, domain boundaries, event/command contracts, and frame tracing.
+- `src/streaming/**` owns chunk lifecycle state, octree math, SSE decisions, and job orchestration.
+- `src/meshing/**` owns dirty propagation, neighbor-aware greedy meshing, and packed geometry formats.
+- `src/renderer/*.rs` is intentionally flat rather than nested; each file owns a single Vulkan concern such as instance creation, device selection, swapchain management, chunk buffers, or pipeline setup.
 
 ## Naming conventions
-- Types use `PascalCase`: `RendererSettings`, `VoxelWorld`, `WorldSyncRejection`, `FramePlan`.
-- Functions and fields use `snake_case`: `prepare_world_sync`, `generation_snapshot`, `svgf_passes`.
-- Constants use `SCREAMING_SNAKE_CASE`: `SVGF_MAX_ATROUS_PASSES`, `DEBUG_OVERLAY_MODE_MAX`.
-- GPU transfer structs are consistently suffixed with `Gpu` in `src/renderer/protocol/mod.rs` and `src/renderer/protocol/types.rs` (`CameraGpu`, `TracerUniform`, `SvgfDiagStatsGpu`).
-- Acronyms are stylized intentionally by domain type names (`ReSTIRPass`, `SvgfPass`), while methods stay snake_case.
+- Types use `PascalCase`: `Renderer`, `ChunkKey`, `ChunkJobOutcome`, `RuntimeDomain`, `RuntimeHudOverlay`.
+- Functions, locals, and fields use `snake_case`: `run_frame`, `pick_physical_device`, `pending_render_deltas`, `fine_chunk_boundary_mask`.
+- Constants use `SCREAMING_SNAKE_CASE`: `STAGE_ORDER`, `CHUNK_VOXEL_COUNT`, `MAX_RENDER_CHUNKS`, `MAX_RETRIES`.
+- Integration-test files are phase-prefixed (`phase1_*`, `phase2_*`, `phase25_*`, `phase3_*`) and individual test names remain descriptive snake_case sentences.
+- Serialized runtime enums use explicit serde tagging plus `rename_all = "snake_case"` to keep externalized event shapes predictable.
 
 ## API visibility and ownership conventions
-- `pub(crate)` is preferred for internal cross-module sharing (`src/renderer/core/state.rs`).
-- `pub(super)` is used for bootstrap internals (`src/renderer/core/bootstrap/device_setup.rs`).
-- Plain `pub` is reserved for external-facing runtime surface (`Renderer`, `RendererSettings`, world types).
+- Public surface area is exported from `src/lib.rs`, then narrowed through `pub use` re-exports inside modules such as `src/runtime/mod.rs` and `src/meshing/mod.rs`.
+- Renderer construction and global access happen through the explicit pair `install_renderer(...)` and `renderer_state()`.
+- Helper functions that do not need to leave a module stay private or `pub(crate)`, especially low-level Vulkan allocation helpers.
+- Several renderer submodules remain public because compile-check and integration tests intentionally reference concrete types such as `DeviceContext`, `SwapchainContext`, and `FrameData`.
 
 ## Error handling conventions
-- Application/bootstrap paths use `anyhow::Result` for ergonomic propagation:
-  - `src/app.rs` -> `pub fn run() -> Result<()>`
-  - `src/renderer/core/renderer.rs` -> `Renderer::new(...) -> Result<Self>`
-  - `src/renderer/core/bootstrap/device_setup.rs` uses `.context(...)` and `bail!(...)`.
-- Domain failures use typed errors instead of `anyhow`:
-  - `src/renderer/world/sync.rs` returns `Result<PreparedWorldSync, WorldSyncRejection>`.
-  - Rejection bundles structured detail (`issues: Vec<String>`) plus a short user-facing `reason`.
-- Runtime resilience is favored over panics:
-  - surface errors are matched and recovered in `src/app.rs` (`Lost/Outdated` -> `reconfigure`, `OutOfMemory` -> exit).
-  - input/state counters use saturating arithmetic (`saturating_add`) in `src/renderer/world/sync.rs`.
-- Assertions are used as invariants:
-  - `assert!` for required runtime preconditions in pass `prepare()` methods (`src/renderer/passes/*.rs`).
-  - `debug_assert!` for development-only sanity checks (`src/renderer/core/frame_exec.rs`, `src/renderer/core/bootstrap/device_setup.rs`).
-- `unwrap()/expect()` are concentrated in tests and known invariants, not general runtime control flow.
+- App/bootstrap/Vulkan setup paths use `anyhow::Result` for ergonomic propagation (`src/app.rs`, `src/renderer/*.rs`).
+- Runtime frame execution itself returns a concrete `FrameExecution` snapshot rather than `Result`; some stage boundaries intentionally absorb or ignore lower-level failures to keep the frame loop advancing.
+- Chunk-lifecycle failures are modeled in domain types such as `ChunkState::Error { ... }` and `ChunkJobOutcome::Failed(String)`.
+- `expect(...)` and `unwrap(...)` are mostly concentrated in tests and startup assumptions, not general application control flow.
 
-## Data validation and bounds strategy
-- Settings sanitization is centralized and explicit in `src/renderer/core/renderer.rs` (`sanitize_renderer_settings` with `.clamp(...)`).
-- Zero/invalid dimensions are clamped before resource use:
-  - `src/renderer/core/frame_plan.rs` enforces minimum resolution `[1, 1]`.
-  - `src/renderer/core/bootstrap/device_setup.rs` and `src/renderer/core/world_ops.rs` clamp render extents.
-- Buffer-size safety checks are explicit and descriptive in `src/renderer/world/sync.rs` (`check_storage_slice_limit`).
+## Data layout and serialization conventions
+- GPU-facing structs use `#[repr(C)]` and `bytemuck::{Pod, Zeroable}` where binary layout matters (`GuiVertex`, `ChunkDrawMetadata`, packed mesh data types).
+- Typed chunk payloads are explicit: `ChunkVoxels` validates exact payload length instead of passing raw byte blobs around the pipeline.
+- Runtime commands, events, and sequence metadata derive `Serialize`/`Deserialize` so tests can lock wire-format behavior.
 
-## Practical conventions to follow for new code
-- Put pure logic next to its tests in the same file under `#[cfg(test)] mod tests`.
-- Prefer small, composable helper functions for diagnostics/state transitions, then test them directly.
-- Use typed error structs when callers need machine-readable failure details; use `anyhow` for top-level orchestration.
-- Keep new public renderer API surfaced through `src/renderer/mod.rs` re-exports instead of deep module paths.
-- For GPU protocol changes, update both constants/layout logic and related tests in `src/renderer/protocol/mod.rs` and `src/renderer/protocol/bindings.rs`.
+## Test conventions
+- Integration tests live under `tests/` and are organized by phase/regression scope.
+- Inline unit tests live next to implementation in `src/streaming/*.rs`, `src/runtime/scheduler.rs`, and `src/runtime/boundaries/*.rs`.
+- Because runtime and renderer state use `OnceLock`, runtime-oriented integration tests reserve distinct frame-index ranges rather than assuming complete process reset between tests.
+
+## Shader workflow conventions
+- Shader sources live under `shaders/` as authoritative GLSL.
+- `build.rs` is responsible for compiling shader sources to SPIR-V; new shader files should be added there and to `renderer::shader_source_files()`.
+- Vulkan pipeline modules load compiled shader bytes from `OUT_DIR`, not from ad hoc runtime disk reads.

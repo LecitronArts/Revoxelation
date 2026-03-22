@@ -73,12 +73,13 @@ fn emit_quads_for_axis(
     quads: &mut Vec<GreedyQuad>,
 ) {
     let boundary_slice = if positive_face { 63usize } else { 0usize };
+    let mut mask = vec![None; 64 * 64];
     for slice in 0..64usize {
         if is_skirt && slice != boundary_slice {
             continue;
         }
 
-        let mut mask = vec![None; 64 * 64];
+        mask.fill(None);
         for v in 0..64usize {
             for u in 0..64usize {
                 let coords = coords_for_cell(axis, slice, u, v);
@@ -184,51 +185,51 @@ fn sample_with_halo(
     y: i32,
     z: i32,
 ) -> u8 {
+    // Interior: all coords in [0, 64)
     if (0..64).contains(&x) && (0..64).contains(&y) && (0..64).contains(&z) {
         return chunk.block(x as u8, y as u8, z as u8);
     }
 
-    if !(0..64).contains(&y) || !(0..64).contains(&z) {
-        return 0;
-    }
+    // Single-axis halo lookups (only ±1 on one axis while the other two remain in [0, 64)).
+    // Edge/corner halo (multiple axes out-of-range) returns air.
 
-    if x == -1 {
+    // X halo
+    if x == -1 && (0..64).contains(&y) && (0..64).contains(&z) {
         return neighbors
             .nx
             .map_or(0, |neighbor| neighbor.block(63, y as u8, z as u8));
     }
-    if x == 64 {
+    if x == 64 && (0..64).contains(&y) && (0..64).contains(&z) {
         return neighbors
             .px
             .map_or(0, |neighbor| neighbor.block(0, y as u8, z as u8));
     }
-    if !(0..64).contains(&x) || !(0..64).contains(&z) {
-        return 0;
-    }
-    if y == -1 {
+
+    // Y halo
+    if y == -1 && (0..64).contains(&x) && (0..64).contains(&z) {
         return neighbors
             .ny
             .map_or(0, |neighbor| neighbor.block(x as u8, 63, z as u8));
     }
-    if y == 64 {
+    if y == 64 && (0..64).contains(&x) && (0..64).contains(&z) {
         return neighbors
             .py
             .map_or(0, |neighbor| neighbor.block(x as u8, 0, z as u8));
     }
-    if !(0..64).contains(&x) || !(0..64).contains(&y) {
-        return 0;
-    }
-    if z == -1 {
+
+    // Z halo
+    if z == -1 && (0..64).contains(&x) && (0..64).contains(&y) {
         return neighbors
             .nz
             .map_or(0, |neighbor| neighbor.block(x as u8, y as u8, 63));
     }
-    if z == 64 {
+    if z == 64 && (0..64).contains(&x) && (0..64).contains(&y) {
         return neighbors
             .pz
             .map_or(0, |neighbor| neighbor.block(x as u8, y as u8, 0));
     }
 
+    // Edge/corner halo or wildly out-of-range → air
     0
 }
 

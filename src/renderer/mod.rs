@@ -1,7 +1,6 @@
 use std::{
     collections::VecDeque,
     mem::ManuallyDrop,
-    ptr::addr_of_mut,
     sync::{Mutex, OnceLock},
 };
 
@@ -26,6 +25,7 @@ pub mod egui_backend;
 pub mod frame;
 pub mod instance;
 pub mod mesh_pipeline;
+pub mod spirv;
 pub mod swapchain;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -184,15 +184,25 @@ impl Renderer {
         window_extent: vk::Extent2D,
     ) -> Result<Self> {
         let entry = unsafe { ash::Entry::load().context("failed to load Vulkan entry")? };
-        let instance = instance::create_instance(&entry, display_handle)?;
+        let bootstrap = instance::create_instance(&entry, display_handle)?;
+        let instance = bootstrap.instance;
 
         #[cfg(debug_assertions)]
-        let debug_utils_loader = Some(ext::debug_utils::Instance::new(&entry, &instance));
+        let debug_utils_loader = if bootstrap.debug.debug_utils_enabled {
+            Some(ext::debug_utils::Instance::new(&entry, &instance))
+        } else {
+            None
+        };
         #[cfg(not(debug_assertions))]
         let debug_utils_loader = None;
 
         #[cfg(debug_assertions)]
-        let debug_messenger = Some(instance::setup_debug_messenger(&entry, &instance)?);
+        let debug_messenger =
+            if bootstrap.debug.validation_layer_enabled && bootstrap.debug.debug_utils_enabled {
+                Some(instance::setup_debug_messenger(&entry, &instance)?)
+            } else {
+                None
+            };
         #[cfg(not(debug_assertions))]
         let debug_messenger = None;
 
@@ -214,7 +224,7 @@ impl Renderer {
                 )
                 .context("failed to create Vulkan command pool")?
         };
-        let allocator = Allocator::new(&AllocatorCreateDesc {
+        let mut allocator = Allocator::new(&AllocatorCreateDesc {
             instance: instance.clone(),
             device: device_ctx.device.clone(),
             physical_device: device_ctx.physical_device,
@@ -229,6 +239,7 @@ impl Renderer {
             &surface_loader,
             surface,
             window_extent,
+            &mut allocator,
         )?;
         let frames = [
             frame::create_frame_data(&device_ctx.device, command_pool)?,
@@ -293,6 +304,17 @@ impl Drop for Renderer {
                     .device
                     .destroy_framebuffer(framebuffer, None);
             }
+
+            // Destroy depth resources before render pass.
+            self.device_ctx
+                .device
+                .destroy_image_view(self.swapchain_ctx.depth_image_view, None);
+            if let Some(alloc) = self.swapchain_ctx.depth_allocation.take() {
+                let _ = self.allocator.free(alloc);
+            }
+            self.device_ctx
+                .device
+                .destroy_image(self.swapchain_ctx.depth_image, None);
 
             if self.swapchain_ctx.render_pass != vk::RenderPass::null() {
                 self.device_ctx
@@ -448,11 +470,19 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
             );
         }
 
-        let clear_values = [vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: [0.1, 0.1, 0.15, 1.0],
+        let clear_values = [
+            vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.1, 0.1, 0.15, 1.0],
+                },
             },
-        }];
+            vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            },
+        ];
         let render_pass_begin = vk::RenderPassBeginInfo::default()
             .render_pass(renderer.swapchain_ctx.render_pass)
             .framebuffer(renderer.swapchain_ctx.framebuffers[image_index as usize])
@@ -671,7 +701,7 @@ pub(crate) fn destroy_allocated_image(
 }
 
 pub(crate) fn allocator_mut(renderer: &mut Renderer) -> &mut Allocator {
-    unsafe { &mut *addr_of_mut!(renderer.allocator).cast::<Allocator>() }
+    &mut renderer.allocator
 }
 
 pub(crate) fn submit_one_shot_commands<F>(renderer: &Renderer, record: F) -> Result<()>

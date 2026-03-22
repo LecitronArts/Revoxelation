@@ -28,8 +28,14 @@ vec3 decode_position(uint word0) {
 }
 
 vec4 debug_project(vec3 world_position) {
-    vec3 centered = (world_position - vec3(96.0, 48.0, 160.0)) / vec3(224.0, 160.0, 384.0);
-    return vec4(centered.x, -centered.y, centered.z, 1.0);
+    // Camera at origin, view along +Z, top-down-ish oblique
+    // World range: LOD0 chunks span roughly [-256..320] per axis
+    float range = 400.0;
+    vec3 centered = world_position / range;
+    // Vulkan NDC depth [0,1]
+    float depth = centered.z * 0.5 + 0.5;
+    // Y-up: negate Y for Vulkan clip (top = -Y in Vulkan NDC)
+    return vec4(centered.x, -centered.y, depth, 1.0);
 }
 
 void main() {

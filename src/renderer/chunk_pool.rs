@@ -410,7 +410,7 @@ impl ChunkPool {
         write_allocation_bytes(
             self.indirect_template_allocation.as_mut(),
             slot_id as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
-            struct_as_bytes(&indirect),
+            draw_cmd_as_bytes(&indirect),
         )?;
 
         if let Some(draw_slot_write) = draw_slot_write {
@@ -451,7 +451,7 @@ impl ChunkPool {
         write_allocation_bytes(
             self.indirect_template_allocation.as_mut(),
             slot_id as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
-            struct_as_bytes(&vk::DrawIndexedIndirectCommand::default()),
+            draw_cmd_as_bytes(&vk::DrawIndexedIndirectCommand::default()),
         )?;
         Ok(())
     }
@@ -470,7 +470,7 @@ impl ChunkPool {
         write_allocation_bytes(
             self.dense_indirect_allocation.as_mut(),
             write.draw_index as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
-            struct_as_bytes(&write.command),
+            draw_cmd_as_bytes(&write.command),
         )
     }
 
@@ -551,6 +551,23 @@ fn write_allocation_bytes(
     Ok(())
 }
 
-fn struct_as_bytes<T>(value: &T) -> &[u8] {
-    unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size_of::<T>()) }
+/// Reinterpret a `Copy + repr(C)` struct as a byte slice for GPU buffer writes.
+///
+/// # Safety
+///
+/// The caller must ensure `T` is `#[repr(C)]` with no padding bytes.
+/// Currently only used with `vk::DrawIndexedIndirectCommand` (5 × 4-byte fields, repr(C)).
+fn draw_cmd_as_bytes(value: &vk::DrawIndexedIndirectCommand) -> &[u8] {
+    const {
+        assert!(
+            size_of::<vk::DrawIndexedIndirectCommand>() == 5 * 4,
+            "DrawIndexedIndirectCommand layout changed — review safety"
+        );
+    }
+    unsafe {
+        std::slice::from_raw_parts(
+            (value as *const vk::DrawIndexedIndirectCommand).cast::<u8>(),
+            size_of::<vk::DrawIndexedIndirectCommand>(),
+        )
+    }
 }

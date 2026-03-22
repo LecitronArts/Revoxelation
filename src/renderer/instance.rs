@@ -1,35 +1,83 @@
-use std::ffi::CString;
-
-#[cfg(debug_assertions)]
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 #[cfg(debug_assertions)]
 use std::os::raw::c_void;
 
 use anyhow::{Context, Result};
 use ash::{Entry, Instance, vk};
 
+pub const VALIDATION_LAYER_NAME: &str = "VK_LAYER_KHRONOS_validation";
+pub const DEBUG_UTILS_EXTENSION_NAME: &str = "VK_EXT_debug_utils";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstanceDebugConfig {
+    pub validation_layer_enabled: bool,
+    pub debug_utils_enabled: bool,
+}
+
+pub struct InstanceBootstrap {
+    pub instance: Instance,
+    pub debug: InstanceDebugConfig,
+}
+
+pub fn resolve_debug_instance_config(
+    available_layers: &[String],
+    available_extensions: &[String],
+) -> InstanceDebugConfig {
+    if !cfg!(debug_assertions) {
+        return InstanceDebugConfig {
+            validation_layer_enabled: false,
+            debug_utils_enabled: false,
+        };
+    }
+
+    let validation_layer_enabled = available_layers
+        .iter()
+        .any(|name| name == VALIDATION_LAYER_NAME);
+    if !validation_layer_enabled {
+        eprintln!(
+            "{}",
+            "VK_LAYER_KHRONOS_validation not available; continuing without validation layer."
+        );
+    }
+
+    let debug_utils_enabled = validation_layer_enabled
+        && available_extensions
+            .iter()
+            .any(|name| name == DEBUG_UTILS_EXTENSION_NAME);
+    if validation_layer_enabled && !debug_utils_enabled {
+        eprintln!(
+            "{}",
+            "VK_EXT_debug_utils not available; continuing without Vulkan debug messenger."
+        );
+    }
+
+    InstanceDebugConfig {
+        validation_layer_enabled,
+        debug_utils_enabled,
+    }
+}
+
 pub fn create_instance(
     entry: &Entry,
     display_handle: raw_window_handle::RawDisplayHandle,
-) -> Result<Instance> {
+) -> Result<InstanceBootstrap> {
     let app_name = CString::new("Revoxelation").expect("static app name is valid");
-    let extension_names = ash_window::enumerate_required_extensions(display_handle)
+    let mut extension_names = ash_window::enumerate_required_extensions(display_handle)
         .context("failed to enumerate required Vulkan surface extensions")?
         .to_vec();
-
-    #[cfg(debug_assertions)]
-    let extension_names = {
-        let mut extension_names = extension_names;
+    let available_layers = available_instance_layer_names(entry)?;
+    let available_extensions = available_instance_extension_names(entry)?;
+    let debug = resolve_debug_instance_config(&available_layers, &available_extensions);
+    if debug.debug_utils_enabled {
         extension_names.push(ash::ext::debug_utils::NAME.as_ptr());
-        extension_names
-    };
+    }
 
-    #[cfg(debug_assertions)]
-    let validation_layer = CString::new("VK_LAYER_KHRONOS_validation").expect("static layer name");
-    #[cfg(debug_assertions)]
-    let layer_names = [validation_layer.as_ptr()];
-    #[cfg(not(debug_assertions))]
-    let layer_names: [*const i8; 0] = [];
+    let validation_layer = CString::new(VALIDATION_LAYER_NAME).expect("static layer name");
+    let layer_names = if debug.validation_layer_enabled {
+        vec![validation_layer.as_ptr()]
+    } else {
+        Vec::new()
+    };
 
     let app_info = vk::ApplicationInfo::default()
         .application_name(app_name.as_c_str())
@@ -42,10 +90,43 @@ pub fn create_instance(
         .enabled_layer_names(&layer_names);
 
     unsafe {
-        entry
+        let instance = entry
             .create_instance(&create_info, None)
-            .context("failed to create Vulkan instance")
+            .context("failed to create Vulkan instance")?;
+        Ok(InstanceBootstrap { instance, debug })
     }
+}
+
+fn available_instance_layer_names(entry: &Entry) -> Result<Vec<String>> {
+    let properties = unsafe {
+        entry
+            .enumerate_instance_layer_properties()
+            .context("failed to enumerate Vulkan instance layers")?
+    };
+
+    Ok(properties
+        .iter()
+        .map(|property| vk_name_to_string(&property.layer_name))
+        .collect())
+}
+
+fn available_instance_extension_names(entry: &Entry) -> Result<Vec<String>> {
+    let properties = unsafe {
+        entry
+            .enumerate_instance_extension_properties(None)
+            .context("failed to enumerate Vulkan instance extensions")?
+    };
+
+    Ok(properties
+        .iter()
+        .map(|property| vk_name_to_string(&property.extension_name))
+        .collect())
+}
+
+fn vk_name_to_string(raw_name: &[i8]) -> String {
+    unsafe { CStr::from_ptr(raw_name.as_ptr()) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg(debug_assertions)]

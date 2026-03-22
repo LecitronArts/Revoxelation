@@ -2,69 +2,71 @@
 
 ## What This Is
 
-Revoxelation is a Rust voxel engine project targeting a non-Bevy ECS architecture for game prototyping.  
-The current codebase already includes a substantial `wgpu` renderer, world generation/storage, and ECS-adjacent runtime pieces; this initialization defines the next focused scope toward a modular, editable, flyable voxel world foundation.
+Revoxelation is a Rust voxel runtime project built around a custom staged architecture rather than a game-engine framework.  
+The current codebase already contains a live `ash`/Vulkan renderer bootstrap, chunk streaming state machine, greedy meshing path, and render-delta bridge; the active scope is to turn that foundation into a modular, editable, flyable voxel-world core.
 
 ## Core Value
 
-Build a cleanly extensible Rust ECS voxel engine (non-Bevy) where world interaction, especially block edits, is reflected immediately and predictably.
+Build a cleanly extensible Rust voxel runtime where world streaming, meshing, and future block edits remain predictable, testable, and fast to iterate on.
 
 ## Requirements
 
 ### Validated
 
-- ✅ Rust desktop application scaffold with `winit` loop and logging is in place (`src/main.rs`, `src/app.rs`) — existing
-- ✅ `wgpu` renderer bootstrap and multi-pass GPU pipeline architecture already exist (`src/renderer/core/bootstrap/*`, `src/renderer/passes/*`) — existing
-- ✅ World/chunk data model with procedural generation and concurrency primitives already exists (`src/world/mod.rs`) — existing
-- ✅ Shared host/shader protocol layer and GPU upload pipeline exist (`src/renderer/protocol/*`, `src/renderer/world/*`) — existing
-- ✅ `hecs` is already integrated in the codebase for ECS-oriented runtime state (`src/ecs.rs`) — existing
+- [x] Rust desktop application scaffold with `winit` startup and redraw loop exists (`src/main.rs`, `src/app.rs`)
+- [x] `ash`/Vulkan renderer bootstrap exists with instance/device/surface/swapchain setup (`src/renderer/mod.rs`, `src/renderer/instance.rs`, `src/renderer/device.rs`, `src/renderer/swapchain.rs`)
+- [x] GPU memory and frame primitives are in place through `gpu-allocator`, command pools, fences, and semaphores (`src/renderer/mod.rs`, `src/renderer/frame.rs`)
+- [x] Chunk rendering path exists with slot-backed buffers, compute culling, mesh pipeline, and indirect draw submission (`src/renderer/chunk_pool.rs`, `src/renderer/cull_pipeline.rs`, `src/renderer/mesh_pipeline.rs`)
+- [x] Chunk streaming lifecycle and bounded background job execution exist (`src/runtime/scheduler.rs`, `src/streaming/**`)
+- [x] Greedy meshing, border invalidation, and packed mesh formats exist (`src/meshing/**`)
+- [x] Runtime command/event contracts and stage-trace observability exist (`src/runtime/events/**`, `src/runtime/trace.rs`, `src/runtime/observability/**`)
 
 ### Active
 
-- [ ] V1 chunk streaming loop centered on player movement with clear ECS/system boundaries
-- [ ] Greedy meshing pipeline for chunk surfaces, integrated with render sync
-- [ ] Collision-capable player movement with fly mode + gravity mode suitable for gameplay prototyping
-- [ ] Block placement/destruction with near-immediate visual feedback after edit
+- [ ] Player movement and collision modes suitable for gameplay prototyping
+- [ ] Real block placement/destruction with near-immediate visual feedback
 - [ ] Chunk persistence (save/load) so modified world state survives restart
-- [ ] Network-ready boundary interfaces/events only (no multiplayer implementation in v1)
+- [ ] Better renderer lifecycle handling for resize/reconfigure/error surfacing
+- [ ] Stronger UI/debug tooling on top of the current egui backend scaffolding
+- [ ] Network-ready interfaces and deterministic contracts only (no multiplayer implementation in v1)
 
 ### Out of Scope
 
-- Full multiplayer synchronization and replication — deferred; v1 only reserves interfaces
-- Migration to Bevy ECS or Bevy engine stack — explicitly excluded by project direction
-- Mobile/Web target support — deferred to later milestones; v1 prioritizes desktop
-- Aggressive low-level performance tuning before architecture closure — postponed until core loop is stable
+- Full multiplayer synchronization and replication; v1 only preserves interfaces
+- Migration to Bevy ECS or a third-party engine stack
+- Mobile/Web target support in the current milestone
+- Deep performance tuning before architecture and gameplay loops stabilize
 
 ## Context
 
-The repository is a brownfield Rust project with significant renderer/world infrastructure already present, including compute-oriented shader passes and a structured renderer module tree.  
-The new initialization aligns this existing base with a clearer GSD-driven product direction: a reusable voxel-engine core for future game prototypes, emphasizing modular architecture, predictable system boundaries, and fast iteration.
+The repository is now a brownfield Rust codebase with meaningful runtime infrastructure already present: a fixed five-stage frame runner, typed chunk payloads, background streaming jobs, and a Vulkan renderer that can cull and draw chunk meshes through indirect commands.  
+The main remaining work is not "pick a renderer" anymore; it is finishing the gameplay/runtime layers that sit on top of the renderer and tightening the runtime lifecycle around the current Vulkan path.
 
-Quality and delivery process must explicitly use Superpowers quality gates during subsequent phases, including planning, TDD before implementation, systematic debugging when blocked, verification before completion claims, and code-review gates before integration closure.
+Quality and delivery process must still use the Superpowers quality gates during subsequent phases, including planning before multi-step work, systematic debugging when blocked, verification before completion claims, and code-review gates before integration closure.
 
 ## Constraints
 
-- **Engine Direction**: Rust + non-Bevy ECS architecture — maintain custom engine boundaries and avoid Bevy dependency
-- **ECS Choice**: Use `hecs` for v1 execution model — optimize for delivery velocity and clear system decomposition
-- **Rendering**: `wgpu` backend for v1 — consistent cross-platform desktop GPU abstraction
-- **Platforms**: Windows + Linux first — no mobile/web commitments in this cycle
-- **Runtime Architecture**: Mixed scheduling model — fixed main stages plus event-driven/local async subsystems
-- **Heavy Work Placement**: Chunk generation/meshing done via background job queues — keep frame loop responsive
-- **Performance Strategy**: Stability and correctness first; optimize after core architectural closure
-- **Quality Workflow**: Superpowers skills/gates are mandatory and cannot be skipped for speed
+- **Engine Direction**: Rust custom runtime boundaries; do not collapse into Bevy or another engine framework
+- **Rendering**: `ash`/Vulkan is the current and intended v1 renderer backend
+- **Platforms**: Windows + Linux desktop first
+- **Runtime Architecture**: fixed stage runner (`Input`, `Simulation`, `WorldUpdate`, `MeshSync`, `RenderSubmit`)
+- **Heavy Work Placement**: chunk generation runs through background job queues; renderer consumes queued deltas on frame submit
+- **Geometry Pipeline**: typed `ChunkVoxels` -> greedy meshing -> packed mesh -> slot-backed indirect draw
+- **Shader Workflow**: authoritative GLSL sources compile to SPIR-V in `build.rs`
+- **Performance Strategy**: correctness and stable architecture first; optimize once the core loop is complete
+- **Quality Workflow**: Superpowers skills/gates remain mandatory
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Non-Bevy Rust ECS engine | Full control over boundaries and data flow for voxel-specific architecture | — Pending |
-| `hecs` as v1 ECS base | Faster delivery than full custom ECS while preserving non-Bevy direction | — Pending |
-| `wgpu` as rendering backend | Strong Rust ecosystem support and cross-platform desktop target fit | — Pending |
-| V1 excludes multiplayer implementation (interfaces only) | Reduces scope risk while preserving future expansion path | — Pending |
-| Mixed scheduler (stages + events) | Balances debuggability and modular extensibility | — Pending |
-| Async job queues for chunk/mesh heavy work | Reduces frame stalls and supports streaming workloads | — Pending |
-| Block edit feedback must be near-immediate | Core interaction quality requirement for voxel gameplay iteration | — Pending |
-| Superpowers quality gates are mandatory | Improves execution quality and verification discipline | — Pending |
+| Custom Rust runtime boundaries instead of Bevy | Preserve control over voxel-specific frame stages, streaming, and renderer integration | Active |
+| `ash`/Vulkan as renderer backend | Current source already depends on raw Vulkan setup, feature gating, allocator-backed memory, and indirect draw flow | Active |
+| Fixed five-stage scheduler | Keeps streaming/meshing/render handoff explicit and testable | Active |
+| Typed chunk payloads before meshing | Prevents opaque byte blobs from leaking across streaming and meshing boundaries | Active |
+| Greedy meshing with render-delta bridge | Keeps meshing and renderer ownership separated while supporting incremental GPU updates | Active |
+| Multiplayer deferred to interface-only work | Reduces scope while still protecting future expansion seams | Active |
+| Persistence, collision, and block editing remain follow-on phases | Renderer groundwork exists; gameplay/runtime capabilities are now the main missing pieces | Active |
 
 ---
-*Last updated: 2026-03-15 after initialization*
+*Last updated: 2026-03-22 after Vulkan/current-architecture doc refresh*

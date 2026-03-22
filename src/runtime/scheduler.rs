@@ -5,7 +5,7 @@ use std::sync::{
     mpsc,
 };
 
-use log::info;
+use log::{info, warn};
 
 use crate::meshing::{
     ALL_FACE_MASK, ChunkNeighborSet, MeshDirtyCause, MeshingJobResult, MeshingState,
@@ -168,11 +168,19 @@ pub fn run_frame(frame_index: u64) -> FrameExecution {
 // ---------------------------------------------------------------------------
 
 fn run_world_update(frame_index: u64) {
-    let _ = frame_index;
     let mut ss = streaming_state().lock().unwrap();
 
     // Camera at origin for default/test scenarios.
     let camera_pos = [0.0f32, 0.0, 0.0];
+
+    if frame_index < 10 || (frame_index % 60 == 0) {
+        eprintln!(
+            "[DIAG-WU] frame={} octree_nodes={} active_set_size={}",
+            frame_index,
+            ss.octree.nodes().len(),
+            ss.state_store.active_set().len(),
+        );
+    }
 
     // Compute diff against current active set.
     let current_active = ss.state_store.active_set();
@@ -189,6 +197,13 @@ fn run_world_update(frame_index: u64) {
         },
     );
 
+    if frame_index < 10 || (frame_index % 60 == 0) {
+        eprintln!(
+            "[DIAG-WU] frame={} to_activate={} to_deactivate={}",
+            frame_index, diff.to_activate.len(), diff.to_deactivate.len(),
+        );
+    }
+
     // Deactivate chunks no longer needed.
     for key in &diff.to_deactivate {
         deactivate_chunk(&mut ss, *key);
@@ -202,7 +217,9 @@ fn run_world_update(frame_index: u64) {
         let state = ss.state_store.get(key).map(|e| e.state);
         if state == Some(ChunkState::Inactive) {
             // Inactive -> Queued
-            let _ = ss.state_store.transition_to(*key, ChunkState::Queued);
+            if let Err(e) = ss.state_store.transition_to(*key, ChunkState::Queued) {
+                warn!("chunk {:?} transition to Queued failed: {e}", key);
+            }
             let sse_bits = 1.0f32.to_bits(); // placeholder SSE; refined on drain
             ss.job_queue.enqueue(PrioritizedTask {
                 key: *key,
@@ -221,7 +238,9 @@ fn run_world_update(frame_index: u64) {
         let key = task.key;
         let entry_state = ss.state_store.get(&key).map(|e| e.state);
         if entry_state == Some(ChunkState::Queued) {
-            let _ = ss.state_store.transition_to(key, ChunkState::Loading);
+            if let Err(e) = ss.state_store.transition_to(key, ChunkState::Loading) {
+                warn!("chunk {key:?} transition to Loading failed: {e}");
+            }
         }
     }
 
@@ -245,10 +264,14 @@ fn run_world_update(frame_index: u64) {
 
 fn run_mesh_sync(frame_index: u64) {
     let mut ss = streaming_state().lock().unwrap();
+    let mut recv_count = 0u32;
 
     loop {
         match ss.result_receiver.try_recv() {
-            Ok(result) => handle_job_result(&mut ss, result, frame_index),
+            Ok(result) => {
+                recv_count += 1;
+                handle_job_result(&mut ss, result, frame_index);
+            }
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => break,
         }
@@ -256,7 +279,16 @@ fn run_mesh_sync(frame_index: u64) {
 
     let dirty_batch = {
         let mut meshing = meshing_state().lock().unwrap();
-        meshing.take_dirty_batch(PER_FRAME_CAP)
+        let batch = meshing.take_dirty_batch(PER_FRAME_CAP);
+        if frame_index < 10 || (frame_index % 60 == 0) {
+            eprintln!(
+                "[DIAG-MS] frame={} results_received={} dirty_batch_size={} queued_remaining={} pending_render_deltas={}",
+                frame_index, recv_count, batch.len(),
+                meshing.queued.len(),
+                ss.pending_render_deltas.len(),
+            );
+        }
+        batch
     };
 
     for key in dirty_batch {
@@ -323,7 +355,9 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
     match result.outcome {
         ChunkJobOutcome::Generated(voxels) => {
             // Loading -> Active
-            let _ = ss.state_store.transition_to(key, ChunkState::Active);
+            if let Err(e) = ss.state_store.transition_to(key, ChunkState::Active) {
+                warn!("chunk {key:?} transition to Active (Generated) failed: {e}");
+            }
             let source_revision = ss.state_store.get(&key).map_or(0, |entry| entry.revision);
             let mut meshing = meshing_state().lock().unwrap();
             meshing.payloads.insert(key, voxels);
@@ -339,7 +373,9 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
             }
         }
         ChunkJobOutcome::Loaded => {
-            let _ = ss.state_store.transition_to(key, ChunkState::Active);
+            if let Err(e) = ss.state_store.transition_to(key, ChunkState::Active) {
+                warn!("chunk {key:?} transition to Active (Loaded) failed: {e}");
+            }
         }
         ChunkJobOutcome::Cancelled => {
             // Intentional cancel: transition Loading -> Inactive (or leave as-is).
@@ -348,19 +384,25 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
             if state == Some(ChunkState::Loading) {
                 // Loading is not directly -> Inactive; go through Queued->Inactive path.
                 // Use Error path: Loading -> Error, then Error -> Inactive.
-                let _ = ss.state_store.transition_to(
+                if let Err(e) = ss.state_store.transition_to(
                     key,
                     ChunkState::Error {
-                        retry_count: MAX_RETRIES, // max retries => next drain will go Inactive
+                        retry_count: MAX_RETRIES,
                         next_retry_frame: frame_index,
                     },
-                );
-                let _ = ss.state_store.transition_to(key, ChunkState::Inactive);
+                ) {
+                    warn!("chunk {key:?} transition to Error (Cancelled) failed: {e}");
+                }
+                if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
+                    warn!("chunk {key:?} transition to Inactive (Cancelled) failed: {e}");
+                }
             }
         }
         ChunkJobOutcome::Unloaded => {
             // Loading/Unloading -> Inactive
-            let _ = ss.state_store.transition_to(key, ChunkState::Inactive);
+            if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
+                warn!("chunk {key:?} transition to Inactive (Unloaded) failed: {e}");
+            }
             let source_revision = ss.state_store.get(&key).map_or(0, |entry| entry.revision);
             let mut meshing = meshing_state().lock().unwrap();
             meshing.payloads.remove(&key);
@@ -384,23 +426,27 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
             };
             let next_retry_frame = frame_index + 2u64.pow(current_retry);
             if current_retry >= MAX_RETRIES {
-                let _ = ss.state_store.transition_to(
+                if let Err(e) = ss.state_store.transition_to(
                     key,
                     ChunkState::Error {
                         retry_count: current_retry + 1,
                         next_retry_frame,
                     },
-                );
-                let _ = ss.state_store.transition_to(key, ChunkState::Inactive);
-            } else {
-                let _ = ss.state_store.transition_to(
+                ) {
+                    warn!("chunk {key:?} transition to Error (Failed, max retries) failed: {e}");
+                }
+                if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
+                    warn!("chunk {key:?} transition to Inactive (Failed, max retries) failed: {e}");
+                }
+            } else if let Err(e) = ss.state_store.transition_to(
                     key,
                     ChunkState::Error {
                         retry_count: current_retry + 1,
                         next_retry_frame,
                     },
-                );
-            }
+                ) {
+                    warn!("chunk {key:?} transition to Error (Failed) failed: {e}");
+                }
         }
     }
 }
@@ -416,10 +462,15 @@ fn deactivate_chunk(ss: &mut StreamingState, key: ChunkKey) {
         state,
         Some(ChunkState::Active | ChunkState::Upgrading | ChunkState::Downgrading)
     ) {
-        let _ = ss.state_store.transition_to(key, ChunkState::Unloading);
-        let _ = ss
+        if let Err(e) = ss.state_store.transition_to(key, ChunkState::Unloading) {
+            warn!("chunk {key:?} transition to Unloading (deactivate) failed: {e}");
+        }
+        if let Err(e) = ss
             .result_sender
-            .send(ChunkJobResult::new(key, ChunkJobOutcome::Unloaded));
+            .send(ChunkJobResult::new(key, ChunkJobOutcome::Unloaded))
+        {
+            warn!("chunk {key:?} failed to send Unloaded result: {e}");
+        }
     }
 }
 

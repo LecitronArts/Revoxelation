@@ -1,7 +1,13 @@
 use anyhow::{Context, Result, anyhow};
 use ash::{Instance, khr, vk};
+use gpu_allocator::{
+    MemoryLocation,
+    vulkan::{Allocation, AllocationCreateDesc, AllocationScheme, Allocator},
+};
 
 use crate::renderer::device::DeviceContext;
+
+pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 
 pub struct SwapchainContext {
     pub swapchain_loader: khr::swapchain::Device,
@@ -12,6 +18,9 @@ pub struct SwapchainContext {
     pub extent: vk::Extent2D,
     pub render_pass: vk::RenderPass,
     pub framebuffers: Vec<vk::Framebuffer>,
+    pub depth_image: vk::Image,
+    pub depth_image_view: vk::ImageView,
+    pub depth_allocation: Option<Allocation>,
 }
 
 pub fn create_swapchain_context(
@@ -20,6 +29,7 @@ pub fn create_swapchain_context(
     surface_loader: &khr::surface::Instance,
     surface: vk::SurfaceKHR,
     window_extent: vk::Extent2D,
+    allocator: &mut Allocator,
 ) -> Result<SwapchainContext> {
     let capabilities = unsafe {
         surface_loader
@@ -81,10 +91,71 @@ pub fn create_swapchain_context(
         .iter()
         .map(|image| create_image_view(&device_ctx.device, *image, surface_format.format))
         .collect::<Result<Vec<_>>>()?;
-    let render_pass = create_render_pass(&device_ctx.device, surface_format.format)?;
+    let render_pass = create_render_pass(&device_ctx.device, surface_format.format, DEPTH_FORMAT)?;
+
+    // Create depth image and view (shared across all framebuffers).
+    let depth_image = unsafe {
+        device_ctx
+            .device
+            .create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(DEPTH_FORMAT)
+                    .extent(vk::Extent3D {
+                        width: extent.width,
+                        height: extent.height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+            .context("failed to create depth image")?
+    };
+    let depth_requirements = unsafe {
+        device_ctx.device.get_image_memory_requirements(depth_image)
+    };
+    let depth_allocation = allocator
+        .allocate(&AllocationCreateDesc {
+            name: "swapchain-depth",
+            requirements: depth_requirements,
+            location: MemoryLocation::GpuOnly,
+            linear: false,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+        })
+        .map_err(|error| anyhow!("failed to allocate depth image memory: {error}"))?;
+    unsafe {
+        device_ctx
+            .device
+            .bind_image_memory(depth_image, depth_allocation.memory(), depth_allocation.offset())
+            .context("failed to bind depth image memory")?;
+    }
+    let depth_subresource_range = vk::ImageSubresourceRange::default()
+        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+        .level_count(1)
+        .layer_count(1);
+    let depth_image_view = unsafe {
+        device_ctx
+            .device
+            .create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(depth_image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(DEPTH_FORMAT)
+                    .subresource_range(depth_subresource_range),
+                None,
+            )
+            .context("failed to create depth image view")?
+    };
+
     let framebuffers = image_views
         .iter()
-        .map(|image_view| create_framebuffer(&device_ctx.device, render_pass, *image_view, extent))
+        .map(|image_view| create_framebuffer(&device_ctx.device, render_pass, *image_view, depth_image_view, extent))
         .collect::<Result<Vec<_>>>()?;
 
     Ok(SwapchainContext {
@@ -96,6 +167,9 @@ pub fn create_swapchain_context(
         extent,
         render_pass,
         framebuffers,
+        depth_image,
+        depth_image_view,
+        depth_allocation: Some(depth_allocation),
     })
 }
 
@@ -169,26 +243,50 @@ fn create_image_view(
     }
 }
 
-fn create_render_pass(device: &ash::Device, format: vk::Format) -> Result<vk::RenderPass> {
-    let attachments = [vk::AttachmentDescription::default()
-        .format(format)
-        .samples(vk::SampleCountFlags::TYPE_1)
-        .load_op(vk::AttachmentLoadOp::CLEAR)
-        .store_op(vk::AttachmentStoreOp::STORE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)];
+fn create_render_pass(device: &ash::Device, color_format: vk::Format, depth_format: vk::Format) -> Result<vk::RenderPass> {
+    let attachments = [
+        vk::AttachmentDescription::default()
+            .format(color_format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR),
+        vk::AttachmentDescription::default()
+            .format(depth_format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
+    ];
     let color_attachment_refs = [vk::AttachmentReference::default()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+    let depth_attachment_ref = vk::AttachmentReference::default()
+        .attachment(1)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     let subpasses = [vk::SubpassDescription::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&color_attachment_refs)];
+        .color_attachments(&color_attachment_refs)
+        .depth_stencil_attachment(&depth_attachment_ref)];
     let dependencies = [vk::SubpassDependency::default()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)];
+        .src_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
+        .dst_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
+        .dst_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        )];
     let create_info = vk::RenderPassCreateInfo::default()
         .attachments(&attachments)
         .subpasses(&subpasses)
@@ -204,10 +302,11 @@ fn create_render_pass(device: &ash::Device, format: vk::Format) -> Result<vk::Re
 fn create_framebuffer(
     device: &ash::Device,
     render_pass: vk::RenderPass,
-    image_view: vk::ImageView,
+    color_view: vk::ImageView,
+    depth_view: vk::ImageView,
     extent: vk::Extent2D,
 ) -> Result<vk::Framebuffer> {
-    let attachments = [image_view];
+    let attachments = [color_view, depth_view];
     let create_info = vk::FramebufferCreateInfo::default()
         .render_pass(render_pass)
         .attachments(&attachments)

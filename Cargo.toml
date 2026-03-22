@@ -9,15 +9,12 @@ anyhow = "1.0"
 ash = "0.38"
 ash-window = "0.13"
 bytemuck = { version = "1.16", features = ["derive"] }
-dashmap = "6.1"
 env_logger = "0.11"
 egui = "0.28"
 glam = { version = "0.30", features = ["bytemuck"] }
 gpu-allocator = { version = "0.27", features = ["vulkan"] }
 hecs = "0.10"
 log = "0.4"
-noise = "0.9"
-rand = "0.9"
 raw-window-handle = "0.6"
 rayon = "1.10"
 serde = { version = "1.0", features = ["derive"] }

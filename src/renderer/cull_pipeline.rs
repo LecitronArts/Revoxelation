@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use ash::vk;
 
-use super::Renderer;
+use super::{Renderer, spirv::decode_spirv_words};
 
 pub struct ChunkCullPipeline {
     pub pipeline: vk::Pipeline,
@@ -210,10 +210,10 @@ impl ChunkCullPipeline {
 }
 
 fn create_shader_module(device: &ash::Device, bytes: &[u8]) -> Result<vk::ShaderModule> {
-    let code = bytemuck::cast_slice(bytes);
+    let code = decode_spirv_words(bytes)?;
     unsafe {
         device
-            .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(code), None)
+            .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&code), None)
             .context("failed to create shader module")
     }
 }

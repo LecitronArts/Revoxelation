@@ -1,85 +1,71 @@
 # CONCERNS
 
 ## Scope
-- Focus: technical debt, reliability, security, performance, and fragility risks observed in the current codebase.
-- Source scope: Rust host code and WGSL shaders under `src/`.
+- Focus: technical debt, reliability, performance, and maintainability risks observed in the current `ash`/Vulkan runtime.
+- Source scope: Rust host code under `src/` plus the build-time shader pipeline in `build.rs`.
 
 ## High-Risk Concerns
-1. Busy render loop can pin CPU/GPU and battery usage.
-- Evidence: `ControlFlow::Poll` plus unconditional redraw request in `Event::AboutToWait` in `src/app.rs`.
-- Risk: high idle power usage, poor laptop thermals, unstable frame pacing on weaker systems.
-- Note: this is a design choice today, but it is operationally expensive.
+1. Window resize and surface-reconfigure handling are still missing.
+- Evidence: `src/app.rs` handles `CloseRequested` and `RedrawRequested`, but not resize events; swapchain extent and graphics viewport are created once during startup.
+- Risk: resize behavior can become incorrect or fail outright on real desktop use.
 
-2. World sync path rebuilds and reuploads everything instead of diffing.
-- Evidence: full payload rebuild in `src/renderer/world/payload_builder.rs`, then full GPU resource recreation in `src/renderer/world/upload.rs` and apply in `src/renderer/core/world_ops.rs`.
-- Risk: spikes/stutter when world changes, poor scaling as chunk count grows.
+2. Render-submit failures are swallowed.
+- Evidence: `src/runtime/scheduler.rs` calls `submit_frame` with `let _ = ...` inside `RenderSubmit`.
+- Risk: the app can keep running while presentation or Vulkan submission errors are silently discarded.
 
-3. Chunk-map degradation is non-fatal and can silently drop world entries.
-- Evidence: dropped-entry warning then continue in `src/renderer/world/payload_builder.rs` (`chunk_map_dropped_entries`).
-- Risk: rendering holes/inconsistent world sampling instead of a hard failure path.
+3. Global singleton state makes lifecycle resets and tests fragile.
+- Evidence: renderer, streaming state, and meshing state are all stored in `OnceLock<Mutex<...>>`.
+- Risk: process-global state is hard to reinitialize cleanly, and tests must coordinate around shared state rather than isolated fixtures.
 
-4. Unbounded generation thread creation pattern under repeated regen.
-- Evidence: each `spawn_generation` starts a new thread in `src/world/mod.rs` (`std::thread::spawn`) and uses rayon inside it.
-- Risk: thread churn and contention during repeated generation requests.
+4. The egui path is still scaffolding, not a full rendered UI.
+- Evidence: `EguiAshBackend::new` initializes `pipeline` to `vk::Pipeline::null()`, `paint` currently focuses on uploads/scratch buffers, and `src/app.rs` passes empty egui primitives each frame.
+- Risk: readers may assume a working in-app debug UI exists when the current path is only partial plumbing.
 
 ## Reliability / Fragility
-1. Runtime `assert!` guards in pass prepare paths can crash the app if invariants break.
-- Evidence: `assert!` in `src/renderer/passes/trace.rs`, `src/renderer/passes/reistir.rs`, `src/renderer/passes/svgf.rs`.
-- Risk: hard process abort in production rather than recoverable error propagation.
+1. Stage tracing is easy to miss because logging is not initialized in the binary entrypoint.
+- Evidence: `src/runtime/scheduler.rs` emits `log::info!`, but `src/main.rs` does not call `env_logger::init()`.
+- Risk: operational visibility is weaker than dependency choices imply.
 
-2. Lifecycle execution result is ignored.
-- Evidence: `let _ = execute_renderer_lifecycle(...)` in `src/renderer/core/world_ops.rs`.
-- Risk: lifecycle anomalies are harder to diagnose and cannot be surfaced to caller policy.
+2. Vulkan feature requirements are strict.
+- Evidence: `src/renderer/device.rs` requires `samplerAnisotropy`, `multiDrawIndirect`, and `drawIndirectFirstInstance`.
+- Risk: integrated or older GPUs may be rejected even if they could run a reduced-feature path.
 
-3. SVGF diagnostics readback failures are effectively silent.
-- Evidence: channel send/poll failures are consumed in `src/renderer/core/frame_exec.rs` without explicit logging.
-- Risk: false confidence in diagnostics; degraded observability when GPU readback breaks.
+3. Several state transitions intentionally ignore errors.
+- Evidence: scheduler paths use `let _ = state_store.transition_to(...)` and similar fire-and-forget calls.
+- Risk: invalid lifecycle edges can disappear into silent no-op behavior unless a test catches them.
 
-4. Shader storage format selection has permissive fallback behavior.
-- Evidence: fallback branch in `storage_format_token` in `src/renderer/core/bootstrap/shader_modules.rs`.
-- Risk: future format expansion could silently choose an unintended shader token.
-
-5. Integrity check exists but is not enforced.
-- Evidence: `_chunk_coord_match` computed then unused in `src/renderer/world/payload_builder.rs`.
-- Risk: latent data consistency bug can pass unnoticed if chunk metadata diverges.
+4. Chunk rendering capacity is fixed at compile time.
+- Evidence: `src/renderer/chunk_pool.rs` fixes `MAX_RENDER_CHUNKS` and `MAX_QUADS_PER_CHUNK`.
+- Risk: dense scenes can exhaust slot capacity or per-slot geometry budgets without any adaptive fallback.
 
 ## Performance Debt
-1. Large CPU allocations during resource rebuilds.
-- Evidence: zero-filled vectors used to initialize storage buffers in `src/renderer/resources/restir_storage.rs`.
-- Risk: allocation spikes and extra memory bandwidth on resize/rebuild paths.
+1. The redraw strategy is effectively a busy frame loop.
+- Evidence: `src/app.rs` requests a redraw on every `Event::AboutToWait`.
+- Risk: unnecessary CPU/GPU work and poor idle behavior on laptops or low-power systems.
 
-2. 3D importance texture upload uses full CPU staging copy.
-- Evidence: full `Vec<u8>` staging and nested copy loops in `src/renderer/world/upload.rs`.
-- Risk: costly world-sync uploads as light importance data grows.
+2. One-shot copy helpers stall the graphics queue.
+- Evidence: `submit_one_shot_commands` in `src/renderer/mod.rs` ends each upload with `queue_wait_idle`.
+- Risk: upload-heavy paths serialize GPU work and hurt frame pacing.
 
-3. Per-frame `device.poll` for diagnostics readback.
-- Evidence: `device.poll(wgpu::Maintain::Poll)` in `src/renderer/core/frame_exec.rs`.
-- Risk: avoidable CPU overhead and potential frame jitter on some drivers.
+3. Chunk draw buffers use CPU-visible allocations for simplicity.
+- Evidence: `src/renderer/chunk_pool.rs` allocates vertex, index, metadata, and indirect buffers with `MemoryLocation::CpuToGpu`.
+- Risk: this is easy to update, but it leaves performance on the table versus staged GPU-only buffers for large scenes.
 
-## Security Notes
+4. Meshing work is still performed on the main thread during `MeshSync`.
+- Evidence: `src/runtime/scheduler.rs` runs `build_greedy_mesh` in the frame loop after background generation results arrive.
+- Risk: large dirty batches can steal frame time even when chunk generation itself is already offloaded.
+
+## Security and Process Notes
 1. Runtime attack surface is currently low.
-- Evidence: no network/socket/input parsing subsystem in `src/`; app is local GPU rendering.
+- Evidence: there are no network listeners, remote APIs, or database connectors in the live codebase.
 
-2. Supply-chain and hardening process is thin.
-- Evidence: dependencies in `Cargo.toml` but no visible CI/security automation (`.github` absent in repo tree).
-- Risk: delayed detection of vulnerable crate versions or regressions.
-
-## Maintainability / Technical Debt
-1. High-complexity, monolithic files increase change risk.
-- Evidence: `src/shaders/trace.wgsl` (~1390 lines), `src/shaders/svgf.wgsl` (~801 lines), `src/renderer/core/frame_exec.rs` (~1115 lines), `src/app.rs` (~556 lines).
-- Risk: fragile edits, slower reviews, higher regression probability.
-
-2. Host/shader contract is manually mirrored across many files.
-- Evidence: protocol and binding definitions in `src/renderer/protocol/*.rs`, layouts in `src/renderer/core/bootstrap/pipeline_layouts.rs`, usage across WGSL files in `src/shaders/*.wgsl`.
-- Risk: subtle drift bugs despite unit tests when adding/changing fields.
-
-3. Unused or partially integrated code paths remain in-tree.
-- Evidence: `#![allow(dead_code)]` in `src/renderer/light_sampler.rs` and `src/renderer/reservoir.rs`.
-- Risk: stale logic diverges from production path and confuses future refactors.
+2. Tooling hardening is still light.
+- Evidence: dependencies are pinned in Cargo, but there is no visible CI or automated dependency-audit setup in the repository root.
+- Risk: regressions or vulnerable crate updates rely on manual detection.
 
 ## Practical Mitigation Priorities
-1. Add a frame pacing mode (event-driven or target FPS sleep) in `src/app.rs`.
-2. Introduce incremental world upload and chunk-delta updates in `src/renderer/world/*`.
-3. Convert pass `assert!` checks to recoverable diagnostics/errors in `src/renderer/passes/*`.
-4. Add integration smoke tests for renderer bootstrap + one frame render path around `src/renderer/core/*`.
-5. Add CI with `cargo test`, `cargo clippy`, and dependency audit to protect `Cargo.toml` updates.
+1. Add resize/recreate handling for swapchain-dependent renderer state.
+2. Surface `submit_frame` failures to the app loop instead of discarding them.
+3. Decide whether global `OnceLock` state is a temporary phase scaffold or a longer-term runtime choice.
+4. Replace queue-idle upload helpers and CPU-visible draw buffers when chunk counts grow.
+5. Either complete egui rendering or clearly mark it as non-production scaffolding in runtime-facing docs.

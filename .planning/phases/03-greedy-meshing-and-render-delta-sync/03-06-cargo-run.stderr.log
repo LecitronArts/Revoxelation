@@ -1,0 +1,30 @@
+warning: struct `MeshSyncSystem` is never constructed
+  --> src\runtime\boundaries\meshing.rs:31:12
+   |
+31 | pub struct MeshSyncSystem;
+   |            ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `register_mesh_sync_systems` is never used
+  --> src\runtime\boundaries\meshing.rs:39:8
+   |
+39 | pub fn register_mesh_sync_systems(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `WorldStreamingSystem` is never constructed
+  --> src\runtime\boundaries\world.rs:31:12
+   |
+31 | pub struct WorldStreamingSystem;
+   |            ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `register_streaming_systems` is never used
+  --> src\runtime\boundaries\world.rs:39:8
+   |
+39 | pub fn register_streaming_systems(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `revoxelation` (lib) generated 4 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running `target\debug\revoxelation.exe`
+VK_LAYER_KHRONOS_validation not available; continuing without validation layer.
