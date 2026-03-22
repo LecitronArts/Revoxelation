@@ -90,7 +90,7 @@ fn mesh_01_chunk_voxels_contract_and_packed_layout() {
     assert_eq!(size_of::<PackedVertex>(), 8);
 
     let packed = pack_vertex([1, 2, 3], 4, 513, [5, 6]);
-    assert_eq!(packed.0[0], 1 | (2 << 6) | (3 << 12) | (4 << 18));
+    assert_eq!(packed.0[0], 1 | (2 << 7) | (3 << 14) | (4 << 21));
     assert_eq!(packed.0[1], 513 | (5 << 16) | (6 << 24));
 }
 

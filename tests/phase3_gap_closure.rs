@@ -8,12 +8,22 @@ use std::{sync::mpsc, time::Duration};
 
 use ash::vk;
 use revoxelation::{
-    meshing::{PackedMesh, PackedVertex},
-    renderer::{chunk_pool::SlotAllocator, mesh_pipeline::metadata_descriptor_layout_binding},
+    meshing::{
+        ChunkNeighborSet, GreedyQuad, MeshDirtyRecord, PackedMesh, PackedVertex,
+        build_greedy_mesh, pack_quad, pack_vertex,
+    },
+    renderer::{
+        chunk_pool::SlotAllocator,
+        instance::{
+            DEBUG_UTILS_EXTENSION_NAME, VALIDATION_LAYER_NAME, resolve_debug_instance_config,
+        },
+        mesh_pipeline::metadata_descriptor_layout_binding,
+        spirv::decode_spirv_words,
+    },
     streaming::{
         job_queue::PrioritizedTask,
         job_runner::spawn_chunk_job,
-        types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey},
+        types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkVoxels},
     },
 };
 
@@ -343,4 +353,205 @@ fn mesh_03_sparse_slot_remove_keeps_dense_indirect_order_valid() {
         chunk_pool_source.contains("dense_indirect_buffer"),
         "chunk pool should maintain a GPU-visible dense indirect command buffer"
     );
+}
+
+#[test]
+fn mesh_01_missing_validation_layer_disables_optional_debug_bootstrap() {
+    let config = resolve_debug_instance_config(&[], &[DEBUG_UTILS_EXTENSION_NAME.to_string()]);
+
+    assert!(
+        !config.validation_layer_enabled,
+        "missing validation layer should disable validation bootstrap"
+    );
+    assert!(
+        !config.debug_utils_enabled,
+        "debug utils should also be disabled when validation is unavailable"
+    );
+}
+
+#[test]
+fn mesh_01_missing_debug_utils_extension_disables_debug_messenger_only() {
+    let config = resolve_debug_instance_config(&[VALIDATION_LAYER_NAME.to_string()], &[]);
+
+    assert!(
+        config.validation_layer_enabled,
+        "validation should stay enabled when the layer is available"
+    );
+    assert!(
+        !config.debug_utils_enabled,
+        "debug messenger support should disable cleanly when debug utils is absent"
+    );
+}
+
+#[test]
+fn mesh_01_renderer_new_uses_instance_debug_config_contract() {
+    let renderer_source =
+        std::fs::read_to_string("src/renderer/mod.rs").expect("renderer module should exist");
+
+    assert!(
+        renderer_source.contains("let bootstrap = instance::create_instance(&entry, display_handle)?;"),
+        "Renderer::new should receive the instance bootstrap contract"
+    );
+    assert!(
+        renderer_source.contains("bootstrap.debug.debug_utils_enabled"),
+        "Renderer::new should gate debug utils loader creation from the bootstrap debug config"
+    );
+    assert!(
+        renderer_source.contains(
+            "bootstrap.debug.validation_layer_enabled && bootstrap.debug.debug_utils_enabled"
+        ),
+        "Renderer::new should require both validation and debug utils before creating a debug messenger"
+    );
+    assert!(
+        !renderer_source.contains("let debug_messenger = Some(instance::setup_debug_messenger(&entry, &instance)?);"),
+        "Renderer::new should no longer create the debug messenger unconditionally in debug builds"
+    );
+}
+
+#[test]
+fn mesh_01_spirv_word_decoder_accepts_unaligned_byte_input() {
+    let bytes = [
+        0xFF, 0x03, 0x02, 0x01, 0x00, 0x0D, 0x0C, 0x0B, 0x0A,
+    ];
+
+    let words = decode_spirv_words(&bytes[1..]).expect("unaligned SPIR-V bytes should decode");
+
+    assert_eq!(words, vec![0x0001_0203, 0x0A0B_0C0D]);
+}
+
+#[test]
+fn mesh_01_spirv_word_decoder_rejects_non_word_aligned_length() {
+    let err = decode_spirv_words(&[0x01, 0x02, 0x03]).expect_err(
+        "byte lengths that are not divisible by 4 should return an explicit error",
+    );
+
+    assert_eq!(err.to_string(), "SPIR-V byte length must be a multiple of 4");
+}
+
+#[test]
+fn mesh_01_pipeline_sources_stop_using_bytemuck_cast_slice_for_shader_modules() {
+    let mesh_source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("chunk mesh pipeline source should exist");
+    let cull_source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
+        .expect("chunk cull pipeline source should exist");
+
+    assert!(
+        !mesh_source.contains("bytemuck::cast_slice(bytes)"),
+        "graphics shader-module creation should stop depending on input alignment"
+    );
+    assert!(
+        !cull_source.contains("bytemuck::cast_slice(bytes)"),
+        "compute shader-module creation should stop depending on input alignment"
+    );
+}
+
+#[test]
+fn mesh_01_chunk_mesh_pipeline_uses_alignment_safe_spirv_decoder() {
+    let mesh_source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("chunk mesh pipeline source should exist");
+
+    assert!(
+        mesh_source.contains("decode_spirv_words(bytes)?"),
+        "graphics shader-module creation should decode SPIR-V bytes into owned words first"
+    );
+    assert!(
+        mesh_source.contains("ShaderModuleCreateInfo::default().code(&code)"),
+        "graphics shader-module creation should pass aligned words into Vulkan"
+    );
+}
+
+#[test]
+fn mesh_01_chunk_cull_pipeline_uses_alignment_safe_spirv_decoder() {
+    let cull_source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
+        .expect("chunk cull pipeline source should exist");
+
+    assert!(
+        cull_source.contains("decode_spirv_words(bytes)?"),
+        "compute shader-module creation should decode SPIR-V bytes into owned words first"
+    );
+    assert!(
+        cull_source.contains("ShaderModuleCreateInfo::default().code(&code)"),
+        "compute shader-module creation should pass aligned words into Vulkan"
+    );
+}
+
+#[test]
+fn mesh_01_pack_vertex_uses_7_bit_coordinate_encoding() {
+    let packed = pack_vertex([1, 2, 3], 4, 513, [5, 6]);
+    assert_eq!(packed.0[0], 1 | (2 << 7) | (3 << 14) | (4 << 21));
+    assert_eq!(packed.0[1], 513 | (5 << 16) | (6 << 24));
+}
+
+#[test]
+fn mesh_01_pack_quad_produces_non_degenerate_quads() {
+    let quad = GreedyQuad {
+        axis: 0,
+        positive_face: true,
+        origin: [5, 10, 20],
+        size: [3, 4],
+        block_id: 7,
+        is_skirt: false,
+    };
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    pack_quad(&quad, &mut vertices, &mut indices);
+    assert_eq!(vertices.len(), 4);
+    assert_eq!(indices.len(), 6);
+    // At least two vertices must have distinct word0 (distinct positions)
+    let distinct_positions: std::collections::HashSet<u32> =
+        vertices.iter().map(|v| v.0[0]).collect();
+    assert!(
+        distinct_positions.len() >= 2,
+        "pack_quad must produce non-degenerate quads with distinct positions, got {distinct_positions:?}"
+    );
+    // Decode positions and verify span
+    let decode = |word0: u32| -> [u32; 3] {
+        [word0 & 0x7F, (word0 >> 7) & 0x7F, (word0 >> 14) & 0x7F]
+    };
+    let positions: Vec<[u32; 3]> = vertices.iter().map(|v| decode(v.0[0])).collect();
+    // For axis=0, u_axis=Y(1), v_axis=Z(2); size=[3,4]
+    let y_range = positions.iter().map(|p| p[1]).max().unwrap()
+                - positions.iter().map(|p| p[1]).min().unwrap();
+    let z_range = positions.iter().map(|p| p[2]).max().unwrap()
+                - positions.iter().map(|p| p[2]).min().unwrap();
+    assert_eq!(y_range, 3, "Y span should match size[0]=3");
+    assert_eq!(z_range, 4, "Z span should match size[1]=4");
+}
+
+#[test]
+fn mesh_01_greedy_mesh_single_block_has_nonzero_position_spread() {
+    let mut block_ids = vec![0u8; CHUNK_VOXEL_COUNT];
+    let index = ChunkVoxels::linear_index(1, 1, 1);
+    block_ids[index] = 2;
+    let chunk =
+        ChunkVoxels::new(block_ids.into_boxed_slice()).expect("single block chunk must be valid");
+
+    let mesh = build_greedy_mesh(
+        &chunk,
+        &ChunkNeighborSet::default(),
+        &MeshDirtyRecord {
+            causes: Vec::new(),
+            source_revision: 1,
+            finer_neighbor_face_mask: 0,
+        },
+    );
+
+    assert!(
+        !mesh.vertices.is_empty(),
+        "single-block chunk should produce at least one vertex"
+    );
+
+    let decode = |word0: u32| -> [u32; 3] {
+        [word0 & 0x7F, (word0 >> 7) & 0x7F, (word0 >> 14) & 0x7F]
+    };
+    let positions: Vec<[u32; 3]> = mesh.vertices.iter().map(|v| decode(v.0[0])).collect();
+
+    for axis in 0..3 {
+        let min = positions.iter().map(|p| p[axis]).min().unwrap();
+        let max = positions.iter().map(|p| p[axis]).max().unwrap();
+        assert!(
+            max - min >= 1,
+            "axis {axis}: all vertex positions identical ({min}); vertices are degenerate"
+        );
+    }
 }
