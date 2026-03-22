@@ -581,3 +581,17 @@ fn mesh_01_vertex_shader_decodes_7_bit_positions_and_expands_face_offset() {
         "vertex shader must not use old 6-bit masks"
     );
 }
+
+#[test]
+fn mesh_01_mesh_pipeline_uses_clockwise_front_face_for_y_flip() {
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("mesh pipeline source should exist");
+    assert!(
+        source.contains("CLOCKWISE"),
+        "pipeline should use CLOCKWISE front face to match Y-flipped debug projection"
+    );
+    assert!(
+        !source.contains("COUNTER_CLOCKWISE"),
+        "pipeline should not use COUNTER_CLOCKWISE with a Y-flipped projection"
+    );
+}

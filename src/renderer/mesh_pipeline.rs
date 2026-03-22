@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use ash::vk;
 
-use super::{Renderer, chunk_pool::ChunkPool};
+use super::{Renderer, chunk_pool::ChunkPool, spirv::decode_spirv_words};
 
 pub struct ChunkMeshPipeline {
     pub pipeline: vk::Pipeline,
@@ -135,7 +135,7 @@ impl ChunkMeshPipeline {
             .polygon_mode(vk::PolygonMode::FILL)
             .line_width(1.0)
             .cull_mode(vk::CullModeFlags::BACK)
-            .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
+            .front_face(vk::FrontFace::CLOCKWISE);
         let multisample = vk::PipelineMultisampleStateCreateInfo::default()
             .rasterization_samples(vk::SampleCountFlags::TYPE_1);
         let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
@@ -143,6 +143,10 @@ impl ChunkMeshPipeline {
             .color_write_mask(vk::ColorComponentFlags::RGBA)];
         let color_blend = vk::PipelineColorBlendStateCreateInfo::default()
             .attachments(&color_blend_attachment);
+        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(true)
+            .depth_write_enable(true)
+            .depth_compare_op(vk::CompareOp::LESS);
         let pipeline_info = [vk::GraphicsPipelineCreateInfo::default()
             .stages(&shader_stages)
             .vertex_input_state(&vertex_input_state)
@@ -151,6 +155,7 @@ impl ChunkMeshPipeline {
             .rasterization_state(&rasterization)
             .multisample_state(&multisample)
             .color_blend_state(&color_blend)
+            .depth_stencil_state(&depth_stencil)
             .layout(pipeline_layout)
             .render_pass(renderer.swapchain_ctx.render_pass)
             .subpass(0)];
@@ -243,10 +248,10 @@ impl ChunkMeshPipeline {
 }
 
 fn create_shader_module(device: &ash::Device, bytes: &[u8]) -> Result<vk::ShaderModule> {
-    let code = bytemuck::cast_slice(bytes);
+    let code = decode_spirv_words(bytes)?;
     unsafe {
         device
-            .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(code), None)
+            .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&code), None)
             .context("failed to create shader module")
     }
 }
