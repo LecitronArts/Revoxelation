@@ -1,16 +1,18 @@
 use anyhow::{Context, Result, anyhow};
 use ash::vk;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use std::time::Instant;
 use winit::{
-    event::{Event, WindowEvent},
+    event::{DeviceEvent, ElementState, Event, KeyEvent, WindowEvent},
     event_loop::EventLoop,
+    keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
 
 use crate::meshing::MeshingState;
 use crate::renderer::{
     Renderer, chunk_pool::ChunkPool, cull_pipeline::ChunkCullPipeline, egui_backend::EguiAshBackend,
-    mesh_pipeline::ChunkMeshPipeline, camera::FpsCamera,
+    mesh_pipeline::ChunkMeshPipeline, camera::{CameraKey, FpsCamera},
 };
 use crate::runtime::scheduler::StreamingState;
 
@@ -29,6 +31,20 @@ pub struct App {
     pub egui_ctx: egui::Context,
     pub camera: FpsCamera,
     pub frame_index: u64,
+    /// Tracked key states for continuous movement.
+    pub keys_pressed: KeysPressed,
+    pub last_frame_time: Instant,
+}
+
+/// Tracks which movement keys are currently held down.
+#[derive(Default)]
+pub struct KeysPressed {
+    pub forward: bool,
+    pub backward: bool,
+    pub left: bool,
+    pub right: bool,
+    pub up: bool,
+    pub down: bool,
 }
 
 pub fn run() -> Result<()> {
@@ -65,6 +81,8 @@ pub fn run() -> Result<()> {
         egui_ctx: egui::Context::default(),
         camera: FpsCamera::default(),
         frame_index: 0,
+        keys_pressed: KeysPressed::default(),
+        last_frame_time: Instant::now(),
     };
 
     event_loop
@@ -72,9 +90,61 @@ pub fn run() -> Result<()> {
             Event::AboutToWait => {
                 window.request_redraw();
             }
+            Event::DeviceEvent {
+                event: DeviceEvent::MouseMotion { delta: (dx, dy) },
+                ..
+            } => {
+                app.camera.process_mouse(dx as f32, dy as f32, 1.0);
+            }
             Event::WindowEvent { window_id, event } if window_id == window.id() => match event {
                 WindowEvent::CloseRequested => elwt.exit(),
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(key_code),
+                            state,
+                            ..
+                        },
+                    ..
+                } => {
+                    let pressed = state == ElementState::Pressed;
+                    match key_code {
+                        KeyCode::KeyW => app.keys_pressed.forward = pressed,
+                        KeyCode::KeyS => app.keys_pressed.backward = pressed,
+                        KeyCode::KeyA => app.keys_pressed.left = pressed,
+                        KeyCode::KeyD => app.keys_pressed.right = pressed,
+                        KeyCode::Space => app.keys_pressed.up = pressed,
+                        KeyCode::ShiftLeft => app.keys_pressed.down = pressed,
+                        KeyCode::Escape if pressed => elwt.exit(),
+                        _ => {}
+                    }
+                }
                 WindowEvent::RedrawRequested => {
+                    // Delta time for smooth movement.
+                    let now = Instant::now();
+                    let dt = now.duration_since(app.last_frame_time).as_secs_f32();
+                    app.last_frame_time = now;
+
+                    // Apply continuous keyboard movement.
+                    if app.keys_pressed.forward {
+                        app.camera.process_keyboard(CameraKey::Forward, true, dt);
+                    }
+                    if app.keys_pressed.backward {
+                        app.camera.process_keyboard(CameraKey::Backward, true, dt);
+                    }
+                    if app.keys_pressed.left {
+                        app.camera.process_keyboard(CameraKey::Left, true, dt);
+                    }
+                    if app.keys_pressed.right {
+                        app.camera.process_keyboard(CameraKey::Right, true, dt);
+                    }
+                    if app.keys_pressed.up {
+                        app.camera.process_keyboard(CameraKey::Up, true, dt);
+                    }
+                    if app.keys_pressed.down {
+                        app.camera.process_keyboard(CameraKey::Down, true, dt);
+                    }
+
                     let size = window.inner_size();
                     let screen_size = [size.width as f32, size.height as f32];
 
