@@ -616,3 +616,39 @@ fn rend_01_mesh_pipeline_has_push_constant_range() {
         "Mesh pipeline must define push constant ranges"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 04-06 Task 1 — Hi-Z pyramid image and generation shader
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_04_hiz_mip_count_calculation() {
+    use revoxelation::renderer::hiz::hiz_mip_count;
+    assert_eq!(hiz_mip_count(1920, 1080), 11, "1920x1080 should produce 11 mip levels");
+    assert_eq!(hiz_mip_count(256, 256), 9, "256x256 should produce 9 mip levels");
+    assert_eq!(hiz_mip_count(1, 1), 1, "1x1 should produce 1 mip level");
+}
+
+#[test]
+fn rend_04_hiz_generate_shader_exists() {
+    let source = std::fs::read_to_string("shaders/hiz_generate.comp")
+        .expect("shaders/hiz_generate.comp should exist");
+    assert!(
+        source.contains("imageStore"),
+        "Hi-Z generate shader must contain imageStore"
+    );
+    assert!(
+        source.contains("max("),
+        "Hi-Z generate shader must contain max("
+    );
+}
+
+#[test]
+fn rend_04_hiz_module_exists() {
+    let source = std::fs::read_to_string("src/renderer/hiz.rs")
+        .expect("src/renderer/hiz.rs should exist");
+    assert!(
+        source.contains("HiZPyramid"),
+        "hiz.rs must define HiZPyramid struct"
+    );
+}

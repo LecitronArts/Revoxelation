@@ -13,6 +13,7 @@ pub mod device;
 pub mod egui_backend;
 pub mod frame;
 pub mod helpers;
+pub mod hiz;
 pub mod instance;
 pub mod mesh_pipeline;
 pub mod spirv;
@@ -40,6 +41,7 @@ pub fn shader_source_files() -> &'static [&'static str] {
         "shaders/chunk_mesh.vert",
         "shaders/chunk_mesh.frag",
         "shaders/chunk_cull.comp",
+        "shaders/hiz_generate.comp",
         "shaders/egui.vert",
         "shaders/egui.frag",
     ]
@@ -63,6 +65,7 @@ pub struct Renderer {
     pub pending_chunk_deltas: VecDeque<RenderDelta>,
     pub mesh_pipeline: Option<mesh_pipeline::ChunkMeshPipeline>,
     pub cull_pipeline: Option<cull_pipeline::ChunkCullPipeline>,
+    pub hiz_pyramid: Option<hiz::HiZPyramid>,
     pub egui_backend: Option<egui_backend::EguiAshBackend>,
     pub pending_egui_output: Option<crate::app::PendingEguiOutput>,
 }
@@ -154,6 +157,7 @@ impl Renderer {
             pending_chunk_deltas: VecDeque::new(),
             mesh_pipeline: None,
             cull_pipeline: None,
+            hiz_pyramid: None,
             egui_backend: None,
             pending_egui_output: None,
         })
@@ -179,6 +183,10 @@ impl Drop for Renderer {
 
             if let Some(mesh_pipeline) = self.mesh_pipeline.take() {
                 mesh_pipeline.destroy(self);
+            }
+
+            if let Some(hiz_pyramid) = self.hiz_pyramid.take() {
+                hiz_pyramid.destroy(self);
             }
 
             if let Some(cull_pipeline) = self.cull_pipeline.take() {

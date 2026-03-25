@@ -1,0 +1,43 @@
+#version 450
+
+// Hi-Z depth pyramid generator — 2x2 max downsampling.
+// Each invocation reads a 2x2 block from the source mip and writes
+// the max value to one texel of the destination mip.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// Source mip level (read).
+layout(set = 0, binding = 0) uniform sampler2D src_mip;
+
+// Destination mip level (write).
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D dst_mip;
+
+// Push constants: destination mip dimensions.
+layout(push_constant) uniform PushConstants {
+    ivec2 dst_size; // width, height of the destination mip level
+} pc;
+
+void main() {
+    ivec2 dst_coord = ivec2(gl_GlobalInvocationID.xy);
+
+    // Out-of-range threads do nothing.
+    if (dst_coord.x >= pc.dst_size.x || dst_coord.y >= pc.dst_size.y) {
+        return;
+    }
+
+    // Compute UV coordinates for the center of each of the 4 source texels.
+    // The source mip is 2x the destination, so each dst texel maps to a 2x2 block.
+    vec2 src_texel_size = 1.0 / vec2(textureSize(src_mip, 0));
+    vec2 base_uv = (vec2(dst_coord) * 2.0 + 0.5) * src_texel_size;
+
+    // Sample the 4 source texels.
+    float s00 = textureLod(src_mip, base_uv, 0.0).r;
+    float s10 = textureLod(src_mip, base_uv + vec2(src_texel_size.x, 0.0), 0.0).r;
+    float s01 = textureLod(src_mip, base_uv + vec2(0.0, src_texel_size.y), 0.0).r;
+    float s11 = textureLod(src_mip, base_uv + src_texel_size, 0.0).r;
+
+    // Max reduction — conservative depth for occlusion testing.
+    float max_depth = max(max(s00, s10), max(s01, s11));
+
+    imageStore(dst_mip, dst_coord, vec4(max_depth, 0.0, 0.0, 0.0));
+}
