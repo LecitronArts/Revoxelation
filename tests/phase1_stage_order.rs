@@ -1,4 +1,5 @@
-use revoxelation::runtime::{STAGE_ORDER, Stage, run_frame};
+use revoxelation::meshing::MeshingState;
+use revoxelation::runtime::{STAGE_ORDER, Stage, StreamingState, run_frame};
 
 #[test]
 fn stage_order_locked_to_input_sim_world_meshsync_render() {
@@ -12,7 +13,9 @@ fn stage_order_locked_to_input_sim_world_meshsync_render() {
 
     assert_eq!(STAGE_ORDER, expected, "canonical stage order changed");
 
-    let frame = run_frame(7);
+    let mut streaming = StreamingState::new();
+    let mut meshing = MeshingState::default();
+    let frame = run_frame(&mut streaming, &mut meshing, None, 7);
     assert_eq!(frame.frame_index, 7);
     assert_eq!(
         frame.executed_stages, expected,

@@ -7,10 +7,12 @@ use winit::{
     window::WindowBuilder,
 };
 
+use crate::meshing::MeshingState;
 use crate::renderer::{
     Renderer, chunk_pool::ChunkPool, cull_pipeline::ChunkCullPipeline, egui_backend::EguiAshBackend,
     mesh_pipeline::ChunkMeshPipeline,
 };
+use crate::runtime::scheduler::StreamingState;
 
 /// Pending egui output to be consumed by submit_frame.
 pub struct PendingEguiOutput {
@@ -22,6 +24,8 @@ pub struct PendingEguiOutput {
 /// Application root that owns all subsystems directly (no global state).
 pub struct App {
     pub renderer: Renderer,
+    pub streaming: StreamingState,
+    pub meshing: MeshingState,
     pub egui_ctx: egui::Context,
     pub frame_index: u64,
 }
@@ -55,6 +59,8 @@ pub fn run() -> Result<()> {
 
     let mut app = App {
         renderer,
+        streaming: StreamingState::new(),
+        meshing: MeshingState::default(),
         egui_ctx: egui::Context::default(),
         frame_index: 0,
     };
@@ -96,7 +102,22 @@ pub fn run() -> Result<()> {
                         screen_size,
                     });
 
-                    let _ = crate::runtime::run_frame(app.frame_index);
+                    // Run scheduler frame, then handle renderer submission.
+                    let _result = crate::runtime::run_frame(
+                        &mut app.streaming,
+                        &mut app.meshing,
+                        Some(&mut app.renderer),
+                        app.frame_index,
+                    );
+
+                    // Drain pending render deltas and submit frame from app-owned renderer.
+                    while let Some(delta) = app.streaming.pending_render_deltas.pop_front() {
+                        app.renderer.enqueue_chunk_delta(delta);
+                    }
+                    if let Err(e) = crate::renderer::submit_frame(&mut app.renderer, app.frame_index) {
+                        log::error!("submit_frame failed: {e:#}");
+                    }
+
                     app.frame_index = app.frame_index.saturating_add(1);
                 }
                 _ => {}

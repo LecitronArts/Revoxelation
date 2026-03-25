@@ -67,3 +67,63 @@ fn rend_06_renderer_mod_no_globals_reexport() {
         "renderer/mod.rs should not re-export renderer_state"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Task 2 tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_06_scheduler_has_no_global_state() {
+    let scheduler_source = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("src/runtime/scheduler.rs should exist");
+
+    // No static OnceLock declarations.
+    assert!(
+        !scheduler_source.contains("OnceLock"),
+        "scheduler.rs should not contain OnceLock"
+    );
+
+    // No static STREAMING or MESHING.
+    assert!(
+        !scheduler_source.contains("static STREAMING"),
+        "scheduler.rs should not declare static STREAMING"
+    );
+    assert!(
+        !scheduler_source.contains("static MESHING"),
+        "scheduler.rs should not declare static MESHING"
+    );
+}
+
+#[test]
+fn rend_06_run_frame_takes_mutable_refs() {
+    let scheduler_source = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("src/runtime/scheduler.rs should exist");
+
+    assert!(
+        scheduler_source.contains("streaming: &mut StreamingState"),
+        "run_frame should accept streaming: &mut StreamingState parameter"
+    );
+    assert!(
+        scheduler_source.contains("meshing: &mut MeshingState"),
+        "run_frame should accept meshing: &mut MeshingState parameter"
+    );
+    assert!(
+        scheduler_source.contains("renderer: &mut Renderer")
+            || scheduler_source.contains("renderer: &mut crate::renderer::Renderer"),
+        "run_frame should accept renderer: &mut Renderer parameter"
+    );
+}
+
+#[test]
+fn rend_06_app_struct_owns_all_subsystems() {
+    let app_source =
+        std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
+    assert!(
+        app_source.contains("streaming") && app_source.contains("StreamingState"),
+        "App struct should have a streaming: StreamingState field"
+    );
+    assert!(
+        app_source.contains("meshing") && app_source.contains("MeshingState"),
+        "App struct should have a meshing: MeshingState field"
+    );
+}

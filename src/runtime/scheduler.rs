@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc,
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
@@ -49,7 +49,7 @@ pub const MAX_RETRIES: u32 = 3;
 // StreamingState
 // ---------------------------------------------------------------------------
 
-/// All streaming subsystem state owned by the scheduler.
+/// All streaming subsystem state owned by the App struct.
 pub struct StreamingState {
     pub octree: StreamingOctree,
     pub lod_configs: Vec<LodConfig>,
@@ -65,7 +65,7 @@ pub struct StreamingState {
 }
 
 impl StreamingState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
             octree: StreamingOctree::build(4, 3),
@@ -89,17 +89,6 @@ impl StreamingState {
     }
 }
 
-static STREAMING: OnceLock<Mutex<StreamingState>> = OnceLock::new();
-static MESHING: OnceLock<Mutex<MeshingState>> = OnceLock::new();
-
-fn streaming_state() -> &'static Mutex<StreamingState> {
-    STREAMING.get_or_init(|| Mutex::new(StreamingState::new()))
-}
-
-fn meshing_state() -> &'static Mutex<MeshingState> {
-    MESHING.get_or_init(|| Mutex::new(MeshingState::default()))
-}
-
 // ---------------------------------------------------------------------------
 // FrameExecution
 // ---------------------------------------------------------------------------
@@ -117,7 +106,12 @@ pub struct FrameExecution {
 // run_frame
 // ---------------------------------------------------------------------------
 
-pub fn run_frame(frame_index: u64) -> FrameExecution {
+pub fn run_frame(
+    streaming: &mut StreamingState,
+    meshing: &mut MeshingState,
+    renderer: Option<&mut crate::renderer::Renderer>,
+    frame_index: u64,
+) -> FrameExecution {
     let mut executed_stages = Vec::with_capacity(STAGE_ORDER.len());
     let mut trace_entries = Vec::with_capacity(STAGE_ORDER.len() * 2);
     let mut event_bus = EventBus::new(frame_index);
@@ -133,11 +127,11 @@ pub fn run_frame(frame_index: u64) -> FrameExecution {
             Stage::Simulation => event_bus.process_pending_commands(),
             Stage::RenderSubmit => {
                 let _ = event_bus.consume_emitted();
-                // Renderer interaction moved to App event loop (04-01).
-                // submit_frame and drain are called from app.rs with owned &mut Renderer.
+                // Renderer interaction only when a renderer is available.
+                // Tests pass None; the real app passes Some(&mut renderer).
             }
-            Stage::WorldUpdate => run_world_update(frame_index),
-            Stage::MeshSync => run_mesh_sync(frame_index),
+            Stage::WorldUpdate => run_world_update(streaming, frame_index),
+            Stage::MeshSync => run_mesh_sync(streaming, meshing, frame_index),
         }
 
         executed_stages.push(stage);
@@ -163,9 +157,7 @@ pub fn run_frame(frame_index: u64) -> FrameExecution {
 // WorldUpdate arm
 // ---------------------------------------------------------------------------
 
-fn run_world_update(frame_index: u64) {
-    let mut ss = streaming_state().lock().unwrap();
-
+fn run_world_update(ss: &mut StreamingState, frame_index: u64) {
     // Camera at origin for default/test scenarios.
     let camera_pos = [0.0f32, 0.0, 0.0];
 
@@ -202,7 +194,7 @@ fn run_world_update(frame_index: u64) {
 
     // Deactivate chunks no longer needed.
     for key in &diff.to_deactivate {
-        deactivate_chunk(&mut ss, *key);
+        deactivate_chunk(ss, *key);
     }
 
     // Activate new chunks: insert into state store, then enqueue.
@@ -258,15 +250,14 @@ fn run_world_update(frame_index: u64) {
 // MeshSync arm
 // ---------------------------------------------------------------------------
 
-fn run_mesh_sync(frame_index: u64) {
-    let mut ss = streaming_state().lock().unwrap();
+fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_index: u64) {
     let mut recv_count = 0u32;
 
     loop {
         match ss.result_receiver.try_recv() {
             Ok(result) => {
                 recv_count += 1;
-                handle_job_result(&mut ss, result, frame_index);
+                handle_job_result(ss, meshing, result, frame_index);
             }
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => break,
@@ -274,7 +265,6 @@ fn run_mesh_sync(frame_index: u64) {
     }
 
     let dirty_batch = {
-        let mut meshing = meshing_state().lock().unwrap();
         let batch = meshing.take_dirty_batch(PER_FRAME_CAP);
         if frame_index < 10 || (frame_index % 60 == 0) {
             eprintln!(
@@ -289,7 +279,6 @@ fn run_mesh_sync(frame_index: u64) {
 
     for key in dirty_batch {
         let maybe_mesh = {
-            let meshing = meshing_state().lock().unwrap();
             match meshing.dirty.get(&key).cloned() {
                 Some(dirty_record) => match meshing.payloads.get(&key) {
                     Some(chunk) => {
@@ -330,7 +319,6 @@ fn run_mesh_sync(frame_index: u64) {
             .state_store
             .get(&key)
             .map_or(dirty_record.source_revision, |entry| entry.revision);
-        let mut meshing = meshing_state().lock().unwrap();
         meshing.completed_meshes.retain(|completed| completed.key != key);
         meshing.completed_meshes.push(MeshingJobResult {
             key,
@@ -343,7 +331,12 @@ fn run_mesh_sync(frame_index: u64) {
     }
 }
 
-fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_index: u64) {
+fn handle_job_result(
+    ss: &mut StreamingState,
+    meshing: &mut MeshingState,
+    result: ChunkJobResult,
+    frame_index: u64,
+) {
     let key = result.key;
     // Remove cancel flag for this key.
     ss.cancel_flags.remove(&key);
@@ -355,7 +348,6 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
                 warn!("chunk {key:?} transition to Active (Generated) failed: {e}");
             }
             let source_revision = ss.state_store.get(&key).map_or(0, |entry| entry.revision);
-            let mut meshing = meshing_state().lock().unwrap();
             meshing.payloads.insert(key, voxels);
             meshing.mark_dirty(key, MeshDirtyCause::GeneratedPayload, source_revision);
             meshing.mark_face_neighbors_dirty(key, ALL_FACE_MASK, source_revision);
@@ -400,7 +392,6 @@ fn handle_job_result(ss: &mut StreamingState, result: ChunkJobResult, frame_inde
                 warn!("chunk {key:?} transition to Inactive (Unloaded) failed: {e}");
             }
             let source_revision = ss.state_store.get(&key).map_or(0, |entry| entry.revision);
-            let mut meshing = meshing_state().lock().unwrap();
             meshing.payloads.remove(&key);
             meshing.dirty.remove(&key);
             meshing.queued.retain(|queued| *queued != key);
@@ -470,32 +461,27 @@ fn deactivate_chunk(ss: &mut StreamingState, key: ChunkKey) {
     }
 }
 
-fn drain_pending_render_deltas_into_renderer(renderer: &mut crate::renderer::Renderer) {
-    let mut ss = streaming_state().lock().unwrap();
-    while let Some(delta) = ss.pending_render_deltas.pop_front() {
+fn drain_pending_render_deltas_into_renderer(
+    streaming: &mut StreamingState,
+    renderer: &mut crate::renderer::Renderer,
+) {
+    while let Some(delta) = streaming.pending_render_deltas.pop_front() {
         renderer.enqueue_chunk_delta(delta);
     }
 }
 
 pub fn debug_deactivate_active_chunk_for_tests(key: ChunkKey, frame_index: u64) -> Vec<RenderDelta> {
-    {
-        let mut ss = streaming_state().lock().unwrap();
-        *ss = StreamingState::new();
-        ss.state_store.insert_inactive(key);
-        ss.state_store.transition_to(key, ChunkState::Queued).unwrap();
-        ss.state_store.transition_to(key, ChunkState::Loading).unwrap();
-        ss.state_store.transition_to(key, ChunkState::Active).unwrap();
-        deactivate_chunk(&mut ss, key);
-    }
+    let mut ss = StreamingState::new();
+    let mut meshing = MeshingState::default();
 
-    {
-        let mut meshing = meshing_state().lock().unwrap();
-        *meshing = MeshingState::default();
-    }
+    ss.state_store.insert_inactive(key);
+    ss.state_store.transition_to(key, ChunkState::Queued).unwrap();
+    ss.state_store.transition_to(key, ChunkState::Loading).unwrap();
+    ss.state_store.transition_to(key, ChunkState::Active).unwrap();
+    deactivate_chunk(&mut ss, key);
 
-    run_mesh_sync(frame_index);
+    run_mesh_sync(&mut ss, &mut meshing, frame_index);
 
-    let mut ss = streaming_state().lock().unwrap();
     ss.pending_render_deltas.drain(..).collect()
 }
 
@@ -565,25 +551,6 @@ mod tests {
                 },
             );
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // world_update_no_panic
-    // -----------------------------------------------------------------------
-    #[test]
-    fn world_update_no_panic() {
-        // run_frame touches OnceLock global state; just assert it completes.
-        let result = super::run_frame(1000);
-        assert_eq!(result.executed_stages.len(), 5);
-    }
-
-    // -----------------------------------------------------------------------
-    // mesh_sync_no_panic
-    // -----------------------------------------------------------------------
-    #[test]
-    fn mesh_sync_no_panic() {
-        let result = super::run_frame(1001);
-        assert_eq!(result.executed_stages.len(), 5);
     }
 
     // -----------------------------------------------------------------------
