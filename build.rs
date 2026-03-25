@@ -13,11 +13,13 @@ fn main() {
     }
 }
 
-fn shader_sources() -> [&'static str; 3] {
+fn shader_sources() -> [&'static str; 5] {
     [
         "shaders/chunk_mesh.vert",
         "shaders/chunk_mesh.frag",
         "shaders/chunk_cull.comp",
+        "shaders/egui.vert",
+        "shaders/egui.frag",
     ]
 }
 

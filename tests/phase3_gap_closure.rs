@@ -288,7 +288,9 @@ fn mesh_03_cull_shader_consumes_metadata_and_dense_draw_slots() {
 #[test]
 fn mesh_03_submit_frame_uses_dense_indirect_draw_count() {
     let renderer_source =
-        std::fs::read_to_string("src/renderer/mod.rs").expect("renderer module should exist");
+        std::fs::read_to_string("src/renderer/submit.rs")
+            .or_else(|_| std::fs::read_to_string("src/renderer/mod.rs"))
+            .expect("renderer submit module should exist");
     let mesh_source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
         .expect("chunk mesh pipeline source should exist");
 
@@ -447,31 +449,47 @@ fn mesh_01_pipeline_sources_stop_using_bytemuck_cast_slice_for_shader_modules() 
 
 #[test]
 fn mesh_01_chunk_mesh_pipeline_uses_alignment_safe_spirv_decoder() {
+    // After refactor, mesh_pipeline.rs calls create_shader_module from spirv.rs,
+    // which internally uses decode_spirv_words. Check both the call site and the shared impl.
     let mesh_source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
         .expect("chunk mesh pipeline source should exist");
+    let spirv_source = std::fs::read_to_string("src/renderer/spirv.rs")
+        .expect("spirv module source should exist");
 
     assert!(
-        mesh_source.contains("decode_spirv_words(bytes)?"),
-        "graphics shader-module creation should decode SPIR-V bytes into owned words first"
+        mesh_source.contains("create_shader_module") || mesh_source.contains("decode_spirv_words(bytes)?"),
+        "graphics shader-module creation should use alignment-safe SPIR-V decoding"
     );
     assert!(
-        mesh_source.contains("ShaderModuleCreateInfo::default().code(&code)"),
-        "graphics shader-module creation should pass aligned words into Vulkan"
+        spirv_source.contains("decode_spirv_words(bytes)?"),
+        "shared spirv module should decode SPIR-V bytes into owned words"
+    );
+    assert!(
+        spirv_source.contains("ShaderModuleCreateInfo::default().code(&code)"),
+        "shared spirv module should pass aligned words into Vulkan"
     );
 }
 
 #[test]
 fn mesh_01_chunk_cull_pipeline_uses_alignment_safe_spirv_decoder() {
+    // After refactor, cull_pipeline.rs calls create_shader_module from spirv.rs,
+    // which internally uses decode_spirv_words. Check both the call site and the shared impl.
     let cull_source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
         .expect("chunk cull pipeline source should exist");
+    let spirv_source = std::fs::read_to_string("src/renderer/spirv.rs")
+        .expect("spirv module source should exist");
 
     assert!(
-        cull_source.contains("decode_spirv_words(bytes)?"),
-        "compute shader-module creation should decode SPIR-V bytes into owned words first"
+        cull_source.contains("create_shader_module") || cull_source.contains("decode_spirv_words(bytes)?"),
+        "compute shader-module creation should use alignment-safe SPIR-V decoding"
     );
     assert!(
-        cull_source.contains("ShaderModuleCreateInfo::default().code(&code)"),
-        "compute shader-module creation should pass aligned words into Vulkan"
+        spirv_source.contains("decode_spirv_words(bytes)?"),
+        "shared spirv module should decode SPIR-V bytes into owned words"
+    );
+    assert!(
+        spirv_source.contains("ShaderModuleCreateInfo::default().code(&code)"),
+        "shared spirv module should pass aligned words into Vulkan"
     );
 }
 

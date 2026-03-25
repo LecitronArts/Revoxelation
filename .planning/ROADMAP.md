@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Runtime Skeleton and Quality Gates** - Establish deterministic stage execution, stable subsystem boundaries, and mandatory workflow gates.
 - [x] **Phase 2: Streaming Lifecycle and Job Queues** - Make player-driven chunk activation work with explicit lifecycle states and bounded background work.
 - [x] **Phase 2.5: Vulkan Bootstrap and Render Infrastructure** (INSERTED) - Replace wgpu with raw Vulkan (ash) and establish gpu-allocator-backed staging pipeline and egui-ash integration.
-- [ ] **Phase 3: Greedy Meshing and Render Delta Sync** - Produce greedy chunk meshes and push only chunk deltas to the renderer.
+- [x] **Phase 3: Greedy Meshing and Render Delta Sync** - Produce greedy chunk meshes and push only chunk deltas to the renderer.
 - [ ] **Phase 4: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
 - [ ] **Phase 5: Authoritative Block Editing Feedback** - Apply block edits authoritatively and reflect them visually near-immediately.
 - [ ] **Phase 6: Chunk Persistence and Recovery** - Persist edited chunks across restart with versioning/integrity and non-blocking saves.
@@ -52,8 +52,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Types, ChunkStateStore, SSE octree traversal, active-set diff (Wave 1)
-- [ ] 02-02-PLAN.md — ChunkJobQueue, rayon runner, scheduler wiring, integration test (Wave 2)
+- [x] 02-01-PLAN.md — Types, ChunkStateStore, SSE octree traversal, active-set diff (Wave 1)
+- [x] 02-02-PLAN.md — ChunkJobQueue, rayon runner, scheduler wiring, integration test (Wave 2)
 
 ### Phase 2.5: Vulkan Bootstrap and Render Infrastructure (INSERTED)
 **Goal**: Replace wgpu dependency with raw Vulkan (ash) and establish the gpu-allocator-backed staging pipeline and egui-ash UI integration that Phase 3 meshing will write into.
@@ -151,7 +151,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4
 | 1. Runtime Skeleton and Quality Gates | 5/5 | Complete | 2026-03-15 |
 | 2. Streaming Lifecycle and Job Queues | 2/2 | Complete    | 2026-03-21 |
 | 2.5. Vulkan Bootstrap and Render Infrastructure | 2/2 | Complete    | 2026-03-21 |
-| 3. Greedy Meshing and Render Delta Sync | 7/7 | Human verification required | - |
+| 3. Greedy Meshing and Render Delta Sync | 7/7 | Complete | 2026-03-22 |
 | 4. Movement and Collision Modes | 0/2 | Not started | - |
 | 5. Authoritative Block Editing Feedback | 0/2 | Not started | - |
 | 6. Chunk Persistence and Recovery | 0/2 | Not started | - |
