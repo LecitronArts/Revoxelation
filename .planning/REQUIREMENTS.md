@@ -25,7 +25,7 @@
 
 ### Rendering Foundation
 
-- [ ] **REND-01**: Real FPS camera with MVP projection replaces debug_project; supports WASD+mouse navigation.
+- [x] **REND-01**: Real FPS camera with MVP projection replaces debug_project; supports WASD+mouse navigation.
 - [ ] **REND-02**: Swapchain recreates correctly on window resize; minimization handled gracefully.
 - [ ] **REND-03**: GPU-driven frustum culling via compute shader tests chunk AABB against 6 frustum planes.
 - [ ] **REND-04**: Hi-Z occlusion culling uses depth pyramid to reject occluded chunks before draw.

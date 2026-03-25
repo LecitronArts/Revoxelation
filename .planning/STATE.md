@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04-rendering-foundation-overhaul
 status: Active
-last_updated: "2026-03-25T11:03:29+00:00"
+last_updated: "2026-03-25T11:27:59+00:00"
 progress:
   total_phases: 12
   completed_phases: 4
   total_plans: 38
-  completed_plans: 17
+  completed_plans: 18
 ---
 
 # Session State
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 04-rendering-foundation-overhaul
-**Status:** Plan 04-01 complete (2026-03-25). OnceLock globals eliminated, App struct DI established. Ready for Plan 04-02.
+**Status:** Plan 04-02 complete (2026-03-25). FPS camera with push constants and dynamic viewport. Ready for Plan 04-03.
 
 ## Roadmap Restructure (2026-03-25)
 
@@ -32,12 +32,12 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - **Phase 6**: Meshlet Pipeline (5 plans) — meshlet generation, GPU culling, mesh shader path
 - **Phase 7**: Lighting & Shadows (5 plans) — PBR, CSM, SSAO, voxel AO, sky/atmosphere
 
-## Key Decisions (Phase 4 Plan 01)
+## Key Decisions (Phase 4 Plan 02)
 
-- App struct owns Renderer, StreamingState, MeshingState as direct fields — no OnceLock/Arc
-- run_frame accepts Option<&mut Renderer> to support test (None) and app (Some) paths
-- Renderer drain+submit moved to app event loop; scheduler becomes pure logic
-- drain_pending_render_deltas_into_renderer made pub for app.rs direct call
+- CameraUniforms: 80 bytes (Mat4 view_proj + Vec3 camera_pos + f32 pad) — push constants to VERTEX stage
+- Dynamic viewport/scissor replaces baked pipeline viewport — resolution-independent rendering
+- FpsCamera default position (32, 48, -60) facing world center; pitch clamped ±89°
+- debug_project() fully removed from vertex shader; gl_Position = camera.view_proj * vec4(world_pos, 1.0)
 
 ## Session Log
 
@@ -45,3 +45,4 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - 2026-03-22: Executed 03-07-PLAN.md — gap closure complete, all tests pass
 - 2026-03-25: Roadmap restructured — 4 rendering phases inserted, gameplay phases renumbered to 8-11
 - 2026-03-25: Executed 04-01-PLAN.md — OnceLock globals eliminated, App struct DI, env_logger
+- 2026-03-25: Executed 04-02-PLAN.md — FPS camera, push constants, dynamic viewport/scissor
