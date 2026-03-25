@@ -362,6 +362,163 @@ fn rend_05_submit_uses_staging_ring() {
 }
 
 // ---------------------------------------------------------------------------
+// Plan 04-03 Task 1 — Swapchain recreation function
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_02_swapchain_recreate_fn_exists() {
+    let source = std::fs::read_to_string("src/renderer/swapchain.rs")
+        .expect("src/renderer/swapchain.rs should exist");
+    assert!(
+        source.contains("pub fn recreate_swapchain"),
+        "swapchain.rs must contain a pub fn recreate_swapchain function"
+    );
+}
+
+#[test]
+fn rend_02_swapchain_old_handle_passed() {
+    let source = std::fs::read_to_string("src/renderer/swapchain.rs")
+        .expect("src/renderer/swapchain.rs should exist");
+    assert!(
+        source.contains("old_swapchain"),
+        "swapchain.rs recreation must pass old_swapchain handle to create_info"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plan 04-03 Task 2 — Resize and OUT_OF_DATE/SUBOPTIMAL handling
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_02_submit_handles_out_of_date() {
+    let source = std::fs::read_to_string("src/renderer/submit.rs")
+        .expect("src/renderer/submit.rs should exist");
+    assert!(
+        source.contains("OUT_OF_DATE") || source.contains("ErrorOutOfDateKhr") || source.contains("ERROR_OUT_OF_DATE_KHR"),
+        "submit.rs must handle OUT_OF_DATE errors from acquire/present"
+    );
+}
+
+#[test]
+fn rend_02_app_handles_resize_event() {
+    let source = std::fs::read_to_string("src/app.rs")
+        .expect("src/app.rs should exist");
+    assert!(
+        source.contains("Resized") && source.contains("recreate_swapchain"),
+        "app.rs must handle WindowEvent::Resized and trigger swapchain recreation"
+    );
+}
+
+#[test]
+fn rend_02_minimized_skips_rendering() {
+    let source = std::fs::read_to_string("src/app.rs")
+        .expect("src/app.rs should exist");
+    // Check that app checks for zero-size extent before rendering
+    assert!(
+        (source.contains("width == 0") || source.contains("width < 1") || source.contains("is_minimized"))
+            && (source.contains("height == 0") || source.contains("height < 1") || source.contains("is_minimized")),
+        "app.rs must check for zero-size window (minimized) and skip rendering"
+    );
+}
+
+#[test]
+fn rend_02_swapchain_device_wait_idle() {
+    let source = std::fs::read_to_string("src/renderer/swapchain.rs")
+        .expect("src/renderer/swapchain.rs should exist");
+    assert!(
+        source.contains("device_wait_idle"),
+        "swapchain.rs recreation must call device_wait_idle before destroying resources"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plan 04-05 Task 1 — Frustum plane extraction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_03_frustum_planes_from_identity_matrix() {
+    use glam::Mat4;
+    use revoxelation::renderer::camera::extract_frustum_planes;
+    let vp = Mat4::IDENTITY;
+    let planes = extract_frustum_planes(&vp);
+    // 6 planes, each with non-zero normal and finite w
+    for (i, plane) in planes.planes.iter().enumerate() {
+        let len = (plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]).sqrt();
+        assert!(
+            len > 0.0,
+            "plane {i} should have a non-zero normal, got length {len}"
+        );
+        assert!(
+            plane[3].is_finite(),
+            "plane {i} w component should be finite, got {}",
+            plane[3]
+        );
+    }
+}
+
+#[test]
+fn rend_03_point_inside_frustum_passes() {
+    use glam::{Mat4, Vec3};
+    use revoxelation::renderer::camera::{extract_frustum_planes, FpsCamera};
+    // Camera at origin looking +Z... but our camera looks -Z at yaw=0
+    // So let's create a perspective projection looking along -Z and test point at (0,0,-5)
+    let mut camera = FpsCamera::default();
+    camera.position = Vec3::ZERO;
+    camera.yaw = 0.0;
+    camera.pitch = 0.0;
+    let uniforms = camera.view_proj(1.0);
+    let vp = Mat4::from_cols_array_2d(&uniforms.view_proj);
+    let planes = extract_frustum_planes(&vp);
+    // Point at (0, 0, -5) should be inside the frustum (camera looks along -Z)
+    let point = Vec3::new(0.0, 0.0, -5.0);
+    for (i, plane) in planes.planes.iter().enumerate() {
+        let normal = Vec3::new(plane[0], plane[1], plane[2]);
+        let dist = normal.dot(point) + plane[3];
+        assert!(
+            dist >= -0.01,
+            "point (0,0,-5) should be inside plane {i}, got dist={dist}"
+        );
+    }
+}
+
+#[test]
+fn rend_03_point_behind_camera_fails() {
+    use glam::{Mat4, Vec3};
+    use revoxelation::renderer::camera::{extract_frustum_planes, FpsCamera};
+    let mut camera = FpsCamera::default();
+    camera.position = Vec3::ZERO;
+    camera.yaw = 0.0;
+    camera.pitch = 0.0;
+    let uniforms = camera.view_proj(1.0);
+    let vp = Mat4::from_cols_array_2d(&uniforms.view_proj);
+    let planes = extract_frustum_planes(&vp);
+    // Point at (0,0,5) is BEHIND the camera (camera looks -Z)
+    let point = Vec3::new(0.0, 0.0, 5.0);
+    let mut outside_count = 0;
+    for plane in &planes.planes {
+        let normal = Vec3::new(plane[0], plane[1], plane[2]);
+        let dist = normal.dot(point) + plane[3];
+        if dist < 0.0 {
+            outside_count += 1;
+        }
+    }
+    assert!(
+        outside_count >= 1,
+        "point (0,0,5) should be outside at least one frustum plane"
+    );
+}
+
+#[test]
+fn rend_03_frustum_planes_struct_size() {
+    use revoxelation::renderer::camera::FrustumPlanes;
+    assert_eq!(
+        std::mem::size_of::<FrustumPlanes>(),
+        96,
+        "FrustumPlanes must be exactly 96 bytes (6 * vec4)"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Plan 04-02 Task 2 — Push constants and dynamic viewport in mesh pipeline
 // ---------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 
 /// Key abstraction for camera movement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,4 +114,49 @@ impl FpsCamera {
         let max_pitch = 89.0_f32.to_radians();
         self.pitch = self.pitch.clamp(-max_pitch, max_pitch);
     }
+}
+
+/// Six frustum planes in ax + by + cz + d = 0 form.
+///
+/// 96 bytes — suitable for a small GPU SSBO.
+/// Planes are normalized (|normal| = 1) for correct distance testing.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct FrustumPlanes {
+    /// Order: left, right, bottom, top, near, far.
+    /// Each plane is `[a, b, c, d]` where `a*x + b*y + c*z + d >= 0` means inside.
+    pub planes: [[f32; 4]; 6],
+}
+
+/// Extract 6 frustum planes from a combined view-projection matrix using the
+/// Gribb-Hartmann method. Each plane is normalized so that the normal has unit length.
+///
+/// Plane order: left, right, bottom, top, near, far.
+pub fn extract_frustum_planes(view_proj: &Mat4) -> FrustumPlanes {
+    // Rows of the view_proj matrix (column-major → rows via row())
+    let row0 = view_proj.row(0); // x
+    let row1 = view_proj.row(1); // y
+    let row2 = view_proj.row(2); // z
+    let row3 = view_proj.row(3); // w
+
+    let raw_planes = [
+        row3 + row0, // left
+        row3 - row0, // right
+        row3 + row1, // bottom
+        row3 - row1, // top
+        row3 + row2, // near  (Vulkan clip-space z in [0,1] with RH projection)
+        row3 - row2, // far
+    ];
+
+    let mut planes = [[0.0_f32; 4]; 6];
+    for (i, p) in raw_planes.iter().enumerate() {
+        let normal_len = (p.x * p.x + p.y * p.y + p.z * p.z).sqrt();
+        if normal_len > 1e-10 {
+            planes[i] = [p.x / normal_len, p.y / normal_len, p.z / normal_len, p.w / normal_len];
+        } else {
+            planes[i] = [p.x, p.y, p.z, p.w];
+        }
+    }
+
+    FrustumPlanes { planes }
 }
