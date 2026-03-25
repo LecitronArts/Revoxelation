@@ -161,9 +161,14 @@ impl ChunkMeshPipeline {
             .layout(pipeline_layout)
             .render_pass(renderer.swapchain_ctx.render_pass)
             .subpass(0)];
+        let cache_handle = renderer
+            .pipeline_cache
+            .as_ref()
+            .expect("pipeline cache must be initialized before mesh pipeline")
+            .handle();
         let pipeline = unsafe {
             device
-                .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_info, None)
+                .create_graphics_pipelines(cache_handle, &pipeline_info, None)
                 .map_err(|(_, err)| err)
                 .context("failed to create chunk mesh graphics pipeline")?
                 .into_iter()

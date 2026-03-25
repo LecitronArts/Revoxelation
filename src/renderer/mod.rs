@@ -16,6 +16,7 @@ pub mod helpers;
 pub mod hiz;
 pub mod instance;
 pub mod mesh_pipeline;
+pub mod pipeline_cache;
 pub mod spirv;
 pub mod staging;
 pub mod staging_ring;
@@ -66,6 +67,7 @@ pub struct Renderer {
     pub mesh_pipeline: Option<mesh_pipeline::ChunkMeshPipeline>,
     pub cull_pipeline: Option<cull_pipeline::ChunkCullPipeline>,
     pub hiz_pyramid: Option<hiz::HiZPyramid>,
+    pub pipeline_cache: Option<pipeline_cache::PipelineCache>,
     pub egui_backend: Option<egui_backend::EguiAshBackend>,
     pub pending_egui_output: Option<crate::app::PendingEguiOutput>,
 }
@@ -158,6 +160,7 @@ impl Renderer {
             mesh_pipeline: None,
             cull_pipeline: None,
             hiz_pyramid: None,
+            pipeline_cache: None,
             egui_backend: None,
             pending_egui_output: None,
         })
@@ -171,6 +174,12 @@ impl Drop for Renderer {
 
             if let Some(egui_backend) = self.egui_backend.take() {
                 let _ = egui_backend.destroy(self);
+            }
+
+            // Save and destroy pipeline cache before pipelines are torn down.
+            if let Some(pipeline_cache) = self.pipeline_cache.take() {
+                let _ = pipeline_cache.save(&self.device_ctx.device);
+                pipeline_cache.destroy(&self.device_ctx.device);
             }
 
             if let Some(staging_ring) = self.staging_ring.take() {

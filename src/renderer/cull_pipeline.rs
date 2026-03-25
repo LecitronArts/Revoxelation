@@ -301,12 +301,17 @@ impl ChunkCullPipeline {
             .module(shader_module)
             .name(entry_name)
             .stage(vk::ShaderStageFlags::COMPUTE);
+        let cache_handle = renderer
+            .pipeline_cache
+            .as_ref()
+            .expect("pipeline cache must be initialized before cull pipeline")
+            .handle();
         let pipeline = unsafe {
             renderer
                 .device_ctx
                 .device
                 .create_compute_pipelines(
-                    vk::PipelineCache::null(),
+                    cache_handle,
                     &[vk::ComputePipelineCreateInfo::default()
                         .stage(stage)
                         .layout(pipeline_layout)],

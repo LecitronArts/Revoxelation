@@ -14,6 +14,7 @@ use crate::renderer::{
     Renderer, FrameOutcome, chunk_pool::ChunkPool, cull_pipeline::ChunkCullPipeline, egui_backend::EguiAshBackend,
     mesh_pipeline::ChunkMeshPipeline, staging_ring::StagingRing, camera::{CameraKey, FpsCamera},
     swapchain::recreate_swapchain_context,
+    pipeline_cache::PipelineCache,
 };
 use crate::runtime::scheduler::StreamingState;
 
@@ -77,6 +78,8 @@ pub fn run() -> Result<()> {
     renderer.chunk_pool = Some(ChunkPool::new(&mut renderer)?);
     // 32 MB staging ring, 2 frames (16 MB per frame).
     renderer.staging_ring = Some(StagingRing::new(&mut renderer, 32 * 1024 * 1024, 2)?);
+    // Load persistent pipeline cache from disk (or create empty).
+    renderer.pipeline_cache = Some(PipelineCache::load(&renderer.device_ctx.device)?);
     renderer.mesh_pipeline = Some(ChunkMeshPipeline::new(&renderer)?);
     renderer.cull_pipeline = Some(ChunkCullPipeline::new(&mut renderer)?);
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);

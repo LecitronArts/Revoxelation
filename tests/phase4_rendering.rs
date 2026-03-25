@@ -690,3 +690,70 @@ fn rend_04_hiz_toggle_exists() {
         "Cull shader must contain hiz_enabled toggle flag"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 04-07 Task 1 — Persistent pipeline cache
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_07_pipeline_cache_file_path() {
+    let source = std::fs::read_to_string("src/renderer/pipeline_cache.rs")
+        .expect("src/renderer/pipeline_cache.rs should exist");
+    assert!(
+        source.contains("cache/pipeline.bin") || source.contains("cache\\\\pipeline.bin"),
+        "PipelineCache must use cache/pipeline.bin path"
+    );
+    assert!(
+        source.contains("PipelineCache"),
+        "pipeline_cache.rs must define PipelineCache"
+    );
+}
+
+#[test]
+fn rend_07_pipelines_use_cache_handle() {
+    let mesh_source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    let cull_source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
+        .expect("src/renderer/cull_pipeline.rs should exist");
+    // Neither should pass PipelineCache::null() to create_*_pipelines
+    assert!(
+        !mesh_source.contains("PipelineCache::null()"),
+        "mesh_pipeline.rs must NOT pass PipelineCache::null() to pipeline creation"
+    );
+    assert!(
+        !cull_source.contains("PipelineCache::null()"),
+        "cull_pipeline.rs must NOT pass PipelineCache::null() to pipeline creation"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plan 04-07 Task 2 — GPU performance counters and egui HUD
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_07_perf_counters_struct_exists() {
+    let source = std::fs::read_to_string("src/renderer/perf_counters.rs")
+        .expect("src/renderer/perf_counters.rs should exist");
+    assert!(
+        source.contains("GpuPerfCounters"),
+        "perf_counters.rs must define GpuPerfCounters"
+    );
+    assert!(
+        source.contains("visible_chunks"),
+        "GpuPerfCounters must have visible_chunks field"
+    );
+    assert!(
+        source.contains("frame_time_ms"),
+        "GpuPerfCounters must have frame_time_ms field"
+    );
+}
+
+#[test]
+fn rend_07_hud_shows_gpu_stats() {
+    let source = std::fs::read_to_string("src/app.rs")
+        .expect("src/app.rs should exist");
+    assert!(
+        source.contains("visible_chunks") || source.contains("frame_time"),
+        "app.rs must display visible_chunks or frame_time in egui HUD"
+    );
+}

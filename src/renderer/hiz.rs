@@ -314,10 +314,15 @@ impl HiZPyramid {
             .module(shader_module)
             .name(entry_name)
             .stage(vk::ShaderStageFlags::COMPUTE);
+        let cache_handle = renderer
+            .pipeline_cache
+            .as_ref()
+            .map(|c| c.handle())
+            .unwrap_or(vk::PipelineCache::null());
         let pipeline = unsafe {
             device
                 .create_compute_pipelines(
-                    vk::PipelineCache::null(),
+                    cache_handle,
                     &[vk::ComputePipelineCreateInfo::default()
                         .stage(stage)
                         .layout(pipeline_layout)],
