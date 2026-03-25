@@ -1,4 +1,5 @@
 pub mod app;
+pub mod config;
 pub mod meshing;
 pub mod renderer;
 pub mod runtime;

@@ -18,7 +18,13 @@ log = "0.4"
 raw-window-handle = "0.6"
 rayon = "1.10"
 serde = { version = "1.0", features = ["derive"] }
+shaderc = { version = "0.10.1", optional = true }
+toml = "0.8"
 winit = "0.29"
+
+[features]
+default = ["hot-reload"]
+hot-reload = ["dep:shaderc"]
 
 [dev-dependencies]
 serde_json = "1.0"

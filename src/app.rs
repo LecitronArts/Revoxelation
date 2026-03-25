@@ -9,6 +9,7 @@ use winit::{
     window::WindowBuilder,
 };
 
+use crate::config::RuntimeConfig;
 use crate::meshing::MeshingState;
 use crate::renderer::{
     Renderer, FrameOutcome, chunk_pool::ChunkPool, cull_pipeline::ChunkCullPipeline, egui_backend::EguiAshBackend,
@@ -43,6 +44,11 @@ pub struct App {
     pub window_extent: vk::Extent2D,
     /// GPU performance counters for the HUD overlay.
     pub perf_counters: GpuPerfCounters,
+    /// Runtime configuration loaded from config.toml.
+    pub config: RuntimeConfig,
+    /// Shader hot-reload tracker (debug + hot-reload feature only).
+    #[cfg(all(debug_assertions, feature = "hot-reload"))]
+    pub hot_reload: crate::renderer::hot_reload::ShaderHotReload,
 }
 
 /// Tracks which movement keys are currently held down.
@@ -99,6 +105,9 @@ pub fn run() -> Result<()> {
         needs_resize: false,
         window_extent: extent,
         perf_counters: GpuPerfCounters::default(),
+        config: RuntimeConfig::load(),
+        #[cfg(all(debug_assertions, feature = "hot-reload"))]
+        hot_reload: crate::renderer::hot_reload::ShaderHotReload::new(),
     };
 
     event_loop
@@ -263,6 +272,14 @@ pub fn run() -> Result<()> {
                     app.perf_counters.total_chunks = total_chunks;
                     // visible_chunks approximated as total (actual readback deferred to future)
                     app.perf_counters.visible_chunks = total_chunks;
+
+                    // Shader hot-reload (debug builds with hot-reload feature only).
+                    #[cfg(all(debug_assertions, feature = "hot-reload"))]
+                    {
+                        if let Err(e) = app.hot_reload.check_and_reload(&mut app.renderer) {
+                            log::error!("Shader hot-reload error: {e:#}");
+                        }
+                    }
 
                     app.frame_index = app.frame_index.saturating_add(1);
                 }

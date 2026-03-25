@@ -14,6 +14,8 @@ pub mod egui_backend;
 pub mod frame;
 pub mod helpers;
 pub mod hiz;
+#[cfg(all(debug_assertions, feature = "hot-reload"))]
+pub mod hot_reload;
 pub mod instance;
 pub mod mesh_pipeline;
 pub mod perf_counters;
