@@ -17,6 +17,7 @@ pub mod instance;
 pub mod mesh_pipeline;
 pub mod spirv;
 pub mod staging;
+pub mod staging_ring;
 pub mod submit;
 pub mod swapchain;
 
