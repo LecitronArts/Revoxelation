@@ -133,12 +133,8 @@ pub fn run_frame(frame_index: u64) -> FrameExecution {
             Stage::Simulation => event_bus.process_pending_commands(),
             Stage::RenderSubmit => {
                 let _ = event_bus.consume_emitted();
-                if let Some(renderer) = crate::renderer::renderer_state() {
-                    if let Ok(mut renderer) = renderer.lock() {
-                        drain_pending_render_deltas_into_renderer(&mut renderer);
-                        let _ = crate::renderer::submit_frame(&mut renderer, frame_index);
-                    }
-                }
+                // Renderer interaction moved to App event loop (04-01).
+                // submit_frame and drain are called from app.rs with owned &mut Renderer.
             }
             Stage::WorldUpdate => run_world_update(frame_index),
             Stage::MeshSync => run_mesh_sync(frame_index),

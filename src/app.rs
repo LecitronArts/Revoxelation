@@ -9,7 +9,7 @@ use winit::{
 
 use crate::renderer::{
     Renderer, chunk_pool::ChunkPool, cull_pipeline::ChunkCullPipeline, egui_backend::EguiAshBackend,
-    install_renderer, mesh_pipeline::ChunkMeshPipeline, renderer_state,
+    mesh_pipeline::ChunkMeshPipeline,
 };
 
 /// Pending egui output to be consumed by submit_frame.
@@ -17,6 +17,13 @@ pub struct PendingEguiOutput {
     pub textures_delta: egui::TexturesDelta,
     pub clipped_primitives: Vec<egui::ClippedPrimitive>,
     pub screen_size: [f32; 2],
+}
+
+/// Application root that owns all subsystems directly (no global state).
+pub struct App {
+    pub renderer: Renderer,
+    pub egui_ctx: egui::Context,
+    pub frame_index: u64,
 }
 
 pub fn run() -> Result<()> {
@@ -45,10 +52,12 @@ pub fn run() -> Result<()> {
     renderer.mesh_pipeline = Some(ChunkMeshPipeline::new(&renderer)?);
     renderer.cull_pipeline = Some(ChunkCullPipeline::new(&renderer)?);
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);
-    install_renderer(renderer)?;
 
-    let egui_ctx = egui::Context::default();
-    let mut frame_index = 0_u64;
+    let mut app = App {
+        renderer,
+        egui_ctx: egui::Context::default(),
+        frame_index: 0,
+    };
 
     event_loop
         .run(move |event, elwt| match event {
@@ -70,29 +79,25 @@ pub fn run() -> Result<()> {
                         ..Default::default()
                     };
 
-                    let full_output = egui_ctx.run(raw_input, |ctx| {
+                    let full_output = app.egui_ctx.run(raw_input, |ctx| {
                         egui::Window::new("Debug").show(ctx, |ui| {
-                            ui.label(format!("Frame: {}", frame_index));
+                            ui.label(format!("Frame: {}", app.frame_index));
                         });
                     });
 
                     let clipped_primitives =
-                        egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+                        app.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
                     let textures_delta = full_output.textures_delta;
 
                     // Store egui output for submit_frame to consume.
-                    if let Some(state) = renderer_state() {
-                        if let Ok(mut renderer) = state.lock() {
-                            renderer.pending_egui_output = Some(PendingEguiOutput {
-                                textures_delta,
-                                clipped_primitives,
-                                screen_size,
-                            });
-                        }
-                    }
+                    app.renderer.pending_egui_output = Some(PendingEguiOutput {
+                        textures_delta,
+                        clipped_primitives,
+                        screen_size,
+                    });
 
-                    let _ = crate::runtime::run_frame(frame_index);
-                    frame_index = frame_index.saturating_add(1);
+                    let _ = crate::runtime::run_frame(app.frame_index);
+                    app.frame_index = app.frame_index.saturating_add(1);
                 }
                 _ => {}
             },

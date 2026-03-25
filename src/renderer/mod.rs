@@ -11,7 +11,6 @@ pub mod cull_pipeline;
 pub mod device;
 pub mod egui_backend;
 pub mod frame;
-pub mod globals;
 pub mod helpers;
 pub mod instance;
 pub mod mesh_pipeline;
@@ -21,7 +20,6 @@ pub mod submit;
 pub mod swapchain;
 
 // Re-exports — keep external import paths stable.
-pub use globals::{install_renderer, renderer_state};
 pub(crate) use helpers::{
     create_allocated_buffer, create_allocated_image, destroy_allocated_buffer,
     destroy_allocated_image,
