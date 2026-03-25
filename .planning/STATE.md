@@ -9,7 +9,7 @@ progress:
   total_phases: 12
   completed_phases: 4
   total_plans: 38
-  completed_plans: 21
+  completed_plans: 22
 ---
 
 # Session State
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 04-rendering-foundation-overhaul
-**Status:** Plan 04-03 complete (2026-03-25). Swapchain lifecycle: resize, OUT_OF_DATE, SUBOPTIMAL, minimization handling. Ready for Plan 04-06.
+**Status:** Plan 04-06 complete (2026-03-25). Hi-Z occlusion culling: depth pyramid generation + cull shader integration. Ready for Plan 04-07.
 
 ## Roadmap Restructure (2026-03-25)
 
@@ -39,6 +39,15 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - SUBOPTIMAL/OUT_OF_DATE from queue_present triggers recreate after present completes
 - Window extent 0x0 (minimized) skips rendering entirely
 - needs_resize flag in App; swapchain recreation happens at start of RedrawRequested
+
+## Key Decisions (Phase 4 Plan 06)
+
+- Hi-Z image: R32_SFLOAT, full mip chain (ceil(log2(max(w,h)))+1 levels)
+- Hi-Z generation: per-mip compute dispatch 8x8, 2x2 max downsample via sampler2D
+- Conservative AABB projection: inflate screen rect by 1 texel each direction
+- 1-frame temporal latency: cull reads last frame's Hi-Z, generate after current render pass
+- HiZConfig SSBO (binding 6): view_proj + hiz_size + hiz_enabled + mip_count
+- Cull shader: 4-corner sampling of Hi-Z pyramid for conservative max-depth test
 
 ## Key Decisions (Phase 4 Plan 05)
 
@@ -71,3 +80,4 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - 2026-03-25: Executed 04-02-PLAN.md — FPS camera, push constants, dynamic viewport/scissor
 - 2026-03-25: Executed 04-05-PLAN.md — GPU-driven frustum culling, 6-plane AABB P-vertex test, atomicAdd compaction (REND-03)
 - 2026-03-25: Executed 04-03-PLAN.md — Swapchain lifecycle: FrameOutcome enum, resize/OUT_OF_DATE/SUBOPTIMAL handling, minimization skip (REND-02)
+- 2026-03-25: Executed 04-06-PLAN.md — Hi-Z occlusion culling: depth pyramid generation, cull shader integration, runtime toggle (REND-04)
