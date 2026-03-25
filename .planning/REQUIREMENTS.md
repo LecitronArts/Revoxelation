@@ -29,7 +29,7 @@
 - [ ] **REND-02**: Swapchain recreates correctly on window resize; minimization handled gracefully.
 - [ ] **REND-03**: GPU-driven frustum culling via compute shader tests chunk AABB against 6 frustum planes.
 - [ ] **REND-04**: Hi-Z occlusion culling uses depth pyramid to reject occluded chunks before draw.
-- [ ] **REND-05**: All chunk GPU buffers use GpuOnly memory with proper staging pipeline; no queue_wait_idle in hot path.
+- [x] **REND-05**: All chunk GPU buffers use GpuOnly memory with proper staging pipeline; no queue_wait_idle in hot path.
 - [x] **REND-06**: OnceLock global state replaced with App-struct dependency injection for testability.
 - [ ] **REND-07**: Pipeline cache persists across runs; egui HUD displays GPU performance statistics.
 
@@ -129,7 +129,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REND-02 | Phase 4 | Pending |
 | REND-03 | Phase 4 | Pending |
 | REND-04 | Phase 4 | Pending |
-| REND-05 | Phase 4 | Pending |
+| REND-05 | Phase 4 | Complete |
 | REND-06 | Phase 4 | Pending |
 | REND-07 | Phase 4 | Pending |
 | BIND-01 | Phase 5 | Pending |

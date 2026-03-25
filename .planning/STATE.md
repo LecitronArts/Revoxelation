@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04-rendering-foundation-overhaul
 status: Active
-last_updated: "2026-03-25T11:27:59+00:00"
+last_updated: "2026-03-25T11:37:49+00:00"
 progress:
   total_phases: 12
   completed_phases: 4
   total_plans: 38
-  completed_plans: 18
+  completed_plans: 19
 ---
 
 # Session State
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 04-rendering-foundation-overhaul
-**Status:** Plan 04-02 complete (2026-03-25). FPS camera with push constants and dynamic viewport. Ready for Plan 04-03.
+**Status:** Plan 04-04 complete (2026-03-25). GpuOnly memory migration with StagingRing upload path. Ready for Plan 04-05.
 
 ## Roadmap Restructure (2026-03-25)
 
@@ -31,6 +31,13 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - **Phase 5**: Bindless Architecture & GPU Scene (5 plans) — Vulkan 1.2 + 1.0 fallback, bindless descriptors, materials
 - **Phase 6**: Meshlet Pipeline (5 plans) — meshlet generation, GPU culling, mesh shader path
 - **Phase 7**: Lighting & Shadows (5 plans) — PBR, CSM, SSAO, voxel AO, sky/atmosphere
+
+## Key Decisions (Phase 4 Plan 04)
+
+- StagingRing: 32MB CpuToGpu buffer, 2 frame regions (16MB each), fence-based reclamation
+- All 6 chunk pool buffers: GpuOnly memory with vkCmdCopyBuffer uploads
+- Global memory barrier (TRANSFER_WRITE → SHADER_READ) after staging copies, before compute cull
+- Depth image SAMPLED flag for future Hi-Z pyramid
 
 ## Key Decisions (Phase 4 Plan 02)
 
@@ -46,3 +53,4 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - 2026-03-25: Roadmap restructured — 4 rendering phases inserted, gameplay phases renumbered to 8-11
 - 2026-03-25: Executed 04-01-PLAN.md — OnceLock globals eliminated, App struct DI, env_logger
 - 2026-03-25: Executed 04-02-PLAN.md — FPS camera, push constants, dynamic viewport/scissor
+- 2026-03-25: Executed 04-04-PLAN.md — GpuOnly memory, StagingRing, vkCmdCopyBuffer uploads (REND-05)
