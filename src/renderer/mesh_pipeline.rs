@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use ash::vk;
 
 use super::{Renderer, chunk_pool::ChunkPool, spirv::create_shader_module};
+use super::camera::CameraUniforms;
 
 pub struct ChunkMeshPipeline {
     pub pipeline: vk::Pipeline,
@@ -73,10 +74,17 @@ impl ChunkMeshPipeline {
         unsafe {
             device.update_descriptor_sets(&writes, &[]);
         }
+        let push_constant_ranges = [vk::PushConstantRange {
+            stage_flags: vk::ShaderStageFlags::VERTEX,
+            offset: 0,
+            size: std::mem::size_of::<CameraUniforms>() as u32, // 80 bytes
+        }];
         let pipeline_layout = unsafe {
             device
                 .create_pipeline_layout(
-                    &vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_set_layouts),
+                    &vk::PipelineLayoutCreateInfo::default()
+                        .set_layouts(&descriptor_set_layouts)
+                        .push_constant_ranges(&push_constant_ranges),
                     None,
                 )
                 .context("failed to create chunk mesh pipeline layout")?
@@ -117,19 +125,13 @@ impl ChunkMeshPipeline {
             .vertex_attribute_descriptions(&vertex_attributes);
         let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-        let viewport = vk::Viewport::default()
-            .x(0.0)
-            .y(0.0)
-            .width(renderer.swapchain_ctx.extent.width as f32)
-            .height(renderer.swapchain_ctx.extent.height as f32)
-            .min_depth(0.0)
-            .max_depth(1.0);
-        let scissor = vk::Rect2D::default().extent(renderer.swapchain_ctx.extent);
-        let viewports = [viewport];
-        let scissors = [scissor];
+        // Dynamic viewport and scissor — not baked into the pipeline.
         let viewport_state = vk::PipelineViewportStateCreateInfo::default()
-            .viewports(&viewports)
-            .scissors(&scissors);
+            .viewport_count(1)
+            .scissor_count(1);
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_state_info =
+            vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
         let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
             .polygon_mode(vk::PolygonMode::FILL)
             .line_width(1.0)
@@ -155,6 +157,7 @@ impl ChunkMeshPipeline {
             .multisample_state(&multisample)
             .color_blend_state(&color_blend)
             .depth_stencil_state(&depth_stencil)
+            .dynamic_state(&dynamic_state_info)
             .layout(pipeline_layout)
             .render_pass(renderer.swapchain_ctx.render_pass)
             .subpass(0)];
@@ -188,7 +191,21 @@ impl ChunkMeshPipeline {
         chunk_pool: &ChunkPool,
         cmd: vk::CommandBuffer,
         draw_count: u32,
+        camera_uniforms: &CameraUniforms,
     ) {
+        let extent = renderer.swapchain_ctx.extent;
+        let viewport = vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: extent.width as f32,
+            height: extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let scissor = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent,
+        };
         let vertex_buffers = [chunk_pool.vertex_buffer()];
         let vertex_offsets = [0];
         unsafe {
@@ -196,6 +213,15 @@ impl ChunkMeshPipeline {
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline,
+            );
+            renderer.device_ctx.device.cmd_set_viewport(cmd, 0, &[viewport]);
+            renderer.device_ctx.device.cmd_set_scissor(cmd, 0, &[scissor]);
+            renderer.device_ctx.device.cmd_push_constants(
+                cmd,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                bytemuck::bytes_of(camera_uniforms),
             );
             renderer.device_ctx.device.cmd_bind_descriptor_sets(
                 cmd,

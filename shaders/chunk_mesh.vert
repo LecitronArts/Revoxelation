@@ -20,22 +20,16 @@ layout(std430, set = 0, binding = 0) readonly buffer ChunkMetadataBuffer {
     ChunkDrawMetadata metadata[];
 } chunk_metadata;
 
+layout(push_constant) uniform CameraUniforms {
+    mat4 view_proj;
+    vec3 camera_pos;
+} camera;
+
 vec3 decode_position(uint word0) {
     uint x = word0 & 0x7Fu;
     uint y = (word0 >> 7) & 0x7Fu;
     uint z = (word0 >> 14) & 0x7Fu;
     return vec3(x, y, z);
-}
-
-vec4 debug_project(vec3 world_position) {
-    // Camera at origin, view along +Z, top-down-ish oblique
-    // World range: LOD0 chunks span roughly [-256..320] per axis
-    float range = 400.0;
-    vec3 centered = world_position / range;
-    // Vulkan NDC depth [0,1]
-    float depth = centered.z * 0.5 + 0.5;
-    // Y-up: negate Y for Vulkan clip (top = -Y in Vulkan NDC)
-    return vec4(centered.x, -centered.y, depth, 1.0);
 }
 
 void main() {
@@ -57,7 +51,7 @@ void main() {
     vec3 local = (pos + face_offset) * metadata.chunk_scale;
     uint block_id = in_packed.y & 0xFFFFu;
     vec3 world_position = metadata.chunk_origin + local;
-    gl_Position = debug_project(world_position);
+    gl_Position = camera.view_proj * vec4(world_position, 1.0);
     v_color = vec3(
         float((block_id % 5u) + 1u) / 6.0,
         float(((block_id / 5u) % 5u) + 1u) / 6.0,

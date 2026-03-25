@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use ash::vk;
 
 use super::Renderer;
+use super::camera::CameraUniforms;
 
 pub fn submit_frame_sequence() -> &'static [&'static str] {
     &[
@@ -15,7 +16,7 @@ pub fn submit_frame_sequence() -> &'static [&'static str] {
     ]
 }
 
-pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
+pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms: &CameraUniforms) -> Result<()> {
     let current_frame = renderer.current_frame;
     let command_buffer = renderer.frames[current_frame].command_buffer;
     let image_available = renderer.frames[current_frame].image_available;
@@ -117,7 +118,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64) -> Result<()> {
         {
             let draw_count = chunk_pool.active_draw_count();
             if draw_count > 0 {
-                mesh_pipeline.draw(renderer, chunk_pool, command_buffer, draw_count);
+                mesh_pipeline.draw(renderer, chunk_pool, command_buffer, draw_count, camera_uniforms);
             }
         }
 

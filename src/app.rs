@@ -10,7 +10,7 @@ use winit::{
 use crate::meshing::MeshingState;
 use crate::renderer::{
     Renderer, chunk_pool::ChunkPool, cull_pipeline::ChunkCullPipeline, egui_backend::EguiAshBackend,
-    mesh_pipeline::ChunkMeshPipeline,
+    mesh_pipeline::ChunkMeshPipeline, camera::FpsCamera,
 };
 use crate::runtime::scheduler::StreamingState;
 
@@ -27,6 +27,7 @@ pub struct App {
     pub streaming: StreamingState,
     pub meshing: MeshingState,
     pub egui_ctx: egui::Context,
+    pub camera: FpsCamera,
     pub frame_index: u64,
 }
 
@@ -62,6 +63,7 @@ pub fn run() -> Result<()> {
         streaming: StreamingState::new(),
         meshing: MeshingState::default(),
         egui_ctx: egui::Context::default(),
+        camera: FpsCamera::default(),
         frame_index: 0,
     };
 
@@ -115,7 +117,9 @@ pub fn run() -> Result<()> {
                         &mut app.streaming,
                         &mut app.renderer,
                     );
-                    if let Err(e) = crate::renderer::submit_frame(&mut app.renderer, app.frame_index) {
+                    let aspect = if screen_size[1] > 0.0 { screen_size[0] / screen_size[1] } else { 1.0 };
+                    let camera_uniforms = app.camera.view_proj(aspect);
+                    if let Err(e) = crate::renderer::submit_frame(&mut app.renderer, app.frame_index, &camera_uniforms) {
                         log::error!("submit_frame failed: {e:#}");
                     }
 

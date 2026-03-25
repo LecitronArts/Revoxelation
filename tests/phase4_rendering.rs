@@ -243,3 +243,90 @@ fn rend_01_camera_pitch_clamped() {
         camera.pitch.to_degrees()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 04-04 Task 1 — StagingRing allocator
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_05_staging_ring_allocation_returns_valid_offset() {
+    use revoxelation::renderer::staging_ring::StagingRing;
+    // 32 MB total, 2 frames → 16 MB per frame
+    let mut ring = StagingRing::new_layout_only(32 * 1024 * 1024, 2);
+    let a1 = ring.allocate(256, 16).expect("first allocation should succeed");
+    let a2 = ring.allocate(512, 16).expect("second allocation should succeed");
+    // First allocation starts at offset 0 within frame 0 region
+    assert_eq!(a1.offset, 0, "first alloc offset should be 0");
+    // Second allocation must come after the first, respecting alignment
+    assert!(
+        a2.offset >= 256,
+        "second alloc offset ({}) must be >= 256",
+        a2.offset
+    );
+    // Second allocation must be 16-byte aligned
+    assert_eq!(
+        a2.offset % 16,
+        0,
+        "second alloc offset must be 16-byte aligned"
+    );
+}
+
+#[test]
+fn rend_05_staging_ring_frame_advance_resets_offset() {
+    use revoxelation::renderer::staging_ring::StagingRing;
+    let mut ring = StagingRing::new_layout_only(32 * 1024 * 1024, 2);
+    // Allocate in frame 0
+    let _a1 = ring.allocate(1024, 16).expect("allocation should succeed");
+    // Advance to frame 1 — cursor resets to frame 1 region start
+    ring.advance_frame();
+    let a2 = ring.allocate(256, 16).expect("allocation in new frame should succeed");
+    // After advancing, offset should be in the second frame's region (16 MB into the buffer)
+    let frame_size: u64 = 16 * 1024 * 1024;
+    assert_eq!(
+        a2.offset, frame_size,
+        "after advance_frame, offset should start at second frame region ({}), got {}",
+        frame_size, a2.offset
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plan 04-02 Task 2 — Push constants and dynamic viewport in mesh pipeline
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_01_vertex_shader_uses_push_constant_view_proj() {
+    let shader_source = std::fs::read_to_string("shaders/chunk_mesh.vert")
+        .expect("shaders/chunk_mesh.vert should exist");
+    assert!(
+        shader_source.contains("push_constant"),
+        "Vertex shader must contain push_constant block"
+    );
+    assert!(
+        shader_source.contains("view_proj"),
+        "Vertex shader must contain view_proj"
+    );
+    assert!(
+        !shader_source.contains("debug_project"),
+        "Vertex shader must NOT contain debug_project"
+    );
+}
+
+#[test]
+fn rend_01_mesh_pipeline_has_dynamic_viewport() {
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        source.contains("DynamicState::VIEWPORT") || source.contains("DYNAMIC_STATE_VIEWPORT"),
+        "Mesh pipeline must use dynamic viewport state"
+    );
+}
+
+#[test]
+fn rend_01_mesh_pipeline_has_push_constant_range() {
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        source.contains("push_constant_range") || source.contains("PushConstantRange"),
+        "Mesh pipeline must define push constant ranges"
+    );
+}
