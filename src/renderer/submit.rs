@@ -6,7 +6,9 @@ use super::camera::CameraUniforms;
 
 pub fn submit_frame_sequence() -> &'static [&'static str] {
     &[
+        "staging_ring_reset",
         "chunk_delta_uploads",
+        "transfer_to_compute_barrier",
         "compute_cull",
         "indirect_barrier",
         "render_pass",
@@ -33,6 +35,11 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             .device
             .wait_for_fences(&[in_flight], true, u64::MAX)
             .context("failed waiting for Vulkan in-flight fence")?;
+
+        // After fence wait, the staging ring region for this frame is safe to reuse.
+        if let Some(staging_ring) = renderer.staging_ring.as_mut() {
+            staging_ring.reset_current_frame();
+        }
 
         let (image_index, _) = renderer
             .swapchain_ctx
@@ -61,7 +68,30 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
             .context("failed to begin Vulkan command buffer")?;
 
+        // Record staging→GpuOnly copy commands for pending chunk deltas.
         renderer.record_chunk_delta_uploads(command_buffer)?;
+
+        // Memory barrier: ensure all transfer writes complete before compute shader reads.
+        if renderer.chunk_pool.is_some() && renderer.staging_ring.is_some() {
+            let transfer_barrier = vk::MemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(
+                    vk::AccessFlags::SHADER_READ
+                        | vk::AccessFlags::VERTEX_ATTRIBUTE_READ
+                        | vk::AccessFlags::INDEX_READ,
+                );
+            renderer.device_ctx.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COMPUTE_SHADER
+                    | vk::PipelineStageFlags::VERTEX_INPUT
+                    | vk::PipelineStageFlags::VERTEX_SHADER,
+                vk::DependencyFlags::empty(),
+                &[transfer_barrier],
+                &[],
+                &[],
+            );
+        }
 
         if let (Some(cull_pipeline), Some(chunk_pool)) =
             (&renderer.cull_pipeline, &renderer.chunk_pool)
@@ -184,6 +214,11 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                     .image_indices(&image_indices),
             )
             .context("failed to present Vulkan swapchain image")?;
+    }
+
+    // Advance staging ring to next frame's region for the next submit.
+    if let Some(staging_ring) = renderer.staging_ring.as_mut() {
+        staging_ring.advance_frame();
     }
 
     renderer.current_frame = (renderer.current_frame + 1) % renderer.frames.len();

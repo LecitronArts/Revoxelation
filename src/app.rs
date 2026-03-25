@@ -12,7 +12,7 @@ use winit::{
 use crate::meshing::MeshingState;
 use crate::renderer::{
     Renderer, chunk_pool::ChunkPool, cull_pipeline::ChunkCullPipeline, egui_backend::EguiAshBackend,
-    mesh_pipeline::ChunkMeshPipeline, camera::{CameraKey, FpsCamera},
+    mesh_pipeline::ChunkMeshPipeline, staging_ring::StagingRing, camera::{CameraKey, FpsCamera},
 };
 use crate::runtime::scheduler::StreamingState;
 
@@ -70,6 +70,8 @@ pub fn run() -> Result<()> {
 
     let mut renderer = Renderer::new(display_handle, window_handle, extent)?;
     renderer.chunk_pool = Some(ChunkPool::new(&mut renderer)?);
+    // 32 MB staging ring, 2 frames (16 MB per frame).
+    renderer.staging_ring = Some(StagingRing::new(&mut renderer, 32 * 1024 * 1024, 2)?);
     renderer.mesh_pipeline = Some(ChunkMeshPipeline::new(&renderer)?);
     renderer.cull_pipeline = Some(ChunkCullPipeline::new(&renderer)?);
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);

@@ -290,6 +290,78 @@ fn rend_05_staging_ring_frame_advance_resets_offset() {
 }
 
 // ---------------------------------------------------------------------------
+// Plan 04-04 Task 2 — ChunkPool GpuOnly + staging upload path
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_05_chunk_pool_uses_gpu_only() {
+    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("src/renderer/chunk_pool.rs should exist");
+    // All buffer creations should use GpuOnly
+    let gpu_only_count = source.matches("MemoryLocation::GpuOnly").count();
+    let cpu_to_gpu_count = source.matches("MemoryLocation::CpuToGpu").count();
+    assert!(
+        gpu_only_count >= 6,
+        "chunk_pool.rs must have at least 6 GpuOnly allocations, found {gpu_only_count}"
+    );
+    assert_eq!(
+        cpu_to_gpu_count, 0,
+        "chunk_pool.rs must have zero CpuToGpu allocations, found {cpu_to_gpu_count}"
+    );
+}
+
+#[test]
+fn rend_05_no_queue_wait_idle_in_hot_path() {
+    let submit_source = std::fs::read_to_string("src/renderer/submit.rs")
+        .expect("src/renderer/submit.rs should exist");
+    let chunk_pool_source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("src/renderer/chunk_pool.rs should exist");
+    assert!(
+        !submit_source.contains("queue_wait_idle"),
+        "submit.rs must NOT contain queue_wait_idle"
+    );
+    assert!(
+        !chunk_pool_source.contains("queue_wait_idle"),
+        "chunk_pool.rs must NOT contain queue_wait_idle"
+    );
+}
+
+#[test]
+fn rend_05_depth_image_has_sampled_usage() {
+    let source = std::fs::read_to_string("src/renderer/swapchain.rs")
+        .expect("src/renderer/swapchain.rs should exist");
+    // Depth image must include SAMPLED usage for Hi-Z pyramid
+    assert!(
+        source.contains("DEPTH_STENCIL_ATTACHMENT") && source.contains("SAMPLED"),
+        "swapchain.rs depth image creation must include both DEPTH_STENCIL_ATTACHMENT and SAMPLED usage flags"
+    );
+}
+
+#[test]
+fn rend_05_chunk_pool_has_record_uploads() {
+    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("src/renderer/chunk_pool.rs should exist");
+    assert!(
+        source.contains("record_uploads"),
+        "chunk_pool.rs must have a record_uploads method"
+    );
+    assert!(
+        source.contains("cmd_copy_buffer"),
+        "chunk_pool.rs must contain cmd_copy_buffer for staging uploads"
+    );
+}
+
+#[test]
+fn rend_05_submit_uses_staging_ring() {
+    let source = std::fs::read_to_string("src/renderer/submit.rs")
+        .expect("src/renderer/submit.rs should exist");
+    assert!(
+        source.contains("StagingRing") || source.contains("staging_ring"),
+        "submit.rs must reference StagingRing for upload coordination"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Plan 04-02 Task 2 — Push constants and dynamic viewport in mesh pipeline
 // ---------------------------------------------------------------------------
 

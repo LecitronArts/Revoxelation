@@ -11,6 +11,7 @@ use crate::{
 };
 
 use super::{Renderer, create_allocated_buffer, destroy_allocated_buffer};
+use super::staging_ring::StagingRing;
 
 pub const MAX_RENDER_CHUNKS: usize = 881;
 pub const MAX_QUADS_PER_CHUNK: usize = 4096;
@@ -225,7 +226,7 @@ impl ChunkPool {
             renderer,
             (vertex_slot_stride_bytes() * MAX_RENDER_CHUNKS) as u64,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
-            MemoryLocation::CpuToGpu,
+            MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-vertex",
         )?;
@@ -233,7 +234,7 @@ impl ChunkPool {
             renderer,
             (index_slot_stride_bytes() * MAX_RENDER_CHUNKS) as u64,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
-            MemoryLocation::CpuToGpu,
+            MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-index",
         )?;
@@ -241,7 +242,7 @@ impl ChunkPool {
             renderer,
             (size_of::<ChunkDrawMetadata>() * MAX_RENDER_CHUNKS) as u64,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::STORAGE_BUFFER,
-            MemoryLocation::CpuToGpu,
+            MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-metadata",
         )?;
@@ -251,7 +252,7 @@ impl ChunkPool {
             vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::INDIRECT_BUFFER,
-            MemoryLocation::CpuToGpu,
+            MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-indirect-template",
         )?;
@@ -259,7 +260,7 @@ impl ChunkPool {
             renderer,
             (size_of::<u32>() * MAX_RENDER_CHUNKS) as u64,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::STORAGE_BUFFER,
-            MemoryLocation::CpuToGpu,
+            MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-draw-slots",
         )?;
@@ -269,7 +270,7 @@ impl ChunkPool {
             vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::INDIRECT_BUFFER,
-            MemoryLocation::CpuToGpu,
+            MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-dense-indirect",
         )?;
@@ -376,7 +377,16 @@ impl ChunkPool {
         &self.slot_allocator
     }
 
-    pub fn apply_upload(&mut self, upload: SlotUpload) -> Result<()> {
+    /// Record vkCmdCopyBuffer commands for an upload, writing data through the staging ring.
+    ///
+    /// This replaces the old `apply_upload` which used direct mapped memory writes.
+    pub fn record_upload(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        staging_ring: &mut StagingRing,
+        upload: SlotUpload,
+    ) -> Result<()> {
         let SlotUpload {
             slot_id,
             draw_slot_write,
@@ -388,90 +398,241 @@ impl ChunkPool {
             metadata,
             indirect,
         } = upload;
-        write_allocation_bytes(
-            self.vertex_allocation.as_mut(),
-            vertex_offset_bytes as usize,
-            &vertex_bytes,
-        )?;
-        write_allocation_bytes(
-            self.index_allocation.as_mut(),
-            index_offset_bytes as usize,
-            &index_bytes,
-        )?;
 
-        let metadata = [metadata];
-        let metadata_bytes = cast_slice(&metadata);
-        write_allocation_bytes(
-            self.metadata_allocation.as_mut(),
-            slot_id as usize * size_of::<ChunkDrawMetadata>(),
-            metadata_bytes,
-        )?;
-
-        write_allocation_bytes(
-            self.indirect_template_allocation.as_mut(),
-            slot_id as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
-            draw_cmd_as_bytes(&indirect),
-        )?;
-
-        if let Some(draw_slot_write) = draw_slot_write {
-            self.write_draw_slot(draw_slot_write)?;
+        // Copy vertex data via staging
+        if !vertex_bytes.is_empty() {
+            let mut alloc = staging_ring.allocate(vertex_bytes.len() as u64, 16)?;
+            alloc.write_bytes(&vertex_bytes);
+            let region = vk::BufferCopy::default()
+                .src_offset(alloc.offset)
+                .dst_offset(vertex_offset_bytes)
+                .size(vertex_bytes.len() as u64);
+            unsafe {
+                device.cmd_copy_buffer(cmd, alloc.buffer, self.vertex_buffer, &[region]);
+            }
         }
-        self.write_dense_indirect(dense_indirect_write)?;
+
+        // Copy index data via staging
+        if !index_bytes.is_empty() {
+            let mut alloc = staging_ring.allocate(index_bytes.len() as u64, 4)?;
+            alloc.write_bytes(&index_bytes);
+            let region = vk::BufferCopy::default()
+                .src_offset(alloc.offset)
+                .dst_offset(index_offset_bytes)
+                .size(index_bytes.len() as u64);
+            unsafe {
+                device.cmd_copy_buffer(cmd, alloc.buffer, self.index_buffer, &[region]);
+            }
+        }
+
+        // Copy metadata via staging
+        {
+            let metadata_arr = [metadata];
+            let metadata_bytes = cast_slice(&metadata_arr);
+            let mut alloc = staging_ring.allocate(metadata_bytes.len() as u64, 16)?;
+            alloc.write_bytes(metadata_bytes);
+            let dst_offset = slot_id as u64 * size_of::<ChunkDrawMetadata>() as u64;
+            let region = vk::BufferCopy::default()
+                .src_offset(alloc.offset)
+                .dst_offset(dst_offset)
+                .size(metadata_bytes.len() as u64);
+            unsafe {
+                device.cmd_copy_buffer(cmd, alloc.buffer, self.metadata_buffer, &[region]);
+            }
+        }
+
+        // Copy indirect template via staging
+        {
+            let indirect_bytes = draw_cmd_as_bytes(&indirect);
+            let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;
+            alloc.write_bytes(indirect_bytes);
+            let dst_offset =
+                slot_id as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64;
+            let region = vk::BufferCopy::default()
+                .src_offset(alloc.offset)
+                .dst_offset(dst_offset)
+                .size(indirect_bytes.len() as u64);
+            unsafe {
+                device.cmd_copy_buffer(
+                    cmd,
+                    alloc.buffer,
+                    self.indirect_template_buffer,
+                    &[region],
+                );
+            }
+        }
+
+        // Copy draw slot mapping via staging
+        if let Some(dsw) = draw_slot_write {
+            self.record_draw_slot_copy(device, cmd, staging_ring, dsw)?;
+        }
+
+        // Copy dense indirect entry via staging
+        self.record_dense_indirect_copy(device, cmd, staging_ring, dense_indirect_write)?;
 
         Ok(())
     }
 
-    pub fn apply_remove(&mut self, remove: SlotRemove) -> Result<()> {
-        self.clear_slot(remove.slot_id)?;
-        for draw_slot_write in remove.draw_slot_writes {
-            self.write_draw_slot(draw_slot_write)?;
+    /// Record vkCmdCopyBuffer commands for a remove operation via staging ring.
+    pub fn record_remove(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        staging_ring: &mut StagingRing,
+        remove: SlotRemove,
+    ) -> Result<()> {
+        // Zero out the slot's vertex data
+        {
+            let zero_bytes = vec![0_u8; vertex_slot_stride_bytes()];
+            let mut alloc = staging_ring.allocate(zero_bytes.len() as u64, 16)?;
+            alloc.write_bytes(&zero_bytes);
+            let dst_offset = remove.slot_id as u64 * vertex_slot_stride_bytes() as u64;
+            let region = vk::BufferCopy::default()
+                .src_offset(alloc.offset)
+                .dst_offset(dst_offset)
+                .size(zero_bytes.len() as u64);
+            unsafe {
+                device.cmd_copy_buffer(cmd, alloc.buffer, self.vertex_buffer, &[region]);
+            }
         }
-        for dense_indirect_write in remove.dense_indirect_writes {
-            self.write_dense_indirect(dense_indirect_write)?;
+
+        // Zero out the slot's index data
+        {
+            let zero_bytes = vec![0_u8; index_slot_stride_bytes()];
+            let mut alloc = staging_ring.allocate(zero_bytes.len() as u64, 4)?;
+            alloc.write_bytes(&zero_bytes);
+            let dst_offset = remove.slot_id as u64 * index_slot_stride_bytes() as u64;
+            let region = vk::BufferCopy::default()
+                .src_offset(alloc.offset)
+                .dst_offset(dst_offset)
+                .size(zero_bytes.len() as u64);
+            unsafe {
+                device.cmd_copy_buffer(cmd, alloc.buffer, self.index_buffer, &[region]);
+            }
+        }
+
+        // Zero out metadata
+        {
+            let zero_meta = [ChunkDrawMetadata::default()];
+            let meta_bytes = cast_slice(&zero_meta);
+            let mut alloc = staging_ring.allocate(meta_bytes.len() as u64, 16)?;
+            alloc.write_bytes(meta_bytes);
+            let dst_offset =
+                remove.slot_id as u64 * size_of::<ChunkDrawMetadata>() as u64;
+            let region = vk::BufferCopy::default()
+                .src_offset(alloc.offset)
+                .dst_offset(dst_offset)
+                .size(meta_bytes.len() as u64);
+            unsafe {
+                device.cmd_copy_buffer(cmd, alloc.buffer, self.metadata_buffer, &[region]);
+            }
+        }
+
+        // Zero out indirect template
+        {
+            let zero_indirect = vk::DrawIndexedIndirectCommand::default();
+            let indirect_bytes = draw_cmd_as_bytes(&zero_indirect);
+            let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;
+            alloc.write_bytes(indirect_bytes);
+            let dst_offset = remove.slot_id as u64
+                * size_of::<vk::DrawIndexedIndirectCommand>() as u64;
+            let region = vk::BufferCopy::default()
+                .src_offset(alloc.offset)
+                .dst_offset(dst_offset)
+                .size(indirect_bytes.len() as u64);
+            unsafe {
+                device.cmd_copy_buffer(
+                    cmd,
+                    alloc.buffer,
+                    self.indirect_template_buffer,
+                    &[region],
+                );
+            }
+        }
+
+        // Update draw slot and dense indirect mappings
+        for dsw in remove.draw_slot_writes {
+            self.record_draw_slot_copy(device, cmd, staging_ring, dsw)?;
+        }
+        for diw in remove.dense_indirect_writes {
+            self.record_dense_indirect_copy(device, cmd, staging_ring, diw)?;
+        }
+
+        Ok(())
+    }
+
+    /// Record all pending uploads for a frame. Called from `record_chunk_delta_uploads`.
+    pub fn record_uploads(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        staging_ring: &mut StagingRing,
+        pending_deltas: &mut std::collections::VecDeque<super::RenderDelta>,
+    ) -> Result<()> {
+        while let Some(delta) = pending_deltas.pop_front() {
+            match delta {
+                super::RenderDelta::Upsert { key, mesh } => {
+                    let upload = self.slot_allocator.prepare_upload(key, &mesh)?;
+                    self.record_upload(device, cmd, staging_ring, upload)?;
+                }
+                super::RenderDelta::Remove { key } => {
+                    if let Some(remove) = self.prepare_remove(key) {
+                        self.record_remove(device, cmd, staging_ring, remove)?;
+                    }
+                }
+            }
         }
         Ok(())
     }
 
-    pub fn clear_slot(&mut self, slot_id: u32) -> Result<()> {
-        write_allocation_bytes(
-            self.vertex_allocation.as_mut(),
-            slot_id as usize * vertex_slot_stride_bytes(),
-            &vec![0_u8; vertex_slot_stride_bytes()],
-        )?;
-        write_allocation_bytes(
-            self.index_allocation.as_mut(),
-            slot_id as usize * index_slot_stride_bytes(),
-            &vec![0_u8; index_slot_stride_bytes()],
-        )?;
-        write_allocation_bytes(
-            self.metadata_allocation.as_mut(),
-            slot_id as usize * size_of::<ChunkDrawMetadata>(),
-            cast_slice(&[ChunkDrawMetadata::default()]),
-        )?;
-        write_allocation_bytes(
-            self.indirect_template_allocation.as_mut(),
-            slot_id as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
-            draw_cmd_as_bytes(&vk::DrawIndexedIndirectCommand::default()),
-        )?;
-        Ok(())
-    }
-
-    fn write_draw_slot(&mut self, write: DrawSlotWrite) -> Result<()> {
+    fn record_draw_slot_copy(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        staging_ring: &mut StagingRing,
+        write: DrawSlotWrite,
+    ) -> Result<()> {
         let draw_slot = [write.slot_id];
-        write_allocation_bytes(
-            self.draw_slot_allocation.as_mut(),
-            write.draw_index as usize * size_of::<u32>(),
-            cast_slice(&draw_slot),
-        )
+        let slot_bytes = cast_slice(&draw_slot);
+        let mut alloc = staging_ring.allocate(slot_bytes.len() as u64, 4)?;
+        alloc.write_bytes(slot_bytes);
+        let dst_offset = write.draw_index as u64 * size_of::<u32>() as u64;
+        let region = vk::BufferCopy::default()
+            .src_offset(alloc.offset)
+            .dst_offset(dst_offset)
+            .size(slot_bytes.len() as u64);
+        unsafe {
+            device.cmd_copy_buffer(cmd, alloc.buffer, self.draw_slot_buffer, &[region]);
+        }
+        Ok(())
     }
 
-    fn write_dense_indirect(&mut self, write: DenseIndirectWrite) -> Result<()> {
+    fn record_dense_indirect_copy(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        staging_ring: &mut StagingRing,
+        write: DenseIndirectWrite,
+    ) -> Result<()> {
         self.dense_indirect_shadow[write.draw_index as usize] = write.command;
-        write_allocation_bytes(
-            self.dense_indirect_allocation.as_mut(),
-            write.draw_index as usize * size_of::<vk::DrawIndexedIndirectCommand>(),
-            draw_cmd_as_bytes(&write.command),
-        )
+        let indirect_bytes = draw_cmd_as_bytes(&write.command);
+        let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;
+        alloc.write_bytes(indirect_bytes);
+        let dst_offset =
+            write.draw_index as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64;
+        let region = vk::BufferCopy::default()
+            .src_offset(alloc.offset)
+            .dst_offset(dst_offset)
+            .size(indirect_bytes.len() as u64);
+        unsafe {
+            device.cmd_copy_buffer(
+                cmd,
+                alloc.buffer,
+                self.dense_indirect_buffer,
+                &[region],
+            );
+        }
+        Ok(())
     }
 
     pub fn destroy(mut self, renderer: &mut Renderer) -> Result<()> {
@@ -532,23 +693,6 @@ fn world_aabb(local: [f32; 3], origin: [f32; 3], chunk_scale: f32) -> [f32; 3] {
         origin[1] + local[1] * chunk_scale,
         origin[2] + local[2] * chunk_scale,
     ]
-}
-
-fn write_allocation_bytes(
-    allocation: Option<&mut Allocation>,
-    offset: usize,
-    bytes: &[u8],
-) -> Result<()> {
-    let allocation = allocation.ok_or_else(|| anyhow!("missing chunk pool allocation"))?;
-    let mapped = allocation
-        .mapped_slice_mut()
-        .ok_or_else(|| anyhow!("chunk pool allocation is not CPU-visible"))?;
-    let end = offset + bytes.len();
-    if end > mapped.len() {
-        return Err(anyhow!("chunk pool write exceeds allocation bounds"));
-    }
-    mapped[offset..end].copy_from_slice(bytes);
-    Ok(())
 }
 
 /// Reinterpret a `Copy + repr(C)` struct as a byte slice for GPU buffer writes.

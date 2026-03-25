@@ -59,6 +59,7 @@ pub struct Renderer {
     pub frames: [frame::FrameData; 2],
     pub current_frame: usize,
     pub chunk_pool: Option<chunk_pool::ChunkPool>,
+    pub staging_ring: Option<staging_ring::StagingRing>,
     pub pending_chunk_deltas: VecDeque<RenderDelta>,
     pub mesh_pipeline: Option<mesh_pipeline::ChunkMeshPipeline>,
     pub cull_pipeline: Option<cull_pipeline::ChunkCullPipeline>,
@@ -149,6 +150,7 @@ impl Renderer {
             frames,
             current_frame: 0,
             chunk_pool: None,
+            staging_ring: None,
             pending_chunk_deltas: VecDeque::new(),
             mesh_pipeline: None,
             cull_pipeline: None,
@@ -165,6 +167,10 @@ impl Drop for Renderer {
 
             if let Some(egui_backend) = self.egui_backend.take() {
                 let _ = egui_backend.destroy(self);
+            }
+
+            if let Some(staging_ring) = self.staging_ring.take() {
+                let _ = staging_ring.destroy(self);
             }
 
             if let Some(chunk_pool) = self.chunk_pool.take() {
@@ -255,25 +261,20 @@ impl Renderer {
         self.pending_chunk_deltas.push_back(delta);
     }
 
-    pub(crate) fn record_chunk_delta_uploads(&mut self, _cmd: vk::CommandBuffer) -> Result<()> {
+    pub(crate) fn record_chunk_delta_uploads(&mut self, cmd: vk::CommandBuffer) -> Result<()> {
         let Some(chunk_pool) = self.chunk_pool.as_mut() else {
             self.pending_chunk_deltas.clear();
             return Ok(());
         };
 
-        while let Some(delta) = self.pending_chunk_deltas.pop_front() {
-            match delta {
-                RenderDelta::Upsert { key, mesh } => {
-                    let upload = chunk_pool.prepare_upload(key, &mesh)?;
-                    chunk_pool.apply_upload(upload)?;
-                }
-                RenderDelta::Remove { key } => {
-                    if let Some(remove) = chunk_pool.prepare_remove(key) {
-                        chunk_pool.apply_remove(remove)?;
-                    }
-                }
-            }
-        }
+        let Some(staging_ring) = self.staging_ring.as_mut() else {
+            // No staging ring — clear deltas to avoid infinite accumulation.
+            self.pending_chunk_deltas.clear();
+            return Ok(());
+        };
+
+        let device = self.device_ctx.device.clone();
+        chunk_pool.record_uploads(&device, cmd, staging_ring, &mut self.pending_chunk_deltas)?;
 
         Ok(())
     }

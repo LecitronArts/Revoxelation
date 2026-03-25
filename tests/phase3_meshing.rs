@@ -502,7 +502,9 @@ fn mesh_03_build_script_and_indirect_submit_contract() {
     assert_eq!(
         revoxelation::renderer::submit_frame_sequence(),
         &[
+            "staging_ring_reset",
             "chunk_delta_uploads",
+            "transfer_to_compute_barrier",
             "compute_cull",
             "indirect_barrier",
             "render_pass",
