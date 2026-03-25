@@ -519,6 +519,63 @@ fn rend_03_frustum_planes_struct_size() {
 }
 
 // ---------------------------------------------------------------------------
+// Plan 04-05 Task 2 — Cull shader with 6-plane frustum AABB test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_03_cull_shader_has_frustum_test() {
+    let source = std::fs::read_to_string("shaders/chunk_cull.comp")
+        .expect("shaders/chunk_cull.comp should exist");
+    assert!(
+        source.contains("frustum"),
+        "Cull shader must reference frustum planes"
+    );
+    assert!(
+        source.contains("aabb_min"),
+        "Cull shader must reference aabb_min"
+    );
+    assert!(
+        source.contains("local_size_x = 64"),
+        "Cull shader must use local_size_x = 64"
+    );
+    assert!(
+        source.contains("atomicAdd"),
+        "Cull shader must use atomicAdd for draw count"
+    );
+}
+
+#[test]
+fn rend_03_cull_shader_no_stub() {
+    let source = std::fs::read_to_string("shaders/chunk_cull.comp")
+        .expect("shaders/chunk_cull.comp should exist");
+    assert!(
+        !source.contains("metadata.index_count > 0u && command.indexCount > 0u"),
+        "Cull shader must not contain old stub visibility condition"
+    );
+}
+
+#[test]
+fn rend_03_cull_pipeline_has_frustum_binding() {
+    let source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
+        .expect("src/renderer/cull_pipeline.rs should exist");
+    assert!(
+        source.contains("frustum") || source.contains("FrustumPlanes"),
+        "Cull pipeline must include frustum planes buffer binding"
+    );
+}
+
+#[test]
+fn rend_03_frustum_culling_dispatch_workgroup_64() {
+    let source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
+        .expect("src/renderer/cull_pipeline.rs should exist");
+    // Dispatch must use ceil(count/64) grouping
+    assert!(
+        source.contains("64") && (source.contains("div_ceil") || source.contains("+ 63")),
+        "Cull pipeline dispatch must use workgroup size 64 for dispatch calculation"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Plan 04-02 Task 2 — Push constants and dynamic viewport in mesh pipeline
 // ---------------------------------------------------------------------------
 

@@ -173,6 +173,243 @@ pub fn create_swapchain_context(
     })
 }
 
+/// Recreate swapchain and all dependent resources (depth image, image views, framebuffers)
+/// after a window resize or Vulkan OUT_OF_DATE/SUBOPTIMAL error.
+///
+/// Per D-01: device_wait_idle → destroy framebuffers → destroy depth → destroy old image views
+/// → create new swapchain (with old_swapchain param) → destroy old swapchain → create new resources.
+///
+/// Per D-02/D-03: render pass and pipelines are NOT recreated.
+pub fn recreate_swapchain_context(
+    renderer: &mut super::Renderer,
+    new_extent: vk::Extent2D,
+) -> Result<()> {
+    let device = &renderer.device_ctx.device;
+
+    // Wait for all GPU work to complete before destroying resources.
+    unsafe {
+        device
+            .device_wait_idle()
+            .context("failed to wait for device idle during swapchain recreation")?;
+    }
+
+    // 1. Destroy old framebuffers.
+    for framebuffer in renderer.swapchain_ctx.framebuffers.drain(..).rev() {
+        unsafe {
+            device.destroy_framebuffer(framebuffer, None);
+        }
+    }
+
+    // 2. Destroy old depth image/view.
+    unsafe {
+        device.destroy_image_view(renderer.swapchain_ctx.depth_image_view, None);
+    }
+    if let Some(alloc) = renderer.swapchain_ctx.depth_allocation.take() {
+        let _ = renderer.allocator.free(alloc);
+    }
+    unsafe {
+        device.destroy_image(renderer.swapchain_ctx.depth_image, None);
+    }
+
+    // 3. Destroy old color image views.
+    for image_view in renderer.swapchain_ctx.image_views.drain(..).rev() {
+        unsafe {
+            device.destroy_image_view(image_view, None);
+        }
+    }
+
+    // 4. Query new surface capabilities to pick correct extent.
+    let capabilities = unsafe {
+        renderer
+            .surface_loader
+            .get_physical_device_surface_capabilities(
+                renderer.device_ctx.physical_device,
+                renderer.surface,
+            )
+            .context("failed to query surface capabilities during swapchain recreation")?
+    };
+    let surface_formats = unsafe {
+        renderer
+            .surface_loader
+            .get_physical_device_surface_formats(
+                renderer.device_ctx.physical_device,
+                renderer.surface,
+            )
+            .context("failed to query surface formats during swapchain recreation")?
+    };
+    let present_modes = unsafe {
+        renderer
+            .surface_loader
+            .get_physical_device_surface_present_modes(
+                renderer.device_ctx.physical_device,
+                renderer.surface,
+            )
+            .context("failed to query present modes during swapchain recreation")?
+    };
+
+    let surface_format = choose_surface_format(&surface_formats)
+        .ok_or_else(|| anyhow!("no compatible surface format during swapchain recreation"))?;
+    let present_mode = choose_present_mode(&present_modes);
+    let extent = choose_extent(&capabilities, new_extent);
+    let image_count = choose_image_count(&capabilities);
+    let queue_family_indices = [
+        renderer.device_ctx.graphics_family,
+        renderer.device_ctx.present_family,
+    ];
+
+    // 5. Create new swapchain with old_swapchain for driver optimization.
+    let old_swapchain = renderer.swapchain_ctx.swapchain;
+    let mut create_info = vk::SwapchainCreateInfoKHR::default()
+        .surface(renderer.surface)
+        .min_image_count(image_count)
+        .image_format(surface_format.format)
+        .image_color_space(surface_format.color_space)
+        .image_extent(extent)
+        .image_array_layers(1)
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+        .pre_transform(capabilities.current_transform)
+        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        .present_mode(present_mode)
+        .clipped(true)
+        .old_swapchain(old_swapchain);
+
+    if renderer.device_ctx.graphics_family != renderer.device_ctx.present_family {
+        create_info = create_info
+            .image_sharing_mode(vk::SharingMode::CONCURRENT)
+            .queue_family_indices(&queue_family_indices);
+    } else {
+        create_info = create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
+    }
+
+    let new_swapchain = unsafe {
+        renderer
+            .swapchain_ctx
+            .swapchain_loader
+            .create_swapchain(&create_info, None)
+            .context("failed to create new swapchain during recreation")?
+    };
+
+    // 6. Destroy old swapchain after new one is created.
+    unsafe {
+        renderer
+            .swapchain_ctx
+            .swapchain_loader
+            .destroy_swapchain(old_swapchain, None);
+    }
+
+    renderer.swapchain_ctx.swapchain = new_swapchain;
+
+    // 7. Get new swapchain images.
+    let images = unsafe {
+        renderer
+            .swapchain_ctx
+            .swapchain_loader
+            .get_swapchain_images(new_swapchain)
+            .context("failed to enumerate swapchain images during recreation")?
+    };
+
+    // 8. Create new image views.
+    let image_views = images
+        .iter()
+        .map(|image| create_image_view(device, *image, surface_format.format))
+        .collect::<Result<Vec<_>>>()?;
+
+    // 9. Create new depth image + view (reuse render pass — D-02).
+    let depth_image = unsafe {
+        device
+            .create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(DEPTH_FORMAT)
+                    .extent(vk::Extent3D {
+                        width: extent.width,
+                        height: extent.height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(
+                        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                            | vk::ImageUsageFlags::SAMPLED,
+                    )
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+            .context("failed to create depth image during swapchain recreation")?
+    };
+    let depth_requirements = unsafe { device.get_image_memory_requirements(depth_image) };
+    let depth_allocation = renderer
+        .allocator
+        .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+            name: "swapchain-depth",
+            requirements: depth_requirements,
+            location: MemoryLocation::GpuOnly,
+            linear: false,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+        })
+        .map_err(|error| anyhow!("failed to allocate depth image memory during recreation: {error}"))?;
+    unsafe {
+        device
+            .bind_image_memory(
+                depth_image,
+                depth_allocation.memory(),
+                depth_allocation.offset(),
+            )
+            .context("failed to bind depth image memory during recreation")?;
+    }
+    let depth_subresource_range = vk::ImageSubresourceRange::default()
+        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+        .level_count(1)
+        .layer_count(1);
+    let depth_image_view = unsafe {
+        device
+            .create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(depth_image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(DEPTH_FORMAT)
+                    .subresource_range(depth_subresource_range),
+                None,
+            )
+            .context("failed to create depth image view during recreation")?
+    };
+
+    // 10. Create new framebuffers.
+    let framebuffers = image_views
+        .iter()
+        .map(|image_view| {
+            create_framebuffer(
+                device,
+                renderer.swapchain_ctx.render_pass,
+                *image_view,
+                depth_image_view,
+                extent,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // 11. Update swapchain context fields in place.
+    renderer.swapchain_ctx.images = images;
+    renderer.swapchain_ctx.image_views = image_views;
+    renderer.swapchain_ctx.format = surface_format.format;
+    renderer.swapchain_ctx.extent = extent;
+    renderer.swapchain_ctx.framebuffers = framebuffers;
+    renderer.swapchain_ctx.depth_image = depth_image;
+    renderer.swapchain_ctx.depth_image_view = depth_image_view;
+    renderer.swapchain_ctx.depth_allocation = Some(depth_allocation);
+
+    log::info!(
+        "Swapchain recreated: {}x{}",
+        extent.width,
+        extent.height
+    );
+
+    Ok(())
+}
+
 fn choose_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Option<vk::SurfaceFormatKHR> {
     formats
         .iter()
