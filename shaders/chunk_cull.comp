@@ -1,6 +1,6 @@
 #version 450
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 struct ChunkDrawMetadata {
     vec3 aabb_min;
@@ -23,27 +23,89 @@ struct DrawIndexedIndirectCommand {
     uint firstInstance;
 };
 
+// binding 0: chunk metadata (read)
 layout(std430, set = 0, binding = 0) readonly buffer ChunkMetadataBuffer {
     ChunkDrawMetadata metadata[];
 } chunk_metadata;
 
+// binding 1: indirect templates (read)
 layout(std430, set = 0, binding = 1) readonly buffer ChunkIndirectTemplateBuffer {
     DrawIndexedIndirectCommand indirect_templates[];
 } chunk_templates;
 
+// binding 2: draw slots mapping draw_index -> slot_id (read)
 layout(std430, set = 0, binding = 2) readonly buffer ChunkDrawSlotBuffer {
     uint draw_slots[];
 } chunk_draw_slots;
 
+// binding 3: output dense indirect buffer (write)
 layout(std430, set = 0, binding = 3) buffer ChunkDenseIndirectBuffer {
     DrawIndexedIndirectCommand dense_indirect[];
 } chunk_dense_indirect;
 
+// binding 4: frustum planes SSBO (read) — 6 vec4 planes = 96 bytes
+layout(std430, set = 0, binding = 4) readonly buffer FrustumPlanesBuffer {
+    vec4 frustum_planes[6];
+} frustum;
+
+// binding 5: draw count buffer (read+write) — single uint32 for visible chunk count
+layout(std430, set = 0, binding = 5) buffer DrawCountBuffer {
+    uint draw_count;
+} draw_count_buf;
+
+// Total active draw count passed via push constant
+layout(push_constant) uniform PushConstants {
+    uint active_draw_count;
+} pc;
+
+/// Test an AABB against a single frustum plane using the P-vertex method.
+/// Returns true if the AABB is entirely outside (culled by) the plane.
+bool aabb_outside_plane(vec3 aabb_min, vec3 aabb_max, vec4 plane) {
+    // P-vertex: the corner of the AABB most in the direction of the plane normal.
+    vec3 p_vertex = vec3(
+        plane.x >= 0.0 ? aabb_max.x : aabb_min.x,
+        plane.y >= 0.0 ? aabb_max.y : aabb_min.y,
+        plane.z >= 0.0 ? aabb_max.z : aabb_min.z
+    );
+    return dot(plane.xyz, p_vertex) + plane.w < 0.0;
+}
+
 void main() {
     uint dense_index = gl_GlobalInvocationID.x;
+
+    // Out-of-range threads do nothing.
+    if (dense_index >= pc.active_draw_count) {
+        return;
+    }
+
     uint slot_id = chunk_draw_slots.draw_slots[dense_index];
     ChunkDrawMetadata metadata = chunk_metadata.metadata[slot_id];
     DrawIndexedIndirectCommand command = chunk_templates.indirect_templates[slot_id];
-    command.instanceCount = metadata.index_count > 0u && command.indexCount > 0u ? 1u : 0u;
-    chunk_dense_indirect.dense_indirect[dense_index] = command;
+
+    // Skip empty slots (no geometry).
+    if (metadata.index_count == 0u || command.indexCount == 0u) {
+        return;
+    }
+
+    // Frustum cull: test AABB against all 6 frustum planes.
+    vec3 aabb_min = metadata.aabb_min;
+    vec3 aabb_max = metadata.aabb_max;
+
+    bool culled = false;
+    for (int i = 0; i < 6; i++) {
+        if (aabb_outside_plane(aabb_min, aabb_max, frustum.frustum_planes[i])) {
+            culled = true;
+            break;
+        }
+    }
+
+    if (culled) {
+        // Chunk is outside the frustum — don't emit a draw command.
+        return;
+    }
+
+    // Visible: write into the compacted output buffer.
+    uint output_index = atomicAdd(draw_count_buf.draw_count, 1u);
+    command.instanceCount = 1u;
+    chunk_dense_indirect.dense_indirect[output_index] = command;
 }

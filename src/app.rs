@@ -73,7 +73,7 @@ pub fn run() -> Result<()> {
     // 32 MB staging ring, 2 frames (16 MB per frame).
     renderer.staging_ring = Some(StagingRing::new(&mut renderer, 32 * 1024 * 1024, 2)?);
     renderer.mesh_pipeline = Some(ChunkMeshPipeline::new(&renderer)?);
-    renderer.cull_pipeline = Some(ChunkCullPipeline::new(&renderer)?);
+    renderer.cull_pipeline = Some(ChunkCullPipeline::new(&mut renderer)?);
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);
 
     let mut app = App {

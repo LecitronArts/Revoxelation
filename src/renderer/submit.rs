@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use ash::vk;
+use glam::Mat4;
 
 use super::Renderer;
-use super::camera::CameraUniforms;
+use super::camera::{CameraUniforms, extract_frustum_planes};
 
 pub fn submit_frame_sequence() -> &'static [&'static str] {
     &[
@@ -96,21 +97,38 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         if let (Some(cull_pipeline), Some(chunk_pool)) =
             (&renderer.cull_pipeline, &renderer.chunk_pool)
         {
-            cull_pipeline.dispatch(renderer, command_buffer, chunk_pool.active_draw_count());
+            let view_proj = Mat4::from_cols_array_2d(&camera_uniforms.view_proj);
+            let frustum_planes = extract_frustum_planes(&view_proj);
+            let active_draw_count = chunk_pool.active_draw_count();
 
-            let barriers = [vk::BufferMemoryBarrier::default()
+            cull_pipeline.dispatch(
+                &renderer.device_ctx.device,
+                command_buffer,
+                active_draw_count,
+                &frustum_planes,
+            );
+
+            // Barrier: compute shader writes → indirect draw reads for both dense indirect
+            // and draw count buffers.
+            let dense_barrier = vk::BufferMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ)
                 .buffer(chunk_pool.dense_indirect_buffer())
                 .offset(0)
-                .size(vk::WHOLE_SIZE)];
+                .size(vk::WHOLE_SIZE);
+            let draw_count_barrier = vk::BufferMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ)
+                .buffer(cull_pipeline.draw_count_buffer())
+                .offset(0)
+                .size(vk::WHOLE_SIZE);
             renderer.device_ctx.device.cmd_pipeline_barrier(
                 command_buffer,
                 vk::PipelineStageFlags::COMPUTE_SHADER,
                 vk::PipelineStageFlags::DRAW_INDIRECT,
                 vk::DependencyFlags::empty(),
                 &[],
-                &barriers,
+                &[dense_barrier, draw_count_barrier],
                 &[],
             );
         }
