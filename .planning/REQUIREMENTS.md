@@ -1,7 +1,7 @@
 # Requirements: Revoxelation
 
-**Defined:** 2026-03-15  
-**Core Value:** Build a cleanly extensible Rust ECS voxel engine (non-Bevy) where world interaction, especially block edits, is reflected immediately and predictably.
+**Defined:** 2026-03-15
+**Core Value:** Build a cleanly extensible Rust ECS voxel engine (non-Bevy) with a highly modern GPU-driven rendering architecture, where world interaction, especially block edits, is reflected immediately and predictably.
 
 ## v1 Requirements
 
@@ -22,6 +22,40 @@
 - [x] **MESH-01**: Engine can generate greedy meshes for visible chunk surfaces and update them incrementally.
 - [x] **MESH-02**: Chunk-border updates correctly invalidate neighbor meshes to avoid visible seams.
 - [x] **MESH-03**: Renderer integration supports chunk-delta updates so chunk edits do not require full world reupload.
+
+### Rendering Foundation
+
+- [ ] **REND-01**: Real FPS camera with MVP projection replaces debug_project; supports WASD+mouse navigation.
+- [ ] **REND-02**: Swapchain recreates correctly on window resize; minimization handled gracefully.
+- [ ] **REND-03**: GPU-driven frustum culling via compute shader tests chunk AABB against 6 frustum planes.
+- [ ] **REND-04**: Hi-Z occlusion culling uses depth pyramid to reject occluded chunks before draw.
+- [ ] **REND-05**: All chunk GPU buffers use GpuOnly memory with proper staging pipeline; no queue_wait_idle in hot path.
+- [ ] **REND-06**: OnceLock global state replaced with App-struct dependency injection for testability.
+- [ ] **REND-07**: Pipeline cache persists across runs; egui HUD displays GPU performance statistics.
+
+### Bindless and GPU Scene
+
+- [ ] **BIND-01**: Vulkan 1.2 is a hard requirement; device creation fails gracefully with clear error message if GPU does not support required features.
+- [ ] **BIND-02**: Single bindless descriptor set binds all GPU resources; no per-chunk descriptor updates needed.
+- [ ] **BIND-03**: Unified GPU scene buffer reduces per-chunk buffer count; rendering output unchanged.
+- [ ] **BIND-04**: Block material system supports distinct textures per block_id via texture array + bindless sampling.
+- [ ] **BIND-05**: Chunk render capacity grows dynamically beyond fixed limit; IndirectCount eliminates CPU-side draw count.
+
+### Meshlet Pipeline
+
+- [ ] **MSHL-01**: Greedy mesh output is split into meshlets with precomputed bounding spheres and orientation cones.
+- [ ] **MSHL-02**: Per-meshlet GPU culling (backface, frustum, Hi-Z) runs in compute shader with toggleable modes.
+- [ ] **MSHL-03**: Software mesh shader emulation via compute+indirect produces correct rendering.
+- [ ] **MSHL-04**: VK_EXT_mesh_shader hardware path works on supported GPUs with automatic fallback.
+- [ ] **MSHL-05**: LOD transitions between meshlet groups are seamless with no visible seams.
+
+### Lighting and Shadows
+
+- [ ] **LGHT-01**: Blocks display PBR lighting with diffuse and specular response under directional light.
+- [ ] **LGHT-02**: Blocks cast correct shadows via cascaded shadow maps; cascade transitions are flicker-free.
+- [ ] **LGHT-03**: SSAO produces visible darkening at block edges and corners with acceptable performance.
+- [ ] **LGHT-04**: Voxel AO provides per-vertex ambient occlusion computed during meshing.
+- [ ] **LGHT-05**: Sky color and light direction change with day-night cycle; distance fog fades far objects.
 
 ### Movement and Collision
 
@@ -91,24 +125,46 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MESH-01 | Phase 3 | Complete |
 | MESH-02 | Phase 3 | Complete |
 | MESH-03 | Phase 3 | Complete |
-| MOVE-01 | Phase 4 | Pending |
-| MOVE-02 | Phase 4 | Pending |
-| MOVE-03 | Phase 4 | Pending |
-| EDIT-01 | Phase 5 | Pending |
-| EDIT-02 | Phase 5 | Pending |
-| EDIT-03 | Phase 5 | Pending |
-| SAVE-01 | Phase 6 | Pending |
-| SAVE-02 | Phase 6 | Pending |
-| SAVE-03 | Phase 6 | Pending |
-| NINT-01 | Phase 7 | Pending |
-| NINT-02 | Phase 7 | Pending |
+| REND-01 | Phase 4 | Pending |
+| REND-02 | Phase 4 | Pending |
+| REND-03 | Phase 4 | Pending |
+| REND-04 | Phase 4 | Pending |
+| REND-05 | Phase 4 | Pending |
+| REND-06 | Phase 4 | Pending |
+| REND-07 | Phase 4 | Pending |
+| BIND-01 | Phase 5 | Pending |
+| BIND-02 | Phase 5 | Pending |
+| BIND-03 | Phase 5 | Pending |
+| BIND-04 | Phase 5 | Pending |
+| BIND-05 | Phase 5 | Pending |
+| MSHL-01 | Phase 6 | Pending |
+| MSHL-02 | Phase 6 | Pending |
+| MSHL-03 | Phase 6 | Pending |
+| MSHL-04 | Phase 6 | Pending |
+| MSHL-05 | Phase 6 | Pending |
+| LGHT-01 | Phase 7 | Pending |
+| LGHT-02 | Phase 7 | Pending |
+| LGHT-03 | Phase 7 | Pending |
+| LGHT-04 | Phase 7 | Pending |
+| LGHT-05 | Phase 7 | Pending |
+| MOVE-01 | Phase 8 | Pending |
+| MOVE-02 | Phase 8 | Pending |
+| MOVE-03 | Phase 8 | Pending |
+| EDIT-01 | Phase 9 | Pending |
+| EDIT-02 | Phase 9 | Pending |
+| EDIT-03 | Phase 9 | Pending |
+| SAVE-01 | Phase 10 | Pending |
+| SAVE-02 | Phase 10 | Pending |
+| SAVE-03 | Phase 10 | Pending |
+| NINT-01 | Phase 11 | Pending |
+| NINT-02 | Phase 11 | Pending |
 | QUAL-01 | Phase 1 | Complete |
 
 **Coverage:**
-- v1 requirements: 21 total
-- Mapped to phases: 21
+- v1 requirements: 43 total
+- Mapped to phases: 43
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-03-15*  
-*Last updated: 2026-03-22 after Phase 3 re-verification*
+*Requirements defined: 2026-03-15*
+*Last updated: 2026-03-25 — added REND, BIND, MSHL, LGHT requirements for new rendering phases*
