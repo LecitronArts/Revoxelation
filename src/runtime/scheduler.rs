@@ -461,7 +461,9 @@ fn deactivate_chunk(ss: &mut StreamingState, key: ChunkKey) {
     }
 }
 
-fn drain_pending_render_deltas_into_renderer(
+/// Drain pending render deltas from streaming into the renderer.
+/// Called from app.rs event loop with owned references.
+pub fn drain_pending_render_deltas_into_renderer(
     streaming: &mut StreamingState,
     renderer: &mut crate::renderer::Renderer,
 ) {

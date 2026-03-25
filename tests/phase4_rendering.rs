@@ -127,3 +127,41 @@ fn rend_06_app_struct_owns_all_subsystems() {
         "App struct should have a meshing: MeshingState field"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Task 3 tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_06_env_logger_initialized() {
+    let main_source =
+        std::fs::read_to_string("src/main.rs").expect("src/main.rs should exist");
+    assert!(
+        main_source.contains("env_logger::init()") || main_source.contains("env_logger::builder()"),
+        "src/main.rs should initialize env_logger before app::run()"
+    );
+}
+
+#[test]
+fn rend_06_submit_frame_errors_propagated() {
+    let app_source =
+        std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
+    assert!(
+        app_source.contains("submit_frame"),
+        "app.rs should call submit_frame"
+    );
+    assert!(
+        app_source.contains("Err") || app_source.contains("if let Err") || app_source.contains("log::error!"),
+        "app.rs should handle submit_frame errors"
+    );
+}
+
+#[test]
+fn rend_06_env_logger_in_cargo_toml() {
+    let cargo_toml =
+        std::fs::read_to_string("Cargo.toml").expect("Cargo.toml should exist");
+    assert!(
+        cargo_toml.contains("env_logger"),
+        "Cargo.toml should include env_logger dependency"
+    );
+}

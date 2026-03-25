@@ -111,9 +111,10 @@ pub fn run() -> Result<()> {
                     );
 
                     // Drain pending render deltas and submit frame from app-owned renderer.
-                    while let Some(delta) = app.streaming.pending_render_deltas.pop_front() {
-                        app.renderer.enqueue_chunk_delta(delta);
-                    }
+                    crate::runtime::scheduler::drain_pending_render_deltas_into_renderer(
+                        &mut app.streaming,
+                        &mut app.renderer,
+                    );
                     if let Err(e) = crate::renderer::submit_frame(&mut app.renderer, app.frame_index) {
                         log::error!("submit_frame failed: {e:#}");
                     }
