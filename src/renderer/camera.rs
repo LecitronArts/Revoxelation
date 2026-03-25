@@ -1,0 +1,117 @@
+use glam::{Mat4, Vec3};
+
+/// Key abstraction for camera movement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraKey {
+    Forward,
+    Backward,
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// Push-constant-compatible camera uniforms (80 bytes).
+///
+/// Layout must match the GLSL `push_constant` block in the vertex shader.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CameraUniforms {
+    pub view_proj: [[f32; 4]; 4],
+    pub camera_pos: [f32; 3],
+    pub _pad: f32,
+}
+
+/// First-person-shooter style camera with position, yaw, and pitch.
+pub struct FpsCamera {
+    pub position: Vec3,
+    /// Yaw in radians (rotation around Y axis). 0 = looking along -Z.
+    pub yaw: f32,
+    /// Pitch in radians (rotation around X axis). Clamped to +/-89 degrees.
+    pub pitch: f32,
+    /// Vertical field-of-view in radians.
+    pub fov_y: f32,
+    /// Near clip plane distance.
+    pub near: f32,
+    /// Far clip plane distance.
+    pub far: f32,
+    /// Movement speed in units per second.
+    pub speed: f32,
+}
+
+impl Default for FpsCamera {
+    fn default() -> Self {
+        Self {
+            position: Vec3::new(32.0, 48.0, -60.0),
+            yaw: 0.0,
+            pitch: 0.0,
+            fov_y: 60.0_f32.to_radians(),
+            near: 0.1,
+            far: 2000.0,
+            speed: 20.0,
+        }
+    }
+}
+
+impl FpsCamera {
+    /// Forward direction derived from yaw and pitch (right-handed, -Z forward at yaw=0).
+    pub fn forward(&self) -> Vec3 {
+        Vec3::new(
+            self.yaw.sin() * self.pitch.cos(),
+            self.pitch.sin(),
+            -self.yaw.cos() * self.pitch.cos(),
+        )
+        .normalize_or_zero()
+    }
+
+    /// Right direction (perpendicular to forward and world-up).
+    pub fn right(&self) -> Vec3 {
+        self.forward().cross(Vec3::Y).normalize_or_zero()
+    }
+
+    /// Compute the combined view-projection matrix and return as CameraUniforms.
+    pub fn view_proj(&self, aspect: f32) -> CameraUniforms {
+        let forward = self.forward();
+        let target = self.position + forward;
+        let view = Mat4::look_at_rh(self.position, target, Vec3::Y);
+        let proj = Mat4::perspective_rh(self.fov_y, aspect, self.near, self.far);
+        let view_proj = proj * view;
+
+        CameraUniforms {
+            view_proj: view_proj.to_cols_array_2d(),
+            camera_pos: self.position.to_array(),
+            _pad: 0.0,
+        }
+    }
+
+    /// Process a keyboard movement key.
+    pub fn process_keyboard(&mut self, key: CameraKey, pressed: bool, dt: f32) {
+        if !pressed {
+            return;
+        }
+        let velocity = self.speed * dt;
+        let forward = self.forward();
+        let right = self.right();
+
+        match key {
+            CameraKey::Forward => self.position += forward * velocity,
+            CameraKey::Backward => self.position -= forward * velocity,
+            CameraKey::Left => self.position -= right * velocity,
+            CameraKey::Right => self.position += right * velocity,
+            CameraKey::Up => self.position += Vec3::Y * velocity,
+            CameraKey::Down => self.position -= Vec3::Y * velocity,
+        }
+    }
+
+    /// Process mouse delta for look rotation.
+    ///
+    /// `dx`/`dy` are raw pixel deltas. `sensitivity` scales the rotation.
+    pub fn process_mouse(&mut self, dx: f32, dy: f32, sensitivity: f32) {
+        self.yaw += dx * sensitivity * 0.01;
+        self.pitch -= dy * sensitivity * 0.01;
+
+        // Clamp pitch to +/- 89 degrees.
+        let max_pitch = 89.0_f32.to_radians();
+        self.pitch = self.pitch.clamp(-max_pitch, max_pitch);
+    }
+}

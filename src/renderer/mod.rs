@@ -6,6 +6,7 @@ use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 
 use crate::{meshing::PackedMesh, streaming::types::ChunkKey};
 
+pub mod camera;
 pub mod chunk_pool;
 pub mod cull_pipeline;
 pub mod device;

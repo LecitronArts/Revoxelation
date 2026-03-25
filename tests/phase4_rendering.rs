@@ -165,3 +165,81 @@ fn rend_06_env_logger_in_cargo_toml() {
         "Cargo.toml should include env_logger dependency"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 04-02 Task 1 — FpsCamera and CameraUniforms
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_01_camera_view_proj_is_valid() {
+    use revoxelation::renderer::camera::FpsCamera;
+    let camera = FpsCamera::default();
+    let uniforms = camera.view_proj(16.0 / 9.0);
+    // view_proj must not be identity
+    let identity: [[f32; 4]; 4] = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    assert_ne!(uniforms.view_proj, identity, "view_proj must not be identity");
+    // All values must be finite
+    for row in &uniforms.view_proj {
+        for val in row {
+            assert!(val.is_finite(), "view_proj must contain only finite values");
+        }
+    }
+}
+
+#[test]
+fn rend_01_camera_uniforms_size_is_80_bytes() {
+    use revoxelation::renderer::camera::CameraUniforms;
+    assert_eq!(
+        std::mem::size_of::<CameraUniforms>(),
+        80,
+        "CameraUniforms must be exactly 80 bytes for push constants"
+    );
+}
+
+#[test]
+fn rend_01_camera_movement_changes_position() {
+    use revoxelation::renderer::camera::FpsCamera;
+    let mut camera = FpsCamera::default();
+    let original_pos = camera.position;
+    camera.process_keyboard(revoxelation::renderer::camera::CameraKey::Forward, true, 1.0 / 60.0);
+    assert_ne!(
+        camera.position, original_pos,
+        "Camera position should change after forward movement"
+    );
+}
+
+#[test]
+fn rend_01_camera_pitch_clamped() {
+    use revoxelation::renderer::camera::FpsCamera;
+    let mut camera = FpsCamera::default();
+    // Try to look straight down — pitch should be clamped
+    camera.process_mouse(0.0, 10000.0, 0.1);
+    assert!(
+        camera.pitch >= -89.0_f32.to_radians() - 0.01,
+        "Pitch should be clamped to >= -89 degrees, got {}",
+        camera.pitch.to_degrees()
+    );
+    assert!(
+        camera.pitch <= 89.0_f32.to_radians() + 0.01,
+        "Pitch should be clamped to <= 89 degrees, got {}",
+        camera.pitch.to_degrees()
+    );
+    // Reset and look straight up
+    camera.pitch = 0.0;
+    camera.process_mouse(0.0, -10000.0, 0.1);
+    assert!(
+        camera.pitch >= -89.0_f32.to_radians() - 0.01,
+        "Pitch should be clamped to >= -89 degrees after looking up, got {}",
+        camera.pitch.to_degrees()
+    );
+    assert!(
+        camera.pitch <= 89.0_f32.to_radians() + 0.01,
+        "Pitch should be clamped to <= 89 degrees after looking up, got {}",
+        camera.pitch.to_degrees()
+    );
+}
