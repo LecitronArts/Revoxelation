@@ -16,6 +16,7 @@ pub mod helpers;
 pub mod hiz;
 pub mod instance;
 pub mod mesh_pipeline;
+pub mod perf_counters;
 pub mod pipeline_cache;
 pub mod spirv;
 pub mod staging;

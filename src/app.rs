@@ -15,6 +15,7 @@ use crate::renderer::{
     mesh_pipeline::ChunkMeshPipeline, staging_ring::StagingRing, camera::{CameraKey, FpsCamera},
     swapchain::recreate_swapchain_context,
     pipeline_cache::PipelineCache,
+    perf_counters::GpuPerfCounters,
 };
 use crate::runtime::scheduler::StreamingState;
 
@@ -40,6 +41,8 @@ pub struct App {
     pub needs_resize: bool,
     /// Current window extent (updated on Resized events).
     pub window_extent: vk::Extent2D,
+    /// GPU performance counters for the HUD overlay.
+    pub perf_counters: GpuPerfCounters,
 }
 
 /// Tracks which movement keys are currently held down.
@@ -95,6 +98,7 @@ pub fn run() -> Result<()> {
         last_frame_time: Instant::now(),
         needs_resize: false,
         window_extent: extent,
+        perf_counters: GpuPerfCounters::default(),
     };
 
     event_loop
@@ -204,6 +208,12 @@ pub fn run() -> Result<()> {
                     let full_output = app.egui_ctx.run(raw_input, |ctx| {
                         egui::Window::new("Debug").show(ctx, |ui| {
                             ui.label(format!("Frame: {}", app.frame_index));
+                            ui.separator();
+                            let pc = &app.perf_counters;
+                            ui.label(format!(
+                                "Chunks: {}/{} | Frame: {:.1}ms",
+                                pc.visible_chunks, pc.total_chunks, pc.frame_time_ms
+                            ));
                         });
                     });
 
@@ -243,6 +253,16 @@ pub fn run() -> Result<()> {
                             log::error!("submit_frame failed: {e:#}");
                         }
                     }
+
+                    // Update performance counters for next frame's HUD.
+                    let frame_time_ms = dt * 1000.0;
+                    let total_chunks = app.renderer.chunk_pool.as_ref()
+                        .map(|cp| cp.active_draw_count())
+                        .unwrap_or(0);
+                    app.perf_counters.frame_time_ms = frame_time_ms;
+                    app.perf_counters.total_chunks = total_chunks;
+                    // visible_chunks approximated as total (actual readback deferred to future)
+                    app.perf_counters.visible_chunks = total_chunks;
 
                     app.frame_index = app.frame_index.saturating_add(1);
                 }
