@@ -27,7 +27,7 @@ pub(crate) use helpers::{
     destroy_allocated_image,
 };
 pub use staging::StagingBuffer;
-pub use submit::{submit_frame, submit_frame_sequence};
+pub use submit::{FrameOutcome, submit_frame, submit_frame_sequence};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RenderDelta {

@@ -19,7 +19,15 @@ pub fn submit_frame_sequence() -> &'static [&'static str] {
     ]
 }
 
-pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms: &CameraUniforms) -> Result<()> {
+/// Whether a frame was submitted or swapchain recreation is needed.
+pub enum FrameOutcome {
+    /// Frame submitted and presented successfully.
+    Submitted,
+    /// Swapchain is out of date — caller must recreate before next frame.
+    NeedsRecreate,
+}
+
+pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms: &CameraUniforms) -> Result<FrameOutcome> {
     let current_frame = renderer.current_frame;
     let command_buffer = renderer.frames[current_frame].command_buffer;
     let image_available = renderer.frames[current_frame].image_available;
@@ -30,7 +38,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
     let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
     let command_buffers = [command_buffer];
 
-    unsafe {
+    let needs_recreate = unsafe {
         renderer
             .device_ctx
             .device
@@ -42,7 +50,8 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             staging_ring.reset_current_frame();
         }
 
-        let (image_index, _) = renderer
+        // D-05: ERROR_OUT_OF_DATE_KHR from acquire_next_image → skip frame, recreate.
+        let acquire_result = renderer
             .swapchain_ctx
             .swapchain_loader
             .acquire_next_image(
@@ -50,8 +59,17 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                 u64::MAX,
                 image_available,
                 vk::Fence::null(),
-            )
-            .context("failed to acquire Vulkan swapchain image")?;
+            );
+        let (image_index, _suboptimal) = match acquire_result {
+            Ok(pair) => pair,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                log::info!("acquire_next_image returned ERROR_OUT_OF_DATE_KHR — requesting swapchain recreation");
+                return Ok(FrameOutcome::NeedsRecreate);
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("failed to acquire Vulkan swapchain image: {e}"));
+            }
+        };
 
         renderer
             .device_ctx
@@ -221,7 +239,8 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
 
         let swapchains = [renderer.swapchain_ctx.swapchain];
         let image_indices = [image_index];
-        renderer
+        // D-06: SUBOPTIMAL or OUT_OF_DATE from queue_present → recreate after present completes.
+        let present_result = renderer
             .swapchain_ctx
             .swapchain_loader
             .queue_present(
@@ -230,9 +249,25 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                     .wait_semaphores(&signal_semaphores)
                     .swapchains(&swapchains)
                     .image_indices(&image_indices),
-            )
-            .context("failed to present Vulkan swapchain image")?;
-    }
+            );
+        let needs_recreate = match present_result {
+            Ok(false) => false, // success, not suboptimal
+            Ok(true) => {
+                // SUBOPTIMAL — present succeeded but swapchain should be recreated.
+                log::info!("queue_present returned SUBOPTIMAL — requesting swapchain recreation");
+                true
+            }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                log::info!("queue_present returned ERROR_OUT_OF_DATE_KHR — requesting swapchain recreation");
+                true
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("failed to present Vulkan swapchain image: {e}"));
+            }
+        };
+
+        needs_recreate
+    };
 
     // Advance staging ring to next frame's region for the next submit.
     if let Some(staging_ring) = renderer.staging_ring.as_mut() {
@@ -240,5 +275,10 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
     }
 
     renderer.current_frame = (renderer.current_frame + 1) % renderer.frames.len();
-    Ok(())
+
+    if needs_recreate {
+        Ok(FrameOutcome::NeedsRecreate)
+    } else {
+        Ok(FrameOutcome::Submitted)
+    }
 }

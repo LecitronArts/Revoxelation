@@ -11,8 +11,9 @@ use winit::{
 
 use crate::meshing::MeshingState;
 use crate::renderer::{
-    Renderer, chunk_pool::ChunkPool, cull_pipeline::ChunkCullPipeline, egui_backend::EguiAshBackend,
+    Renderer, FrameOutcome, chunk_pool::ChunkPool, cull_pipeline::ChunkCullPipeline, egui_backend::EguiAshBackend,
     mesh_pipeline::ChunkMeshPipeline, staging_ring::StagingRing, camera::{CameraKey, FpsCamera},
+    swapchain::recreate_swapchain_context,
 };
 use crate::runtime::scheduler::StreamingState;
 
@@ -34,6 +35,10 @@ pub struct App {
     /// Tracked key states for continuous movement.
     pub keys_pressed: KeysPressed,
     pub last_frame_time: Instant,
+    /// D-08: Flag indicating swapchain recreation is needed before next acquire.
+    pub needs_resize: bool,
+    /// Current window extent (updated on Resized events).
+    pub window_extent: vk::Extent2D,
 }
 
 /// Tracks which movement keys are currently held down.
@@ -85,6 +90,8 @@ pub fn run() -> Result<()> {
         frame_index: 0,
         keys_pressed: KeysPressed::default(),
         last_frame_time: Instant::now(),
+        needs_resize: false,
+        window_extent: extent,
     };
 
     event_loop
@@ -100,6 +107,19 @@ pub fn run() -> Result<()> {
             }
             Event::WindowEvent { window_id, event } if window_id == window.id() => match event {
                 WindowEvent::CloseRequested => elwt.exit(),
+                // D-08: Handle window Resized — store new extent, flag for recreation.
+                WindowEvent::Resized(new_size) => {
+                    app.window_extent = vk::Extent2D {
+                        width: new_size.width,
+                        height: new_size.height,
+                    };
+                    app.needs_resize = true;
+                    log::info!(
+                        "Window Resized to {}x{} — flagged for swapchain recreation",
+                        new_size.width,
+                        new_size.height,
+                    );
+                }
                 WindowEvent::KeyboardInput {
                     event:
                         KeyEvent {
@@ -122,6 +142,26 @@ pub fn run() -> Result<()> {
                     }
                 }
                 WindowEvent::RedrawRequested => {
+                    // D-07: When window extent is 0×0 (minimized), skip rendering entirely.
+                    let size = window.inner_size();
+                    if size.width == 0 || size.height == 0 {
+                        return;
+                    }
+
+                    // D-08: If needs_resize, recreate swapchain before rendering.
+                    if app.needs_resize {
+                        let new_extent = vk::Extent2D {
+                            width: size.width,
+                            height: size.height,
+                        };
+                        if let Err(e) = recreate_swapchain_context(&mut app.renderer, new_extent) {
+                            log::error!("Failed to recreate swapchain on resize: {e:#}");
+                            return;
+                        }
+                        app.needs_resize = false;
+                        app.window_extent = new_extent;
+                    }
+
                     // Delta time for smooth movement.
                     let now = Instant::now();
                     let dt = now.duration_since(app.last_frame_time).as_secs_f32();
@@ -147,7 +187,6 @@ pub fn run() -> Result<()> {
                         app.camera.process_keyboard(CameraKey::Down, true, dt);
                     }
 
-                    let size = window.inner_size();
                     let screen_size = [size.width as f32, size.height as f32];
 
                     // Build egui frame.
@@ -191,8 +230,15 @@ pub fn run() -> Result<()> {
                     );
                     let aspect = if screen_size[1] > 0.0 { screen_size[0] / screen_size[1] } else { 1.0 };
                     let camera_uniforms = app.camera.view_proj(aspect);
-                    if let Err(e) = crate::renderer::submit_frame(&mut app.renderer, app.frame_index, &camera_uniforms) {
-                        log::error!("submit_frame failed: {e:#}");
+                    match crate::renderer::submit_frame(&mut app.renderer, app.frame_index, &camera_uniforms) {
+                        Ok(FrameOutcome::Submitted) => {}
+                        Ok(FrameOutcome::NeedsRecreate) => {
+                            // submit_frame signalled swapchain is stale — recreate next frame.
+                            app.needs_resize = true;
+                        }
+                        Err(e) => {
+                            log::error!("submit_frame failed: {e:#}");
+                        }
                     }
 
                     app.frame_index = app.frame_index.saturating_add(1);

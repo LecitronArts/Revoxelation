@@ -14,7 +14,7 @@ fn renderer_module_types_compile() {
 
 #[test]
 fn submit_frame_fn_exists() {
-    let _: fn(&mut revoxelation::renderer::Renderer, u64, &revoxelation::renderer::camera::CameraUniforms) -> anyhow::Result<()> =
+    let _: fn(&mut revoxelation::renderer::Renderer, u64, &revoxelation::renderer::camera::CameraUniforms) -> anyhow::Result<revoxelation::renderer::FrameOutcome> =
         revoxelation::renderer::submit_frame;
 }
 
