@@ -31,7 +31,7 @@
 - [x] **REND-04**: Hi-Z occlusion culling uses depth pyramid to reject occluded chunks before draw.
 - [x] **REND-05**: All chunk GPU buffers use GpuOnly memory with proper staging pipeline; no queue_wait_idle in hot path.
 - [x] **REND-06**: OnceLock global state replaced with App-struct dependency injection for testability.
-- [ ] **REND-07**: Pipeline cache persists across runs; egui HUD displays GPU performance statistics.
+- [x] **REND-07**: Pipeline cache persists across runs; egui HUD displays GPU performance statistics.
 
 ### Bindless and GPU Scene
 
@@ -131,7 +131,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REND-04 | Phase 4 | Complete |
 | REND-05 | Phase 4 | Complete |
 | REND-06 | Phase 4 | Pending |
-| REND-07 | Phase 4 | Pending |
+| REND-07 | Phase 4 | Complete |
 | BIND-01 | Phase 5 | Pending |
 | BIND-02 | Phase 5 | Pending |
 | BIND-03 | Phase 5 | Pending |

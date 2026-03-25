@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 04-rendering-foundation-overhaul
-status: Active
-last_updated: "2026-03-25T11:37:49+00:00"
+status: completed
+last_updated: "2026-03-25T13:31:03.041Z"
 progress:
   total_phases: 12
-  completed_phases: 4
-  total_plans: 38
-  completed_plans: 22
+  completed_phases: 5
+  total_plans: 23
+  completed_plans: 23
 ---
 
 # Session State
@@ -22,7 +22,16 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 04-rendering-foundation-overhaul
-**Status:** Plan 04-06 complete (2026-03-25). Hi-Z occlusion culling: depth pyramid generation + cull shader integration. Ready for Plan 04-07.
+**Status:** Phase 04 complete (2026-03-25). All 7 plans (REND-01 through REND-07) implemented. Ready for Phase 05 — Bindless Architecture & GPU Scene.
+
+## Key Decisions (Phase 4 Plan 07)
+
+- Pipeline cache stored at cache/pipeline.bin, auto-created directory, saved in Renderer::drop
+- All create_*_pipelines calls use shared PipelineCache handle (no null handles)
+- GpuPerfCounters: visible_chunks, total_chunks, frame_time_ms, gpu_time_ms; displayed in egui HUD
+- Shader hot-reload: cfg(debug_assertions) + feature=hot-reload, polls mtime every 60 frames
+- RuntimeConfig from config.toml: hiz_enabled, show_hud, camera_speed, camera_fov with defaults
+- shaderc added as optional runtime dep; toml for config parsing
 
 ## Roadmap Restructure (2026-03-25)
 
@@ -81,3 +90,4 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - 2026-03-25: Executed 04-05-PLAN.md — GPU-driven frustum culling, 6-plane AABB P-vertex test, atomicAdd compaction (REND-03)
 - 2026-03-25: Executed 04-03-PLAN.md — Swapchain lifecycle: FrameOutcome enum, resize/OUT_OF_DATE/SUBOPTIMAL handling, minimization skip (REND-02)
 - 2026-03-25: Executed 04-06-PLAN.md — Hi-Z occlusion culling: depth pyramid generation, cull shader integration, runtime toggle (REND-04)
+- 2026-03-25: Executed 04-07-PLAN.md — Pipeline cache, perf counters, egui HUD, shader hot-reload, runtime config (REND-07). Phase 4 COMPLETE.
