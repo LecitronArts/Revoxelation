@@ -511,6 +511,7 @@ fn mesh_03_build_script_and_indirect_submit_contract() {
             "bind_chunk_pipeline",
             "draw_indexed_indirect",
             "egui",
+            "hiz_generate",
         ]
     );
 }

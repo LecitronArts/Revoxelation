@@ -652,3 +652,41 @@ fn rend_04_hiz_module_exists() {
         "hiz.rs must define HiZPyramid struct"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 04-06 Task 2 — Hi-Z occlusion test in cull shader
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rend_04_cull_shader_has_hiz_test() {
+    let source = std::fs::read_to_string("shaders/chunk_cull.comp")
+        .expect("shaders/chunk_cull.comp should exist");
+    assert!(
+        source.contains("hiz") || source.contains("occlusion"),
+        "Cull shader must reference hiz or occlusion"
+    );
+    assert!(
+        source.contains("textureLod"),
+        "Cull shader must contain textureLod for Hi-Z sampling"
+    );
+}
+
+#[test]
+fn rend_04_cull_pipeline_has_hiz_binding() {
+    let source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
+        .expect("src/renderer/cull_pipeline.rs should exist");
+    assert!(
+        source.contains("COMBINED_IMAGE_SAMPLER"),
+        "Cull pipeline must include a combined image sampler binding for Hi-Z"
+    );
+}
+
+#[test]
+fn rend_04_hiz_toggle_exists() {
+    let source = std::fs::read_to_string("shaders/chunk_cull.comp")
+        .expect("shaders/chunk_cull.comp should exist");
+    assert!(
+        source.contains("hiz_enabled"),
+        "Cull shader must contain hiz_enabled toggle flag"
+    );
+}

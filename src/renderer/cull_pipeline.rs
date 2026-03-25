@@ -10,6 +10,18 @@ use super::camera::FrustumPlanes;
 /// Workgroup size matching the compute shader's `local_size_x`.
 const WORKGROUP_SIZE: u32 = 64;
 
+/// Hi-Z config data uploaded to the GPU SSBO (binding 6).
+///
+/// Layout must match the GLSL `HiZConfigBuffer` struct in chunk_cull.comp.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct HiZConfig {
+    pub view_proj: [[f32; 4]; 4], // mat4
+    pub hiz_size: [f32; 2],       // vec2 (hiz width, height)
+    pub hiz_enabled: u32,         // 1 = enabled, 0 = disabled
+    pub hiz_mip_count: u32,       // number of mip levels
+}
+
 pub struct ChunkCullPipeline {
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
@@ -24,12 +36,16 @@ pub struct ChunkCullPipeline {
     /// Draw count buffer (4 bytes) — GpuOnly, reset via vkCmdFillBuffer each frame.
     pub draw_count_buffer: vk::Buffer,
     pub draw_count_allocation: Option<Allocation>,
+    /// Hi-Z config SSBO (binding 6). CpuToGpu for per-frame update.
+    pub hiz_config_buffer: vk::Buffer,
+    pub hiz_config_allocation: Option<Allocation>,
+    hiz_config_mapped: *mut u8,
 }
 
 // Safety: raw pointer is only used for mapped writes from the main thread.
 unsafe impl Send for ChunkCullPipeline {}
 
-pub fn cull_descriptor_layout_bindings() -> [vk::DescriptorSetLayoutBinding<'static>; 6] {
+pub fn cull_descriptor_layout_bindings() -> [vk::DescriptorSetLayoutBinding<'static>; 8] {
     [
         // binding 0: chunk metadata (read)
         vk::DescriptorSetLayoutBinding::default()
@@ -67,6 +83,18 @@ pub fn cull_descriptor_layout_bindings() -> [vk::DescriptorSetLayoutBinding<'sta
             .descriptor_count(1)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        // binding 6: Hi-Z config (read) — view_proj + hiz_size + flags
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(6)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        // binding 7: Hi-Z pyramid combined image sampler (read)
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(7)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
     ]
 }
 
@@ -82,9 +110,14 @@ impl ChunkCullPipeline {
                 )
                 .context("failed to create chunk cull descriptor set layout")?
         };
-        let pool_sizes = [vk::DescriptorPoolSize::default()
-            .ty(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(bindings.len() as u32)];
+        let pool_sizes = [
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(7), // bindings 0-6
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1), // binding 7
+        ];
         let descriptor_pool = unsafe {
             device
                 .create_descriptor_pool(
@@ -133,6 +166,20 @@ impl ChunkCullPipeline {
             "cull-draw-count",
         )?;
 
+        // Create Hi-Z config buffer (CpuToGpu for per-frame update)
+        let (hiz_config_buffer, hiz_config_allocation) = create_allocated_buffer(
+            renderer,
+            size_of::<HiZConfig>() as u64,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            MemoryLocation::CpuToGpu,
+            AllocationScheme::GpuAllocatorManaged,
+            "cull-hiz-config",
+        )?;
+        let hiz_config_mapped = hiz_config_allocation
+            .mapped_ptr()
+            .map(|p| p.as_ptr() as *mut u8)
+            .unwrap_or(std::ptr::null_mut());
+
         let chunk_pool = renderer
             .chunk_pool
             .as_ref()
@@ -162,7 +209,14 @@ impl ChunkCullPipeline {
             .buffer(draw_count_buffer)
             .offset(0)
             .range(size_of::<u32>() as u64)];
-        let writes = [
+        let hiz_config_buffer_info = [vk::DescriptorBufferInfo::default()
+            .buffer(hiz_config_buffer)
+            .offset(0)
+            .range(size_of::<HiZConfig>() as u64)];
+
+        // For binding 7 (Hi-Z pyramid), write a placeholder if no pyramid exists yet.
+        // We'll update it when the Hi-Z pyramid is created.
+        let mut writes = vec![
             vk::WriteDescriptorSet::default()
                 .dst_set(descriptor_set)
                 .dst_binding(0)
@@ -193,7 +247,29 @@ impl ChunkCullPipeline {
                 .dst_binding(5)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&draw_count_buffer_info),
+            vk::WriteDescriptorSet::default()
+                .dst_set(descriptor_set)
+                .dst_binding(6)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&hiz_config_buffer_info),
         ];
+
+        // Write Hi-Z pyramid descriptor if available.
+        let hiz_image_info;
+        if let Some(hiz) = renderer.hiz_pyramid.as_ref() {
+            hiz_image_info = [vk::DescriptorImageInfo::default()
+                .image_view(hiz.full_view)
+                .sampler(hiz.sampler)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            writes.push(
+                vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor_set)
+                    .dst_binding(7)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(&hiz_image_info),
+            );
+        }
+
         unsafe {
             renderer.device_ctx.device.update_descriptor_sets(&writes, &[]);
         }
@@ -258,6 +334,9 @@ impl ChunkCullPipeline {
             frustum_planes_mapped,
             draw_count_buffer,
             draw_count_allocation: Some(draw_count_allocation),
+            hiz_config_buffer,
+            hiz_config_allocation: Some(hiz_config_allocation),
+            hiz_config_mapped,
         })
     }
 
@@ -269,6 +348,33 @@ impl ChunkCullPipeline {
         let src = planes as *const FrustumPlanes as *const u8;
         unsafe {
             std::ptr::copy_nonoverlapping(src, self.frustum_planes_mapped, size_of::<FrustumPlanes>());
+        }
+    }
+
+    /// Upload Hi-Z config to the GPU SSBO (direct mapped write, CpuToGpu buffer).
+    pub fn upload_hiz_config(&self, config: &HiZConfig) {
+        if self.hiz_config_mapped.is_null() {
+            return;
+        }
+        let src = config as *const HiZConfig as *const u8;
+        unsafe {
+            std::ptr::copy_nonoverlapping(src, self.hiz_config_mapped, size_of::<HiZConfig>());
+        }
+    }
+
+    /// Update the Hi-Z pyramid descriptor binding (called when pyramid is created/recreated).
+    pub fn update_hiz_descriptor(&self, device: &ash::Device, hiz_view: vk::ImageView, hiz_sampler: vk::Sampler) {
+        let image_info = [vk::DescriptorImageInfo::default()
+            .image_view(hiz_view)
+            .sampler(hiz_sampler)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+        let writes = [vk::WriteDescriptorSet::default()
+            .dst_set(self.descriptor_set)
+            .dst_binding(7)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&image_info)];
+        unsafe {
+            device.update_descriptor_sets(&writes, &[]);
         }
     }
 
@@ -365,6 +471,9 @@ impl ChunkCullPipeline {
         }
         if let Some(allocation) = self.draw_count_allocation.take() {
             let _ = destroy_allocated_buffer(renderer, self.draw_count_buffer, allocation);
+        }
+        if let Some(allocation) = self.hiz_config_allocation.take() {
+            let _ = destroy_allocated_buffer(renderer, self.hiz_config_buffer, allocation);
         }
     }
 }

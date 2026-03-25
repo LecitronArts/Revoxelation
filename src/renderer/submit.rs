@@ -4,6 +4,7 @@ use glam::Mat4;
 
 use super::Renderer;
 use super::camera::{CameraUniforms, extract_frustum_planes};
+use super::cull_pipeline::HiZConfig;
 
 pub fn submit_frame_sequence() -> &'static [&'static str] {
     &[
@@ -16,6 +17,7 @@ pub fn submit_frame_sequence() -> &'static [&'static str] {
         "bind_chunk_pipeline",
         "draw_indexed_indirect",
         "egui",
+        "hiz_generate",
     ]
 }
 
@@ -112,12 +114,28 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             );
         }
 
+        // Upload Hi-Z config and dispatch cull shader.
         if let (Some(cull_pipeline), Some(chunk_pool)) =
             (&renderer.cull_pipeline, &renderer.chunk_pool)
         {
             let view_proj = Mat4::from_cols_array_2d(&camera_uniforms.view_proj);
             let frustum_planes = extract_frustum_planes(&view_proj);
             let active_draw_count = chunk_pool.active_draw_count();
+
+            // Upload Hi-Z config to the cull pipeline SSBO.
+            let hiz_enabled = renderer.hiz_pyramid.is_some();
+            let (hiz_w, hiz_h, hiz_mips) = if let Some(hiz) = &renderer.hiz_pyramid {
+                (hiz.width as f32, hiz.height as f32, hiz.mip_count)
+            } else {
+                (1.0, 1.0, 1)
+            };
+            let hiz_config = HiZConfig {
+                view_proj: camera_uniforms.view_proj,
+                hiz_size: [hiz_w, hiz_h],
+                hiz_enabled: if hiz_enabled { 1 } else { 0 },
+                hiz_mip_count: hiz_mips,
+            };
+            cull_pipeline.upload_hiz_config(&hiz_config);
 
             cull_pipeline.dispatch(
                 &renderer.device_ctx.device,
@@ -216,6 +234,63 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         }
 
         renderer.device_ctx.device.cmd_end_render_pass(command_buffer);
+
+        // After render pass: generate Hi-Z depth pyramid from the current frame's depth output
+        // for the NEXT frame's occlusion culling (D-04: 1-frame temporal latency).
+        if renderer.hiz_pyramid.is_some() {
+            // Transition depth image: DEPTH_STENCIL_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
+            let depth_to_read = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .image(renderer.swapchain_ctx.depth_image)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                        .level_count(1)
+                        .layer_count(1),
+                );
+            renderer.device_ctx.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[depth_to_read],
+            );
+
+            // Dispatch Hi-Z generation.
+            if let Some(hiz) = &renderer.hiz_pyramid {
+                hiz.generate(&renderer.device_ctx.device, command_buffer);
+            }
+
+            // Transition depth image back: SHADER_READ_ONLY_OPTIMAL → DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            // for the next frame's render pass.
+            let depth_to_attach = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .src_access_mask(vk::AccessFlags::SHADER_READ)
+                .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ)
+                .image(renderer.swapchain_ctx.depth_image)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                        .level_count(1)
+                        .layer_count(1),
+                );
+            renderer.device_ctx.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[depth_to_attach],
+            );
+        }
+
         renderer
             .device_ctx
             .device
