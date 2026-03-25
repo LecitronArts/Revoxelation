@@ -30,7 +30,7 @@
 - [ ] **REND-03**: GPU-driven frustum culling via compute shader tests chunk AABB against 6 frustum planes.
 - [ ] **REND-04**: Hi-Z occlusion culling uses depth pyramid to reject occluded chunks before draw.
 - [ ] **REND-05**: All chunk GPU buffers use GpuOnly memory with proper staging pipeline; no queue_wait_idle in hot path.
-- [ ] **REND-06**: OnceLock global state replaced with App-struct dependency injection for testability.
+- [x] **REND-06**: OnceLock global state replaced with App-struct dependency injection for testability.
 - [ ] **REND-07**: Pipeline cache persists across runs; egui HUD displays GPU performance statistics.
 
 ### Bindless and GPU Scene

@@ -106,7 +106,7 @@ Plans:
 **Plans**: 7 plans
 
 Plans:
-- [ ] 04-01: Infrastructure fixes + dependency injection refactor (env_logger, App struct, error propagation).
+- [x] 04-01: Infrastructure fixes + dependency injection refactor (env_logger, App struct, error propagation).
 - [ ] 04-02: Real camera system + push constants (FPS camera, MVP, dynamic viewport/scissor).
 - [ ] 04-03: Swapchain recreation + window management (resize, OUT_OF_DATE, minimize).
 - [ ] 04-04: GpuOnly memory model + async transfer (ring-buffer staging, transfer queue).
@@ -236,7 +236,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 
 | 2. Streaming Lifecycle and Job Queues | 2/2 | Complete | 2026-03-21 |
 | 2.5. Vulkan Bootstrap and Render Infrastructure | 2/2 | Complete | 2026-03-21 |
 | 3. Greedy Meshing and Render Delta Sync | 7/7 | Complete | 2026-03-22 |
-| 4. Rendering Foundation Overhaul | 0/7 | Not started | - |
+| 4. Rendering Foundation Overhaul | 1/7 | In Progress | - |
 | 5. Bindless Architecture and GPU Scene | 0/5 | Not started | - |
 | 6. Meshlet Pipeline | 0/5 | Not started | - |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
