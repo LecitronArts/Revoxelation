@@ -9,7 +9,7 @@ progress:
   total_phases: 12
   completed_phases: 4
   total_plans: 38
-  completed_plans: 19
+  completed_plans: 20
 ---
 
 # Session State
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 04-rendering-foundation-overhaul
-**Status:** Plan 04-04 complete (2026-03-25). GpuOnly memory migration with StagingRing upload path. Ready for Plan 04-05.
+**Status:** Plan 04-05 complete (2026-03-25). GPU-driven frustum culling via compute shader with 6-plane AABB test. Ready for Plan 04-06.
 
 ## Roadmap Restructure (2026-03-25)
 
@@ -31,6 +31,14 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - **Phase 5**: Bindless Architecture & GPU Scene (5 plans) — Vulkan 1.2 + 1.0 fallback, bindless descriptors, materials
 - **Phase 6**: Meshlet Pipeline (5 plans) — meshlet generation, GPU culling, mesh shader path
 - **Phase 7**: Lighting & Shadows (5 plans) — PBR, CSM, SSAO, voxel AO, sky/atmosphere
+
+## Key Decisions (Phase 4 Plan 05)
+
+- FrustumPlanes: 6 x [f32;4] = 96 bytes via SSBO (not push constants — exceeds 128B combined with camera)
+- Gribb-Hartmann extraction with normalized normals for correct distance testing
+- Cull shader: local_size_x=64, P-vertex AABB test, atomicAdd compaction into dense output
+- Draw count buffer: single u32 GpuOnly, reset via vkCmdFillBuffer each frame
+- Frustum planes buffer: CpuToGpu for mapped writes (96 bytes too small to justify staging)
 
 ## Key Decisions (Phase 4 Plan 04)
 
@@ -53,4 +61,4 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - 2026-03-25: Roadmap restructured — 4 rendering phases inserted, gameplay phases renumbered to 8-11
 - 2026-03-25: Executed 04-01-PLAN.md — OnceLock globals eliminated, App struct DI, env_logger
 - 2026-03-25: Executed 04-02-PLAN.md — FPS camera, push constants, dynamic viewport/scissor
-- 2026-03-25: Executed 04-04-PLAN.md — GpuOnly memory, StagingRing, vkCmdCopyBuffer uploads (REND-05)
+- 2026-03-25: Executed 04-05-PLAN.md — GPU-driven frustum culling, 6-plane AABB P-vertex test, atomicAdd compaction (REND-03)
