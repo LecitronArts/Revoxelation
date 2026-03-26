@@ -360,15 +360,16 @@ fn gen_grass_side() -> TexPixels {
     let mut tex = new_tex();
     for y in 0..TEX_SIZE {
         for x in 0..TEX_SIZE {
-            if y < 4 {
-                // Top strip — green
+            if y >= TEX_SIZE - 4 {
+                // High texture-y → high V → top of block face (high world-Y).
+                // Green strip where the grass top meets the side.
                 let n = noise(x, y, 3) as i16;
                 let r = (70 + (n - 128) / 10).clamp(0, 255) as u8;
                 let g = (160 + (n - 128) / 6).clamp(0, 255) as u8;
                 let b = (45 + (n - 128) / 12).clamp(0, 255) as u8;
                 set_pixel(&mut tex, x, y, r, g, b, 255);
             } else {
-                // Bottom — dirt
+                // Low texture-y → low V → bottom of block face. Dirt.
                 let n = noise(x, y, 1) as i16;
                 let r = (139 + (n - 128) / 8).clamp(0, 255) as u8;
                 let g = (90 + (n - 128) / 10).clamp(0, 255) as u8;

@@ -148,11 +148,13 @@ impl ChunkMeshPipeline {
         bindless_set: vk::DescriptorSet,
     ) {
         let extent = renderer.swapchain_ctx.extent;
+        // Negative-height viewport flips Vulkan's Y-down clip space to Y-up,
+        // matching glam's perspective_rh (OpenGL convention). Core since Vulkan 1.1.
         let viewport = vk::Viewport {
             x: 0.0,
-            y: 0.0,
+            y: extent.height as f32,
             width: extent.width as f32,
-            height: extent.height as f32,
+            height: -(extent.height as f32),
             min_depth: 0.0,
             max_depth: 1.0,
         };

@@ -40,7 +40,17 @@ pub fn pack_quad(quad: &GreedyQuad, vertices: &mut Vec<PackedVertex>, indices: &
         let mut pos = quad.origin;
         pos[u_axis] = quad.origin[u_axis] + du;
         pos[v_axis] = quad.origin[v_axis] + dv;
-        let mut vertex = pack_vertex(pos, face, quad.block_id, [du, dv]);
+        // For side faces, texture V must map to the world-Y direction so that
+        // "top of texture" = "top of block" (e.g. grass side green strip).
+        //   X faces (axis 0): u_axis=Y, v_axis=Z → swap UV so V = du (Y).
+        //   Z faces (axis 2): u_axis=X, v_axis=Y → V = dv (Y), already correct.
+        //   Y faces (axis 1): top/bottom, UV orientation doesn't matter for Y-based lookup.
+        let uv = if quad.axis == 0 {
+            [dv, du]
+        } else {
+            [du, dv]
+        };
+        let mut vertex = pack_vertex(pos, face, quad.block_id, uv);
         if quad.is_skirt {
             vertex.0[0] |= 1 << 24;
         }
