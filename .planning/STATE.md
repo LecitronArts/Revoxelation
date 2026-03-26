@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 05-bindless-architecture-and-gpu-scene
-status: completed
-last_updated: "2026-03-26T05:12:19.099Z"
+status: planning
+last_updated: "2026-03-26T05:22:55.529Z"
 progress:
   total_phases: 12
   completed_phases: 6
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 05-bindless-architecture-and-gpu-scene
-**Status:** Phase 5 COMPLETE — all 5 plans (BIND-01 through BIND-05) done
+**Status:** Ready to plan
 
 ## Key Decisions (Phase 5 Plan 05)
 
