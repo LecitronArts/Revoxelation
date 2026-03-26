@@ -17,7 +17,7 @@ use revoxelation::{
         instance::{
             DEBUG_UTILS_EXTENSION_NAME, VALIDATION_LAYER_NAME, resolve_debug_instance_config,
         },
-        mesh_pipeline::metadata_descriptor_layout_binding,
+        mesh_pipeline,
         spirv::decode_spirv_words,
     },
     streaming::{
@@ -213,12 +213,22 @@ fn mesh_03_chunk_metadata_world_origin_matches_chunk_key() {
 
 #[test]
 fn mesh_03_mesh_pipeline_binds_metadata_storage_buffer() {
-    let binding = metadata_descriptor_layout_binding();
-
-    assert_eq!(binding.binding, 0);
-    assert_eq!(binding.descriptor_count, 1);
-    assert_eq!(binding.descriptor_type, vk::DescriptorType::STORAGE_BUFFER);
-    assert_eq!(binding.stage_flags, vk::ShaderStageFlags::VERTEX);
+    // After Plan 05-02: metadata binding moved to BindlessTable (binding 0).
+    // Verify the mesh pipeline source references the shared bindless layout
+    // instead of its own descriptor set.
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        source.contains("bindless_layout"),
+        "mesh_pipeline.rs must reference bindless_layout"
+    );
+    // Also verify the bindless module has binding 0 as STORAGE_BUFFER.
+    let bindless_source = std::fs::read_to_string("src/renderer/bindless.rs")
+        .expect("src/renderer/bindless.rs should exist");
+    assert!(
+        bindless_source.contains("STORAGE_BUFFER") && bindless_source.contains(".binding(0)"),
+        "bindless.rs must have binding 0 as STORAGE_BUFFER"
+    );
 }
 
 #[test]

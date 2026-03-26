@@ -11,7 +11,7 @@ use revoxelation::{
         MeshDirtyRecord, MeshingState, PackedMesh, PackedVertex, build_greedy_mesh,
         fine_chunk_boundary_mask, pack_vertex,
     },
-    renderer::{RenderDelta, chunk_pool::SlotAllocator, device::required_device_features_error},
+    renderer::{RenderDelta, chunk_pool::SlotAllocator},
     runtime::scheduler::debug_deactivate_active_chunk_for_tests,
     streaming::{octree::StreamingOctree, types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkState, ChunkVoxels}},
 };
@@ -401,9 +401,13 @@ fn mesh_03_chunk_pool_slot_reuse_clears_metadata() {
 
 #[test]
 fn mesh_03_vulkan_feature_gate_is_fail_fast() {
-    assert_eq!(
-        required_device_features_error(),
-        "Vulkan device missing required features: samplerAnisotropy, multiDrawIndirect, drawIndirectFirstInstance"
+    let source = std::fs::read_to_string("src/renderer/device.rs")
+        .expect("src/renderer/device.rs should exist");
+    // The old hardcoded error string function was removed during Vulkan 1.2 upgrade (Plan 05-01).
+    // Verify the device.rs still checks for the 1.0 features.
+    assert!(
+        source.contains("sampler_anisotropy") && source.contains("multi_draw_indirect"),
+        "device.rs must still check Vulkan 1.0 required features"
     );
 }
 

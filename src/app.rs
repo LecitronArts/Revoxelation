@@ -17,6 +17,7 @@ use crate::renderer::{
     swapchain::recreate_swapchain_context,
     pipeline_cache::PipelineCache,
     perf_counters::GpuPerfCounters,
+    bindless::BindlessTable,
 };
 use crate::runtime::scheduler::StreamingState;
 
@@ -89,8 +90,35 @@ pub fn run() -> Result<()> {
     renderer.staging_ring = Some(StagingRing::new(&mut renderer, 32 * 1024 * 1024, 2)?);
     // Load persistent pipeline cache from disk (or create empty).
     renderer.pipeline_cache = Some(PipelineCache::load(&renderer.device_ctx.device)?);
-    renderer.mesh_pipeline = Some(ChunkMeshPipeline::new(&renderer)?);
-    renderer.cull_pipeline = Some(ChunkCullPipeline::new(&mut renderer)?);
+
+    // Create the unified bindless descriptor set 0 BEFORE pipelines (D-04).
+    let bindless = BindlessTable::new(&renderer.device_ctx.device)?;
+
+    // Register all chunk pool buffers with the bindless table.
+    {
+        let chunk_pool = renderer.chunk_pool.as_ref().expect("chunk pool must be initialized before bindless registration");
+        bindless.register_buffer(&renderer.device_ctx.device, 0, chunk_pool.metadata_buffer(), vk::WHOLE_SIZE);
+        bindless.register_buffer(&renderer.device_ctx.device, 1, chunk_pool.indirect_template_buffer(), vk::WHOLE_SIZE);
+        bindless.register_buffer(&renderer.device_ctx.device, 2, chunk_pool.draw_slot_buffer(), vk::WHOLE_SIZE);
+        bindless.register_buffer(&renderer.device_ctx.device, 3, chunk_pool.dense_indirect_buffer(), vk::WHOLE_SIZE);
+    }
+
+    let bindless_layout = bindless.descriptor_set_layout;
+    renderer.bindless = Some(bindless);
+
+    // Create pipelines using the shared bindless layout.
+    renderer.mesh_pipeline = Some(ChunkMeshPipeline::new(&renderer, bindless_layout)?);
+    renderer.cull_pipeline = Some(ChunkCullPipeline::new(&mut renderer, bindless_layout)?);
+
+    // Register cull pipeline auxiliary buffers with the bindless table.
+    {
+        let cull_pipeline = renderer.cull_pipeline.as_ref().expect("cull pipeline must be initialized");
+        let bindless = renderer.bindless.as_ref().expect("bindless must be initialized");
+        bindless.register_buffer(&renderer.device_ctx.device, 4, cull_pipeline.frustum_planes_buffer, std::mem::size_of::<crate::renderer::camera::FrustumPlanes>() as u64);
+        bindless.register_buffer(&renderer.device_ctx.device, 5, cull_pipeline.draw_count_buffer, std::mem::size_of::<u32>() as u64);
+        bindless.register_buffer(&renderer.device_ctx.device, 6, cull_pipeline.hiz_config_buffer, std::mem::size_of::<crate::renderer::cull_pipeline::HiZConfig>() as u64);
+    }
+
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);
 
     let mut app = App {

@@ -25,9 +25,6 @@ pub struct HiZConfig {
 pub struct ChunkCullPipeline {
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
-    pub descriptor_pool: vk::DescriptorPool,
-    pub descriptor_set_layout: vk::DescriptorSetLayout,
-    pub descriptor_set: vk::DescriptorSet,
     /// Small SSBO holding 6 frustum planes (96 bytes). CpuToGpu for easy per-frame update.
     pub frustum_planes_buffer: vk::Buffer,
     pub frustum_planes_allocation: Option<Allocation>,
@@ -45,102 +42,11 @@ pub struct ChunkCullPipeline {
 // Safety: raw pointer is only used for mapped writes from the main thread.
 unsafe impl Send for ChunkCullPipeline {}
 
-pub fn cull_descriptor_layout_bindings() -> [vk::DescriptorSetLayoutBinding<'static>; 8] {
-    [
-        // binding 0: chunk metadata (read)
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // binding 1: indirect templates (read)
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(1)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // binding 2: draw slots (read)
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(2)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // binding 3: output dense indirect (write)
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(3)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // binding 4: frustum planes (read) — 96 bytes
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(4)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // binding 5: draw count (read+write) — 4 bytes
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(5)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // binding 6: Hi-Z config (read) — view_proj + hiz_size + flags
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(6)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        // binding 7: Hi-Z pyramid combined image sampler (read)
-        vk::DescriptorSetLayoutBinding::default()
-            .binding(7)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-    ]
-}
-
 impl ChunkCullPipeline {
-    pub fn new(renderer: &mut Renderer) -> Result<Self> {
+    /// Create the cull pipeline. Uses the shared bindless descriptor set layout
+    /// from BindlessTable instead of creating its own descriptor infrastructure.
+    pub fn new(renderer: &mut Renderer, bindless_layout: vk::DescriptorSetLayout) -> Result<Self> {
         let device = &renderer.device_ctx.device;
-        let bindings = cull_descriptor_layout_bindings();
-        let descriptor_set_layout = unsafe {
-            device
-                .create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
-                    None,
-                )
-                .context("failed to create chunk cull descriptor set layout")?
-        };
-        let pool_sizes = [
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(7), // bindings 0-6
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(1), // binding 7
-        ];
-        let descriptor_pool = unsafe {
-            device
-                .create_descriptor_pool(
-                    &vk::DescriptorPoolCreateInfo::default()
-                        .pool_sizes(&pool_sizes)
-                        .max_sets(1),
-                    None,
-                )
-                .context("failed to create chunk cull descriptor pool")?
-        };
-        let descriptor_set_layouts = [descriptor_set_layout];
-        let descriptor_set = unsafe {
-            device
-                .allocate_descriptor_sets(
-                    &vk::DescriptorSetAllocateInfo::default()
-                        .descriptor_pool(descriptor_pool)
-                        .set_layouts(&descriptor_set_layouts),
-                )
-                .context("failed to allocate chunk cull descriptor set")?
-                .into_iter()
-                .next()
-                .context("chunk cull descriptor allocation returned no descriptor sets")?
-        };
 
         // Create frustum planes buffer (96 bytes, CpuToGpu for easy per-frame update)
         let (frustum_planes_buffer, frustum_planes_allocation) = create_allocated_buffer(
@@ -180,113 +86,21 @@ impl ChunkCullPipeline {
             .map(|p| p.as_ptr() as *mut u8)
             .unwrap_or(std::ptr::null_mut());
 
-        let chunk_pool = renderer
-            .chunk_pool
-            .as_ref()
-            .context("chunk cull pipeline requires a chunk pool before initialization")?;
-
-        let metadata_buffer_info = [vk::DescriptorBufferInfo::default()
-            .buffer(chunk_pool.metadata_buffer())
-            .offset(0)
-            .range(vk::WHOLE_SIZE)];
-        let indirect_template_buffer_info = [vk::DescriptorBufferInfo::default()
-            .buffer(chunk_pool.indirect_template_buffer())
-            .offset(0)
-            .range(vk::WHOLE_SIZE)];
-        let draw_slot_buffer_info = [vk::DescriptorBufferInfo::default()
-            .buffer(chunk_pool.draw_slot_buffer())
-            .offset(0)
-            .range(vk::WHOLE_SIZE)];
-        let dense_indirect_buffer_info = [vk::DescriptorBufferInfo::default()
-            .buffer(chunk_pool.dense_indirect_buffer())
-            .offset(0)
-            .range(vk::WHOLE_SIZE)];
-        let frustum_planes_buffer_info = [vk::DescriptorBufferInfo::default()
-            .buffer(frustum_planes_buffer)
-            .offset(0)
-            .range(size_of::<FrustumPlanes>() as u64)];
-        let draw_count_buffer_info = [vk::DescriptorBufferInfo::default()
-            .buffer(draw_count_buffer)
-            .offset(0)
-            .range(size_of::<u32>() as u64)];
-        let hiz_config_buffer_info = [vk::DescriptorBufferInfo::default()
-            .buffer(hiz_config_buffer)
-            .offset(0)
-            .range(size_of::<HiZConfig>() as u64)];
-
-        // For binding 7 (Hi-Z pyramid), write a placeholder if no pyramid exists yet.
-        // We'll update it when the Hi-Z pyramid is created.
-        let mut writes = vec![
-            vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&metadata_buffer_info),
-            vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(1)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&indirect_template_buffer_info),
-            vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(2)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&draw_slot_buffer_info),
-            vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(3)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&dense_indirect_buffer_info),
-            vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(4)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&frustum_planes_buffer_info),
-            vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(5)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&draw_count_buffer_info),
-            vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(6)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&hiz_config_buffer_info),
-        ];
-
-        // Write Hi-Z pyramid descriptor if available.
-        let hiz_image_info;
-        if let Some(hiz) = renderer.hiz_pyramid.as_ref() {
-            hiz_image_info = [vk::DescriptorImageInfo::default()
-                .image_view(hiz.full_view)
-                .sampler(hiz.sampler)
-                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-            writes.push(
-                vk::WriteDescriptorSet::default()
-                    .dst_set(descriptor_set)
-                    .dst_binding(7)
-                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .image_info(&hiz_image_info),
-            );
-        }
-
-        unsafe {
-            renderer.device_ctx.device.update_descriptor_sets(&writes, &[]);
-        }
-
-        // Push constant range for active_draw_count (u32 = 4 bytes)
+        // Push constant range for active_draw_count (u32 = 4 bytes) — D-05
         let push_constant_ranges = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::COMPUTE)
             .offset(0)
             .size(size_of::<u32>() as u32)];
 
+        // Pipeline layout uses the shared bindless set 0 layout — D-07
+        let set_layouts = [bindless_layout];
         let pipeline_layout = unsafe {
             renderer
                 .device_ctx
                 .device
                 .create_pipeline_layout(
                     &vk::PipelineLayoutCreateInfo::default()
-                        .set_layouts(&descriptor_set_layouts)
+                        .set_layouts(&set_layouts)
                         .push_constant_ranges(&push_constant_ranges),
                     None,
                 )
@@ -331,9 +145,6 @@ impl ChunkCullPipeline {
         Ok(Self {
             pipeline,
             pipeline_layout,
-            descriptor_pool,
-            descriptor_set_layout,
-            descriptor_set,
             frustum_planes_buffer,
             frustum_planes_allocation: Some(frustum_planes_allocation),
             frustum_planes_mapped,
@@ -367,33 +178,19 @@ impl ChunkCullPipeline {
         }
     }
 
-    /// Update the Hi-Z pyramid descriptor binding (called when pyramid is created/recreated).
-    pub fn update_hiz_descriptor(&self, device: &ash::Device, hiz_view: vk::ImageView, hiz_sampler: vk::Sampler) {
-        let image_info = [vk::DescriptorImageInfo::default()
-            .image_view(hiz_view)
-            .sampler(hiz_sampler)
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-        let writes = [vk::WriteDescriptorSet::default()
-            .dst_set(self.descriptor_set)
-            .dst_binding(7)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(&image_info)];
-        unsafe {
-            device.update_descriptor_sets(&writes, &[]);
-        }
-    }
-
     /// Return the draw count buffer handle (for barriers and IndirectCount draw).
     pub fn draw_count_buffer(&self) -> vk::Buffer {
         self.draw_count_buffer
     }
 
+    /// Dispatch the cull compute shader. Uses the shared bindless descriptor set.
     pub fn dispatch(
         &self,
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         active_draw_count: u32,
         frustum_planes: &FrustumPlanes,
+        bindless_set: vk::DescriptorSet,
     ) {
         if active_draw_count == 0 {
             return;
@@ -430,12 +227,13 @@ impl ChunkCullPipeline {
             );
 
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
+            // Bind the shared bindless descriptor set 0 — D-08
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::COMPUTE,
                 self.pipeline_layout,
                 0,
-                &[self.descriptor_set],
+                &[bindless_set],
                 &[],
             );
 
@@ -462,14 +260,6 @@ impl ChunkCullPipeline {
                 .device_ctx
                 .device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
-            renderer
-                .device_ctx
-                .device
-                .destroy_descriptor_pool(self.descriptor_pool, None);
-            renderer
-                .device_ctx
-                .device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         }
         if let Some(allocation) = self.frustum_planes_allocation.take() {
             let _ = destroy_allocated_buffer(renderer, self.frustum_planes_buffer, allocation);

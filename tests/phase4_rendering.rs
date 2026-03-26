@@ -673,11 +673,13 @@ fn rend_04_cull_shader_has_hiz_test() {
 
 #[test]
 fn rend_04_cull_pipeline_has_hiz_binding() {
-    let source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
-        .expect("src/renderer/cull_pipeline.rs should exist");
+    // After Plan 05-02: Hi-Z binding (COMBINED_IMAGE_SAMPLER) moved to BindlessTable (binding 7).
+    // Verify the bindless module has it, since cull_pipeline no longer owns its own descriptor set.
+    let bindless_source = std::fs::read_to_string("src/renderer/bindless.rs")
+        .expect("src/renderer/bindless.rs should exist");
     assert!(
-        source.contains("COMBINED_IMAGE_SAMPLER"),
-        "Cull pipeline must include a combined image sampler binding for Hi-Z"
+        bindless_source.contains("COMBINED_IMAGE_SAMPLER"),
+        "BindlessTable must include a combined image sampler binding for Hi-Z"
     );
 }
 

@@ -137,11 +137,19 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             };
             cull_pipeline.upload_hiz_config(&hiz_config);
 
+            // Pass the shared bindless descriptor set to the cull dispatch.
+            let bindless_set = renderer
+                .bindless
+                .as_ref()
+                .map(|b| b.descriptor_set)
+                .unwrap_or(vk::DescriptorSet::null());
+
             cull_pipeline.dispatch(
                 &renderer.device_ctx.device,
                 command_buffer,
                 active_draw_count,
                 &frustum_planes,
+                bindless_set,
             );
 
             // Barrier: compute shader writes → indirect draw reads for both dense indirect
@@ -202,7 +210,13 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         {
             let draw_count = chunk_pool.active_draw_count();
             if draw_count > 0 {
-                mesh_pipeline.draw(renderer, chunk_pool, command_buffer, draw_count, camera_uniforms);
+                // Pass the shared bindless descriptor set to the mesh draw.
+                let bindless_set = renderer
+                    .bindless
+                    .as_ref()
+                    .map(|b| b.descriptor_set)
+                    .unwrap_or(vk::DescriptorSet::null());
+                mesh_pipeline.draw(renderer, chunk_pool, command_buffer, draw_count, camera_uniforms, bindless_set);
             }
         }
 

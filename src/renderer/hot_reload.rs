@@ -167,7 +167,10 @@ impl ShaderHotReload {
         if let Some(old_pipeline) = renderer.mesh_pipeline.take() {
             old_pipeline.destroy(renderer);
         }
-        renderer.mesh_pipeline = Some(super::mesh_pipeline::ChunkMeshPipeline::new(renderer)?);
+        let bindless_layout = renderer.bindless.as_ref()
+            .expect("bindless must be initialized for hot-reload")
+            .descriptor_set_layout;
+        renderer.mesh_pipeline = Some(super::mesh_pipeline::ChunkMeshPipeline::new(renderer, bindless_layout)?);
         Ok(())
     }
 
@@ -183,7 +186,10 @@ impl ShaderHotReload {
         if let Some(old_pipeline) = renderer.cull_pipeline.take() {
             old_pipeline.destroy(renderer);
         }
-        renderer.cull_pipeline = Some(super::cull_pipeline::ChunkCullPipeline::new(renderer)?);
+        let bindless_layout = renderer.bindless.as_ref()
+            .expect("bindless must be initialized for hot-reload")
+            .descriptor_set_layout;
+        renderer.cull_pipeline = Some(super::cull_pipeline::ChunkCullPipeline::new(renderer, bindless_layout)?);
         Ok(())
     }
 }

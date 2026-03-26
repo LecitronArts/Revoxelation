@@ -7,83 +7,28 @@ use super::camera::CameraUniforms;
 pub struct ChunkMeshPipeline {
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
-    pub descriptor_pool: vk::DescriptorPool,
-    pub descriptor_set_layout: vk::DescriptorSetLayout,
-    pub descriptor_set: vk::DescriptorSet,
-}
-
-pub fn metadata_descriptor_layout_binding() -> vk::DescriptorSetLayoutBinding<'static> {
-    vk::DescriptorSetLayoutBinding::default()
-        .binding(0)
-        .descriptor_count(1)
-        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-        .stage_flags(vk::ShaderStageFlags::VERTEX)
 }
 
 impl ChunkMeshPipeline {
-    pub fn new(renderer: &Renderer) -> Result<Self> {
+    /// Create the mesh pipeline. Uses the shared bindless descriptor set layout
+    /// from BindlessTable instead of creating its own descriptor infrastructure.
+    pub fn new(renderer: &Renderer, bindless_layout: vk::DescriptorSetLayout) -> Result<Self> {
         let device = &renderer.device_ctx.device;
-        let bindings = [metadata_descriptor_layout_binding()];
-        let descriptor_set_layout = unsafe {
-            device
-                .create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
-                    None,
-                )
-                .context("failed to create chunk mesh descriptor set layout")?
-        };
-        let pool_sizes = [vk::DescriptorPoolSize::default()
-            .ty(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(1)];
-        let descriptor_pool = unsafe {
-            device
-                .create_descriptor_pool(
-                    &vk::DescriptorPoolCreateInfo::default()
-                        .pool_sizes(&pool_sizes)
-                        .max_sets(1),
-                    None,
-                )
-                .context("failed to create chunk mesh descriptor pool")?
-        };
-        let descriptor_set_layouts = [descriptor_set_layout];
-        let descriptor_set = unsafe {
-            device
-                .allocate_descriptor_sets(
-                    &vk::DescriptorSetAllocateInfo::default()
-                        .descriptor_pool(descriptor_pool)
-                        .set_layouts(&descriptor_set_layouts),
-                )
-                .context("failed to allocate chunk mesh descriptor set")?
-                .into_iter()
-                .next()
-                .context("chunk mesh descriptor allocation returned no descriptor sets")?
-        };
-        let chunk_pool = renderer
-            .chunk_pool
-            .as_ref()
-            .context("chunk mesh pipeline requires a chunk pool before initialization")?;
-        let metadata_buffer_info = [vk::DescriptorBufferInfo::default()
-            .buffer(chunk_pool.metadata_buffer())
-            .offset(0)
-            .range(vk::WHOLE_SIZE)];
-        let writes = [vk::WriteDescriptorSet::default()
-            .dst_set(descriptor_set)
-            .dst_binding(bindings[0].binding)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .buffer_info(&metadata_buffer_info)];
-        unsafe {
-            device.update_descriptor_sets(&writes, &[]);
-        }
+
+        // Push constant range for CameraUniforms (80 bytes, VERTEX stage) — D-06
         let push_constant_ranges = [vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX,
             offset: 0,
             size: std::mem::size_of::<CameraUniforms>() as u32, // 80 bytes
         }];
+
+        // Pipeline layout uses the shared bindless set 0 layout — D-07
+        let set_layouts = [bindless_layout];
         let pipeline_layout = unsafe {
             device
                 .create_pipeline_layout(
                     &vk::PipelineLayoutCreateInfo::default()
-                        .set_layouts(&descriptor_set_layouts)
+                        .set_layouts(&set_layouts)
                         .push_constant_ranges(&push_constant_ranges),
                     None,
                 )
@@ -184,12 +129,10 @@ impl ChunkMeshPipeline {
         Ok(Self {
             pipeline,
             pipeline_layout,
-            descriptor_pool,
-            descriptor_set_layout,
-            descriptor_set,
         })
     }
 
+    /// Draw chunks using the shared bindless descriptor set.
     pub fn draw(
         &self,
         renderer: &Renderer,
@@ -197,6 +140,7 @@ impl ChunkMeshPipeline {
         cmd: vk::CommandBuffer,
         draw_count: u32,
         camera_uniforms: &CameraUniforms,
+        bindless_set: vk::DescriptorSet,
     ) {
         let extent = renderer.swapchain_ctx.extent;
         let viewport = vk::Viewport {
@@ -228,12 +172,13 @@ impl ChunkMeshPipeline {
                 0,
                 bytemuck::bytes_of(camera_uniforms),
             );
+            // Bind the shared bindless descriptor set 0 — D-08
             renderer.device_ctx.device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline_layout,
                 0,
-                &[self.descriptor_set],
+                &[bindless_set],
                 &[],
             );
             renderer.device_ctx.device.cmd_bind_vertex_buffers(
@@ -265,14 +210,6 @@ impl ChunkMeshPipeline {
                 .device_ctx
                 .device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
-            renderer
-                .device_ctx
-                .device
-                .destroy_descriptor_pool(self.descriptor_pool, None);
-            renderer
-                .device_ctx
-                .device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         }
     }
 }
