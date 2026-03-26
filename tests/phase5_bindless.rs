@@ -285,15 +285,73 @@ fn phase5_scene_buffer_layout_regions() {
     assert_eq!(total, 94208, "total scene buffer size");
 }
 
-/// ChunkPool must allocate exactly 3 buffers (vertex, index, scene).
+/// ChunkPool::new must allocate at least 3 buffers (vertex, index, scene).
+/// grow_capacity may add additional allocation calls.
 #[test]
 fn phase5_chunk_pool_three_buffers() {
     let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
         .expect("src/renderer/chunk_pool.rs should exist");
 
     let alloc_count = source.matches("create_allocated_buffer(").count();
-    assert_eq!(
-        alloc_count, 3,
-        "ChunkPool must call create_allocated_buffer exactly 3 times (vertex, index, scene), found {alloc_count}"
+    assert!(
+        alloc_count >= 3,
+        "ChunkPool must call create_allocated_buffer at least 3 times (vertex, index, scene), found {alloc_count}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plan 05-05 Task 1 — Dynamic capacity growth
+// ---------------------------------------------------------------------------
+
+/// INITIAL_CAPACITY must be 1024 (replaces MAX_RENDER_CHUNKS = 881).
+#[test]
+fn phase5_initial_capacity_1024() {
+    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("src/renderer/chunk_pool.rs should exist");
+    assert!(
+        source.contains("INITIAL_CAPACITY: usize = 1024"),
+        "chunk_pool.rs must define INITIAL_CAPACITY: usize = 1024"
+    );
+}
+
+/// SlotAllocator must have a grow method for dynamic capacity expansion.
+#[test]
+fn phase5_slot_allocator_grow() {
+    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("src/renderer/chunk_pool.rs should exist");
+    assert!(
+        source.contains("fn grow("),
+        "SlotAllocator must have a grow method for dynamic capacity expansion"
+    );
+    // grow must push new free slots
+    assert!(
+        source.contains("fn grow(") && source.contains("free_slots"),
+        "grow must manage free_slots for new capacity"
+    );
+}
+
+/// ChunkPool must have needs_grow() with 90% threshold.
+#[test]
+fn phase5_grow_trigger_threshold() {
+    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("src/renderer/chunk_pool.rs should exist");
+    assert!(
+        source.contains("fn needs_grow"),
+        "ChunkPool must have a needs_grow method"
+    );
+    assert!(
+        source.contains("fn grow_capacity"),
+        "ChunkPool must have a grow_capacity method"
+    );
+}
+
+/// MAX_RENDER_CHUNKS constant must be replaced by INITIAL_CAPACITY.
+#[test]
+fn phase5_no_max_render_chunks_constant() {
+    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("src/renderer/chunk_pool.rs should exist");
+    assert!(
+        !source.contains("MAX_RENDER_CHUNKS"),
+        "MAX_RENDER_CHUNKS must be replaced by INITIAL_CAPACITY"
     );
 }

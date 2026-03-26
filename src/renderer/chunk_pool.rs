@@ -13,7 +13,10 @@ use crate::{
 use super::{Renderer, create_allocated_buffer, destroy_allocated_buffer};
 use super::staging_ring::StagingRing;
 
-pub const MAX_RENDER_CHUNKS: usize = 881;
+pub const INITIAL_CAPACITY: usize = 1024;
+
+/// Growth threshold factor: grow when active > capacity * GROW_THRESHOLD.
+const GROW_THRESHOLD: f64 = 0.9;
 pub const MAX_QUADS_PER_CHUNK: usize = 4096;
 
 /// Per-chunk GPU instance data in the unified scene_buffer (48 bytes, #[repr(C)]).
@@ -267,6 +270,26 @@ impl SlotAllocator {
     pub fn draw_index_for_slot(&self, slot_id: u32) -> Option<u32> {
         self.slot_to_draw_index.get(slot_id as usize).copied().flatten()
     }
+
+    /// Current capacity of this allocator.
+    pub fn capacity(&self) -> usize {
+        self.slot_to_chunk.len()
+    }
+
+    /// Grow the allocator to `new_capacity`, extending all internal vectors
+    /// and adding new free slots from `old_capacity..new_capacity` (D-08).
+    pub fn grow(&mut self, new_capacity: usize) {
+        let old_capacity = self.slot_to_chunk.len();
+        assert!(new_capacity > old_capacity, "grow: new_capacity must exceed old");
+        self.slot_to_chunk.resize(new_capacity, None);
+        self.slot_to_draw_index.resize(new_capacity, None);
+        self.instance_shadow.resize(new_capacity, GpuChunkInstance::default());
+        self.indirect_shadow.resize(new_capacity, vk::DrawIndexedIndirectCommand::default());
+        // Add new free slots in reverse order so that the lowest new slot is popped first.
+        for slot in (old_capacity as u32..new_capacity as u32).rev() {
+            self.free_slots.push(slot);
+        }
+    }
 }
 
 /// Unified chunk pool with 3 GPU buffers: vertex, index, scene_buffer.
@@ -292,7 +315,7 @@ pub struct ChunkPool {
 
 impl ChunkPool {
     pub fn new(renderer: &mut Renderer) -> Result<Self> {
-        let capacity = MAX_RENDER_CHUNKS;
+        let capacity = INITIAL_CAPACITY;
 
         let (vertex_buffer, vertex_allocation) = create_allocated_buffer(
             renderer,
@@ -441,6 +464,116 @@ impl ChunkPool {
 
     pub fn slot_allocator(&self) -> &SlotAllocator {
         &self.slot_allocator
+    }
+
+    /// Current capacity (number of chunk slots).
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Returns true when active chunks exceed 90% of capacity (D-02).
+    pub fn needs_grow(&self) -> bool {
+        let active = self.slot_allocator.active_chunk_count() as f64;
+        let threshold = self.capacity as f64 * GROW_THRESHOLD;
+        active > threshold
+    }
+
+    /// Grow capacity by 2× — allocate new buffers, copy old data, destroy old,
+    /// update bindless descriptor bindings, and grow the slot allocator (D-04, D-05).
+    ///
+    /// Must be called between frames (after fence wait), never mid-command-buffer.
+    pub fn grow_capacity(
+        &mut self,
+        renderer: &mut Renderer,
+        bindless: &super::bindless::BindlessTable,
+    ) -> Result<()> {
+        let old_capacity = self.capacity;
+        let new_capacity = old_capacity * 2;
+        log::info!("ChunkPool: growing capacity {old_capacity} → {new_capacity}");
+
+        // Allocate new vertex buffer
+        let (new_vertex_buffer, new_vertex_allocation) = create_allocated_buffer(
+            renderer,
+            (vertex_slot_stride_bytes() * new_capacity) as u64,
+            vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::VERTEX_BUFFER,
+            MemoryLocation::GpuOnly,
+            AllocationScheme::GpuAllocatorManaged,
+            "chunk-pool-vertex",
+        )?;
+
+        // Allocate new index buffer
+        let (new_index_buffer, new_index_allocation) = create_allocated_buffer(
+            renderer,
+            (index_slot_stride_bytes() * new_capacity) as u64,
+            vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::INDEX_BUFFER,
+            MemoryLocation::GpuOnly,
+            AllocationScheme::GpuAllocatorManaged,
+            "chunk-pool-index",
+        )?;
+
+        // Allocate new scene buffer
+        let (_, _, _, _, new_total_scene_size) = scene_buffer_region_offsets(new_capacity);
+        let (new_scene_buffer, new_scene_allocation) = create_allocated_buffer(
+            renderer,
+            new_total_scene_size,
+            vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::INDIRECT_BUFFER,
+            MemoryLocation::GpuOnly,
+            AllocationScheme::GpuAllocatorManaged,
+            "chunk-pool-scene",
+        )?;
+
+        // Copy old data to new buffers via one-shot command buffer with fence wait.
+        let old_vertex = self.vertex_buffer;
+        let old_index = self.index_buffer;
+        let old_scene = self.scene_buffer;
+        let old_vertex_size = (vertex_slot_stride_bytes() * old_capacity) as u64;
+        let old_index_size = (index_slot_stride_bytes() * old_capacity) as u64;
+        let (_, _, _, _, old_total_scene_size) = scene_buffer_region_offsets(old_capacity);
+
+        super::helpers::submit_one_shot_commands(renderer, |device, cmd| {
+            let vertex_copy = vk::BufferCopy::default().size(old_vertex_size);
+            let index_copy = vk::BufferCopy::default().size(old_index_size);
+            let scene_copy = vk::BufferCopy::default().size(old_total_scene_size);
+            unsafe {
+                device.cmd_copy_buffer(cmd, old_vertex, new_vertex_buffer, &[vertex_copy]);
+                device.cmd_copy_buffer(cmd, old_index, new_index_buffer, &[index_copy]);
+                device.cmd_copy_buffer(cmd, old_scene, new_scene_buffer, &[scene_copy]);
+            }
+            Ok(())
+        })?;
+
+        // Destroy old buffers
+        if let Some(allocation) = self.scene_allocation.take() {
+            destroy_allocated_buffer(renderer, self.scene_buffer, allocation)?;
+        }
+        if let Some(allocation) = self.index_allocation.take() {
+            destroy_allocated_buffer(renderer, self.index_buffer, allocation)?;
+        }
+        if let Some(allocation) = self.vertex_allocation.take() {
+            destroy_allocated_buffer(renderer, self.vertex_buffer, allocation)?;
+        }
+
+        // Install new buffers
+        self.vertex_buffer = new_vertex_buffer;
+        self.vertex_allocation = Some(new_vertex_allocation);
+        self.index_buffer = new_index_buffer;
+        self.index_allocation = Some(new_index_allocation);
+        self.scene_buffer = new_scene_buffer;
+        self.scene_allocation = Some(new_scene_allocation);
+        self.capacity = new_capacity;
+        self.dense_indirect_shadow.resize(new_capacity, vk::DrawIndexedIndirectCommand::default());
+
+        // Grow slot allocator
+        self.slot_allocator.grow(new_capacity);
+
+        // Update BindlessTable binding 0 to point to the new scene_buffer (D-05)
+        bindless.register_buffer(&renderer.device_ctx.device, 0, self.scene_buffer, vk::WHOLE_SIZE);
+
+        log::info!("ChunkPool: growth complete, new capacity = {new_capacity}");
+        Ok(())
     }
 
     /// Record vkCmdCopyBuffer commands for an upload, writing data through the staging ring.

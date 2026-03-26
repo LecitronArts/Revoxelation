@@ -496,9 +496,11 @@ fn mesh_03_unload_clears_slot_and_indirect_entry() {
 
 #[test]
 fn mesh_03_build_script_and_indirect_submit_contract() {
-    assert_eq!(
-        revoxelation::renderer::chunk_pool::MAX_RENDER_CHUNKS,
-        StreamingOctree::build(4, 3).len()
+    // INITIAL_CAPACITY replaces MAX_RENDER_CHUNKS; verify it's >= octree size.
+    assert!(
+        revoxelation::renderer::chunk_pool::INITIAL_CAPACITY
+            >= StreamingOctree::build(4, 3).len(),
+        "INITIAL_CAPACITY must be at least as large as the streaming octree"
     );
 
     let build_script = std::fs::read_to_string("build.rs").expect("build.rs should exist");
