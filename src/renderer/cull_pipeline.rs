@@ -86,11 +86,11 @@ impl ChunkCullPipeline {
             .map(|p| p.as_ptr() as *mut u8)
             .unwrap_or(std::ptr::null_mut());
 
-        // Push constant range for active_draw_count (u32 = 4 bytes) — D-05
+        // Push constant range for { active_draw_count: u32, capacity: u32 } = 8 bytes (D-08)
         let push_constant_ranges = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::COMPUTE)
             .offset(0)
-            .size(size_of::<u32>() as u32)];
+            .size((size_of::<u32>() * 2) as u32)];
 
         // Pipeline layout uses the shared bindless set 0 layout — D-07
         let set_layouts = [bindless_layout];
@@ -189,6 +189,7 @@ impl ChunkCullPipeline {
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         active_draw_count: u32,
+        capacity: u32,
         frustum_planes: &FrustumPlanes,
         bindless_set: vk::DescriptorSet,
     ) {
@@ -237,15 +238,15 @@ impl ChunkCullPipeline {
                 &[],
             );
 
-            // Push constant: active_draw_count
-            let pc_bytes = active_draw_count.to_ne_bytes();
+            // Push constants: { active_draw_count, capacity } (D-08)
+            let pc_data: [u32; 2] = [active_draw_count, capacity];
+            let pc_bytes = bytemuck::cast_slice(&pc_data);
             device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                &pc_bytes,
-            );
+                &pc_bytes,            );
 
             // Dispatch ceil(active_draw_count / 64) workgroups.
             let group_count = active_draw_count.div_ceil(WORKGROUP_SIZE);

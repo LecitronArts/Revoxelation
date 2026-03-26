@@ -6,22 +6,28 @@ layout(location = 0) flat out uint v_block_id;
 layout(location = 1) out vec3 v_face_normal;
 layout(location = 2) out vec2 v_uv;
 
-struct ChunkDrawMetadata {
+// GpuChunkInstance (48 bytes, matches Rust #[repr(C)] layout):
+//   aabb_min:     vec3  (12 bytes)
+//   material_id:  uint  ( 4 bytes)
+//   aabb_max:     vec3  (12 bytes)
+//   lod_level:    uint  ( 4 bytes)
+//   chunk_origin: vec3  (12 bytes)
+//   chunk_scale:  float ( 4 bytes)
+struct GpuChunkInstance {
     vec3 aabb_min;
-    uint slot_id;
+    uint material_id;
     vec3 aabb_max;
-    uint first_index;
-    int vertex_offset;
-    uint index_count;
     uint lod_level;
-    uint _padding0;
     vec3 chunk_origin;
     float chunk_scale;
 };
 
-layout(std430, set = 0, binding = 0) readonly buffer ChunkMetadataBuffer {
-    ChunkDrawMetadata metadata[];
-} chunk_metadata;
+// Unified scene_buffer (D-07). Region 0 = GpuChunkInstance[capacity].
+// Vertex shader only needs region 0, so we can safely declare the SSBO
+// with an unsized GpuChunkInstance array.
+layout(std430, set = 0, binding = 0) readonly buffer SceneBuffer {
+    GpuChunkInstance instances[];
+} scene_data;
 
 layout(push_constant) uniform CameraUniforms {
     mat4 view_proj;
@@ -47,7 +53,8 @@ vec3 face_normal_from_index(uint fi) {
 }
 
 void main() {
-    ChunkDrawMetadata metadata = chunk_metadata.metadata[gl_InstanceIndex];
+    // gl_InstanceIndex = firstInstance = slot_id (D-04)
+    GpuChunkInstance inst = scene_data.instances[gl_InstanceIndex];
 
     uint word0 = in_packed.x;
     uint word1 = in_packed.y;
@@ -64,8 +71,8 @@ void main() {
         else face_offset.z = 1.0;
     }
 
-    vec3 local = (pos + face_offset) * metadata.chunk_scale;
-    vec3 world_position = metadata.chunk_origin + local;
+    vec3 local = (pos + face_offset) * inst.chunk_scale;
+    vec3 world_position = inst.chunk_origin + local;
     gl_Position = camera.view_proj * vec4(world_position, 1.0);
 
     // Extract block_id from word1 low 16 bits

@@ -148,6 +148,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                 &renderer.device_ctx.device,
                 command_buffer,
                 active_draw_count,
+                chunk_pool.scene_buffer_capacity() as u32,
                 &frustum_planes,
                 bindless_set,
             );
