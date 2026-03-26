@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 05-bindless-architecture-and-gpu-scene
 status: executing
-last_updated: "2026-03-26T04:17:19Z"
+last_updated: "2026-03-26T04:49:41Z"
 progress:
   total_phases: 12
   completed_phases: 5
   total_plans: 24
-  completed_plans: 25
+  completed_plans: 26
 ---
 
 # Session State
@@ -22,91 +22,41 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 05-bindless-architecture-and-gpu-scene
-**Status:** Plan 02 complete, ready for Plan 03
+**Status:** Plan 04 complete, ready for Plan 05
+
+## Key Decisions (Phase 5 Plan 04)
+
+- BlockMaterial: 4 x u16 (top/side/bottom texture + flags) = 8 bytes, #[repr(C)] with bytemuck
+- 10 procedural textures generated in Rust (no PNG loading yet): dirt, grass_top, grass_side, stone, sand, log_bark, log_end, planks, leaves, water
+- Material SSBO at binding 8, texture array at binding 9 — matching BindlessTable reserved slots
+- Fragment shader uses face normal threshold (y > 0.5 / y < -0.5) for top/bottom/side selection
+- Vertex shader outputs v_block_id (flat uint), v_face_normal (vec3), v_uv (vec2) — replaces v_color
+- nonuniformEXT used on texture array index for descriptor indexing safety
 
 ## Key Decisions (Phase 5 Plan 02)
 
 - BindlessTable owns descriptor set 0 with 10 bindings (0-7 active, 8-9 reserved for Plan 04 materials)
 - PARTIALLY_BOUND + UPDATE_AFTER_BIND flags on all 10 bindings
-- Each pipeline keeps its own pipeline_layout (push constant ranges differ) but shares the descriptor set layout
-- Auxiliary buffers (frustum planes, draw count, Hi-Z config) remain owned by ChunkCullPipeline, registered with BindlessTable at init
-- Bindless descriptor set bound at each cmd_bind_pipeline point (compute for cull, graphics for mesh)
-- BindlessTable created BEFORE pipelines; pipelines take bindless_layout as constructor parameter
 - register_buffer/register_image API for dynamic descriptor updates
 
 ## Key Decisions (Phase 5 Plan 01)
 
-- Vulkan 1.2 hard requirement: 7 features (descriptor_indexing, shader_sampled_image_array_non_uniform_indexing, runtime_descriptor_array, descriptor_binding_partially_bound, descriptor_binding_sampled_image_update_after_bind, descriptor_binding_storage_buffer_update_after_bind, draw_indirect_count)
-- PhysicalDeviceVulkan12Features via pNext chain (core 1.2 struct, not extension-era)
-- DeviceCreateInfo uses PhysicalDeviceFeatures2 + push_next for both 1.0 and 1.2 features
-- No fallback: missing features produce "Vulkan 1.2 feature(s) missing: {list}. GPU: {name}."
+- Vulkan 1.2 hard requirement: 7 features (descriptor_indexing, etc.)
+- PhysicalDeviceVulkan12Features via pNext chain
+- No fallback: missing features produce descriptive error
 
-## Key Decisions (Phase 4 Plan 07)
+## Key Decisions (Phase 4)
 
-- Pipeline cache stored at cache/pipeline.bin, auto-created directory, saved in Renderer::drop
-- All create_*_pipelines calls use shared PipelineCache handle (no null handles)
-- GpuPerfCounters: visible_chunks, total_chunks, frame_time_ms, gpu_time_ms; displayed in egui HUD
-- Shader hot-reload: cfg(debug_assertions) + feature=hot-reload, polls mtime every 60 frames
-- RuntimeConfig from config.toml: hiz_enabled, show_hud, camera_speed, camera_fov with defaults
-- shaderc added as optional runtime dep; toml for config parsing
-
-## Roadmap Restructure (2026-03-25)
-
-Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering modernization phases inserted:
-- **Phase 4**: Rendering Foundation Overhaul (7 plans) — camera, swapchain, frustum+Hi-Z culling, GpuOnly memory, DI refactor
-- **Phase 5**: Bindless Architecture & GPU Scene (5 plans) — Vulkan 1.2 + 1.0 fallback, bindless descriptors, materials
-- **Phase 6**: Meshlet Pipeline (5 plans) — meshlet generation, GPU culling, mesh shader path
-- **Phase 7**: Lighting & Shadows (5 plans) — PBR, CSM, SSAO, voxel AO, sky/atmosphere
-
-## Key Decisions (Phase 4 Plan 03)
-
-- FrameOutcome enum (Submitted | NeedsRecreate) replaces Result<()> for submit_frame
-- ERROR_OUT_OF_DATE_KHR from acquire_next_image skips frame and returns NeedsRecreate
-- SUBOPTIMAL/OUT_OF_DATE from queue_present triggers recreate after present completes
-- Window extent 0x0 (minimized) skips rendering entirely
-- needs_resize flag in App; swapchain recreation happens at start of RedrawRequested
-
-## Key Decisions (Phase 4 Plan 06)
-
-- Hi-Z image: R32_SFLOAT, full mip chain (ceil(log2(max(w,h)))+1 levels)
-- Hi-Z generation: per-mip compute dispatch 8x8, 2x2 max downsample via sampler2D
-- Conservative AABB projection: inflate screen rect by 1 texel each direction
-- 1-frame temporal latency: cull reads last frame's Hi-Z, generate after current render pass
-- HiZConfig SSBO (binding 6): view_proj + hiz_size + hiz_enabled + mip_count
-- Cull shader: 4-corner sampling of Hi-Z pyramid for conservative max-depth test
-
-## Key Decisions (Phase 4 Plan 05)
-
-- FrustumPlanes: 6 x [f32;4] = 96 bytes via SSBO (not push constants — exceeds 128B combined with camera)
-- Gribb-Hartmann extraction with normalized normals for correct distance testing
-- Cull shader: local_size_x=64, P-vertex AABB test, atomicAdd compaction into dense output
-- Draw count buffer: single u32 GpuOnly, reset via vkCmdFillBuffer each frame
-- Frustum planes buffer: CpuToGpu for mapped writes (96 bytes too small to justify staging)
-
-## Key Decisions (Phase 4 Plan 04)
-
-- StagingRing: 32MB CpuToGpu buffer, 2 frame regions (16MB each), fence-based reclamation
-- All 6 chunk pool buffers: GpuOnly memory with vkCmdCopyBuffer uploads
-- Global memory barrier (TRANSFER_WRITE → SHADER_READ) after staging copies, before compute cull
-- Depth image SAMPLED flag for future Hi-Z pyramid
-
-## Key Decisions (Phase 4 Plan 02)
-
-- CameraUniforms: 80 bytes (Mat4 view_proj + Vec3 camera_pos + f32 pad) — push constants to VERTEX stage
-- Dynamic viewport/scissor replaces baked pipeline viewport — resolution-independent rendering
-- FpsCamera default position (32, 48, -60) facing world center; pitch clamped ±89°
-- debug_project() fully removed from vertex shader; gl_Position = camera.view_proj * vec4(world_pos, 1.0)
+- Camera push constants (80 bytes), dynamic viewport/scissor
+- StagingRing 32MB, GpuOnly chunk pool buffers
+- GPU frustum + Hi-Z occlusion culling
+- Pipeline cache, perf counters, shader hot-reload, runtime config
 
 ## Session Log
 
-- 2026-03-22: STATE.md regenerated by /gsd:health --repair
-- 2026-03-22: Executed 03-07-PLAN.md — gap closure complete, all tests pass
-- 2026-03-25: Roadmap restructured — 4 rendering phases inserted, gameplay phases renumbered to 8-11
-- 2026-03-25: Executed 04-01-PLAN.md — OnceLock globals eliminated, App struct DI, env_logger
-- 2026-03-25: Executed 04-02-PLAN.md — FPS camera, push constants, dynamic viewport/scissor
-- 2026-03-25: Executed 04-05-PLAN.md — GPU-driven frustum culling, 6-plane AABB P-vertex test, atomicAdd compaction (REND-03)
-- 2026-03-25: Executed 04-03-PLAN.md — Swapchain lifecycle: FrameOutcome enum, resize/OUT_OF_DATE/SUBOPTIMAL handling, minimization skip (REND-02)
-- 2026-03-25: Executed 04-06-PLAN.md — Hi-Z occlusion culling: depth pyramid generation, cull shader integration, runtime toggle (REND-04)
-- 2026-03-25: Executed 04-07-PLAN.md — Pipeline cache, perf counters, egui HUD, shader hot-reload, runtime config (REND-07). Phase 4 COMPLETE.
-- 2026-03-26: Executed 05-01-PLAN.md — Vulkan 1.2 hard requirement: 7 descriptor indexing + drawIndirectCount features, pNext chain device creation (BIND-01)
-- 2026-03-26: Executed 05-02-PLAN.md — BindlessTable with unified set 0 (UPDATE_AFTER_BIND + PARTIALLY_BOUND), cull+mesh pipelines migrated to shared descriptors (BIND-02)
+- 2026-03-22: Executed 03-07 — gap closure complete
+- 2026-03-25: Roadmap restructured — 4 rendering phases inserted (4-7)
+- 2026-03-25: Executed 04-01 through 04-07 — Phase 4 COMPLETE
+- 2026-03-26: Executed 05-01 — Vulkan 1.2 hard requirement (BIND-01)
+- 2026-03-26: Executed 05-02 — BindlessTable + pipeline migration (BIND-02)
+- 2026-03-26: Executed 05-04 — BlockMaterial, texture array, shader sampling (BIND-04)
