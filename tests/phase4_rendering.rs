@@ -301,8 +301,8 @@ fn rend_05_chunk_pool_uses_gpu_only() {
     let gpu_only_count = source.matches("MemoryLocation::GpuOnly").count();
     let cpu_to_gpu_count = source.matches("MemoryLocation::CpuToGpu").count();
     assert!(
-        gpu_only_count >= 6,
-        "chunk_pool.rs must have at least 6 GpuOnly allocations, found {gpu_only_count}"
+        gpu_only_count >= 3,
+        "chunk_pool.rs must have at least 3 GpuOnly allocations (vertex, index, scene_buffer), found {gpu_only_count}"
     );
     assert_eq!(
         cpu_to_gpu_count, 0,

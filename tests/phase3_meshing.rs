@@ -378,7 +378,7 @@ fn mesh_03_chunk_pool_slot_reuse_clears_metadata() {
         .expect("first chunk upload should allocate a slot");
     assert_eq!(upload.slot_id, 0);
     assert_eq!(allocator.active_chunk_count(), 1);
-    assert_eq!(allocator.metadata_shadow()[0].index_count, 6);
+    assert_eq!(allocator.indirect_shadow()[0].index_count, 6);
     assert_eq!(allocator.indirect_shadow()[0].instance_count, 1);
 
     let removed = allocator
@@ -386,9 +386,9 @@ fn mesh_03_chunk_pool_slot_reuse_clears_metadata() {
         .expect("removing an active chunk should free its slot");
     assert_eq!(removed, 0);
     assert_eq!(allocator.active_chunk_count(), 0);
-    assert_eq!(allocator.metadata_shadow()[0].aabb_min, [0.0, 0.0, 0.0]);
-    assert_eq!(allocator.metadata_shadow()[0].aabb_max, [0.0, 0.0, 0.0]);
-    assert_eq!(allocator.metadata_shadow()[0].index_count, 0);
+    assert_eq!(allocator.instance_shadow()[0].aabb_min, [0.0, 0.0, 0.0]);
+    assert_eq!(allocator.instance_shadow()[0].aabb_max, [0.0, 0.0, 0.0]);
+    assert_eq!(allocator.indirect_shadow()[0].index_count, 0);
     assert_eq!(allocator.indirect_shadow()[0].instance_count, 0);
 
     let reused = allocator
@@ -396,7 +396,7 @@ fn mesh_03_chunk_pool_slot_reuse_clears_metadata() {
         .expect("freed slot should be reusable");
     assert_eq!(reused.slot_id, 0);
     assert_eq!(allocator.slot_for(second_key), Some(0));
-    assert_eq!(allocator.metadata_shadow()[0].index_count, 12);
+    assert_eq!(allocator.indirect_shadow()[0].index_count, 12);
 }
 
 #[test]
@@ -432,14 +432,14 @@ fn mesh_03_delta_sync_updates_only_dirty_slots() {
         .expect("second upload should succeed");
 
     let second_slot = allocator.slot_for(second).expect("second chunk slot exists") as usize;
-    let second_metadata_before = allocator.metadata_shadow()[second_slot];
+    let second_instance_before = allocator.instance_shadow()[second_slot];
     let second_indirect_before = allocator.indirect_shadow()[second_slot];
 
     allocator
         .prepare_upload(first, &sample_packed_mesh(12, 2))
         .expect("remeshing first chunk should overwrite its own slot only");
 
-    assert_eq!(allocator.metadata_shadow()[second_slot], second_metadata_before);
+    assert_eq!(allocator.instance_shadow()[second_slot], second_instance_before);
     assert_eq!(
         allocator.indirect_shadow()[second_slot].index_count,
         second_indirect_before.index_count
@@ -461,7 +461,13 @@ fn mesh_03_delta_sync_updates_only_dirty_slots() {
         second_indirect_before.first_instance
     );
     assert_eq!(
-        allocator.metadata_shadow()[allocator.slot_for(first).expect("first slot exists") as usize]
+        allocator.instance_shadow()[allocator.slot_for(first).expect("first slot exists") as usize]
+            .chunk_scale,
+        1.0
+    );
+    // Verify the re-uploaded mesh has updated indirect count
+    assert_eq!(
+        allocator.indirect_shadow()[allocator.slot_for(first).expect("first slot exists") as usize]
             .index_count,
         12
     );
@@ -481,9 +487,9 @@ fn mesh_03_unload_clears_slot_and_indirect_entry() {
         .prepare_remove(key)
         .expect("remove should clear the active slot");
 
-    assert_eq!(allocator.metadata_shadow()[slot].index_count, 0);
-    assert_eq!(allocator.metadata_shadow()[slot].aabb_min, [0.0, 0.0, 0.0]);
-    assert_eq!(allocator.metadata_shadow()[slot].aabb_max, [0.0, 0.0, 0.0]);
+    assert_eq!(allocator.indirect_shadow()[slot].index_count, 0);
+    assert_eq!(allocator.instance_shadow()[slot].aabb_min, [0.0, 0.0, 0.0]);
+    assert_eq!(allocator.instance_shadow()[slot].aabb_max, [0.0, 0.0, 0.0]);
     assert_eq!(allocator.indirect_shadow()[slot].index_count, 0);
     assert_eq!(allocator.indirect_shadow()[slot].instance_count, 0);
 }

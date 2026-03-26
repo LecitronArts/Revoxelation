@@ -112,7 +112,7 @@ fn mesh_03_dense_draw_list_swap_removes_sparse_slot_holes() {
     let third_slot_before_remove = allocator
         .slot_for(third)
         .expect("third chunk should have a stable slot");
-    let third_metadata_before_remove = allocator.metadata_shadow()[third_slot_before_remove as usize];
+    let third_metadata_before_remove = allocator.instance_shadow()[third_slot_before_remove as usize];
 
     let removed_slot = allocator
         .prepare_remove(second)
@@ -126,7 +126,7 @@ fn mesh_03_dense_draw_list_swap_removes_sparse_slot_holes() {
     assert_eq!(allocator.draw_index_for_slot(1), None);
     assert_eq!(allocator.draw_index_for_slot(2), Some(1));
     assert_eq!(
-        allocator.metadata_shadow()[third_slot_before_remove as usize],
+        allocator.instance_shadow()[third_slot_before_remove as usize],
         third_metadata_before_remove,
         "stable-slot storage should remain keyed by slot id even when draw order compacts"
     );
@@ -188,9 +188,9 @@ fn mesh_03_chunk_metadata_world_origin_matches_chunk_key() {
         key.z as f32 * chunk_world_edge,
     ];
 
-    assert_eq!(upload.metadata.chunk_origin, expected_origin);
+    assert_eq!(upload.instance.chunk_origin, expected_origin);
     assert_eq!(
-        upload.metadata.aabb_min,
+        upload.instance.aabb_min,
         [
             expected_origin[0] + mesh.aabb_min[0] * lod_scale,
             expected_origin[1] + mesh.aabb_min[1] * lod_scale,
@@ -198,7 +198,7 @@ fn mesh_03_chunk_metadata_world_origin_matches_chunk_key() {
         ]
     );
     assert_eq!(
-        upload.metadata.aabb_max,
+        upload.instance.aabb_max,
         [
             expected_origin[0] + mesh.aabb_max[0] * lod_scale,
             expected_origin[1] + mesh.aabb_max[1] * lod_scale,
@@ -206,7 +206,7 @@ fn mesh_03_chunk_metadata_world_origin_matches_chunk_key() {
         ]
     );
     assert_eq!(
-        allocator.metadata_shadow()[upload.slot_id as usize].chunk_origin,
+        allocator.instance_shadow()[upload.slot_id as usize].chunk_origin,
         expected_origin
     );
 }
@@ -309,12 +309,16 @@ fn mesh_03_submit_frame_uses_dense_indirect_draw_count() {
         "submit_frame should use the dense draw count rather than sparse active slots"
     );
     assert!(
-        renderer_source.contains("dense_indirect_buffer()"),
-        "submit_frame should barrier the dense indirect output buffer"
+        renderer_source.contains("dense_indirect_buffer()")
+            || renderer_source.contains("scene_buffer()")
+            || renderer_source.contains("dense_indirect_region_offset()"),
+        "submit_frame should barrier the dense indirect output buffer (or scene_buffer containing it)"
     );
     assert!(
-        mesh_source.contains("dense_indirect_buffer()"),
-        "graphics draw should read commands from the dense indirect buffer"
+        mesh_source.contains("dense_indirect_buffer()")
+            || mesh_source.contains("scene_buffer()")
+            || mesh_source.contains("dense_indirect_region_offset()"),
+        "graphics draw should read commands from the dense indirect buffer (or scene_buffer)"
     );
     assert!(
         !renderer_source.contains("let draw_count = chunk_pool.active_chunk_count();"),
