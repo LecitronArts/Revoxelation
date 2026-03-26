@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 05-bindless-architecture-and-gpu-scene
-status: executing
-last_updated: "2026-03-26T04:49:41Z"
+status: completed
+last_updated: "2026-03-26T05:12:19.099Z"
 progress:
   total_phases: 12
-  completed_phases: 5
-  total_plans: 24
-  completed_plans: 26
+  completed_phases: 6
+  total_plans: 28
+  completed_plans: 28
 ---
 
 # Session State
@@ -22,7 +22,15 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 05-bindless-architecture-and-gpu-scene
-**Status:** Plan 03 complete, ready for Plan 05
+**Status:** Phase 5 COMPLETE — all 5 plans (BIND-01 through BIND-05) done
+
+## Key Decisions (Phase 5 Plan 05)
+
+- INITIAL_CAPACITY=1024 replaces MAX_RENDER_CHUNKS=881; capacity is runtime-dynamic
+- Growth trigger: active > capacity * 0.9; growth factor: 2x doubling
+- Growth between frames via submit_one_shot_commands (after fence wait, before command recording)
+- vkCmdDrawIndexedIndirectCount uses draw_count_buffer from cull shader; max_draw_count = capacity
+- CPU active_draw_count only used for cull dispatch workgroup count
 
 ## Key Decisions (Phase 5 Plan 03)
 
@@ -69,3 +77,4 @@ See: .planning/PROJECT.md
 - 2026-03-26: Executed 05-02 — BindlessTable + pipeline migration (BIND-02)
 - 2026-03-26: Executed 05-04 — BlockMaterial, texture array, shader sampling (BIND-04)
 - 2026-03-26: Executed 05-03 — Unified scene_buffer, GpuChunkInstance, 6→3 buffers (BIND-03)
+- 2026-03-26: Executed 05-05 — Dynamic capacity, IndirectCount draw (BIND-05) — Phase 5 COMPLETE
