@@ -13,8 +13,73 @@ pub struct DeviceContext {
     pub present_family: u32,
 }
 
-pub fn required_device_features_error() -> &'static str {
-    "Vulkan device missing required features: samplerAnisotropy, multiDrawIndirect, drawIndirectFirstInstance"
+/// Names of the 7 required Vulkan 1.2 features for bindless rendering.
+/// No fallback path exists — unsupported GPUs fail fast.
+const REQUIRED_VULKAN12_FEATURE_NAMES: [&str; 7] = [
+    "descriptor_indexing",
+    "shader_sampled_image_array_non_uniform_indexing",
+    "runtime_descriptor_array",
+    "descriptor_binding_partially_bound",
+    "descriptor_binding_sampled_image_update_after_bind",
+    "descriptor_binding_storage_buffer_update_after_bind",
+    "draw_indirect_count",
+];
+
+/// Check which required Vulkan 1.2 features are missing on the given physical device.
+/// Returns a list of missing feature names (empty = all supported).
+///
+/// Uses `get_physical_device_features2` with `PhysicalDeviceVulkan12Features` in
+/// the pNext chain (core Vulkan 1.2 struct, not extension-era DescriptorIndexingFeatures).
+fn missing_vulkan12_features(
+    instance: &Instance,
+    physical_device: vk::PhysicalDevice,
+) -> Vec<&'static str> {
+    let mut vulkan12_features = vk::PhysicalDeviceVulkan12Features::default();
+    let mut features2 =
+        vk::PhysicalDeviceFeatures2::default().push_next(&mut vulkan12_features);
+
+    unsafe {
+        instance.get_physical_device_features2(physical_device, &mut features2);
+    }
+
+    let mut missing = Vec::new();
+
+    if vulkan12_features.descriptor_indexing == vk::FALSE {
+        missing.push(REQUIRED_VULKAN12_FEATURE_NAMES[0]);
+    }
+    if vulkan12_features.shader_sampled_image_array_non_uniform_indexing == vk::FALSE {
+        missing.push(REQUIRED_VULKAN12_FEATURE_NAMES[1]);
+    }
+    if vulkan12_features.runtime_descriptor_array == vk::FALSE {
+        missing.push(REQUIRED_VULKAN12_FEATURE_NAMES[2]);
+    }
+    if vulkan12_features.descriptor_binding_partially_bound == vk::FALSE {
+        missing.push(REQUIRED_VULKAN12_FEATURE_NAMES[3]);
+    }
+    if vulkan12_features.descriptor_binding_sampled_image_update_after_bind == vk::FALSE {
+        missing.push(REQUIRED_VULKAN12_FEATURE_NAMES[4]);
+    }
+    if vulkan12_features.descriptor_binding_storage_buffer_update_after_bind == vk::FALSE {
+        missing.push(REQUIRED_VULKAN12_FEATURE_NAMES[5]);
+    }
+    if vulkan12_features.draw_indirect_count == vk::FALSE {
+        missing.push(REQUIRED_VULKAN12_FEATURE_NAMES[6]);
+    }
+
+    missing
+}
+
+fn supports_required_features(instance: &Instance, physical_device: vk::PhysicalDevice) -> bool {
+    let features = unsafe { instance.get_physical_device_features(physical_device) };
+    features.sampler_anisotropy == vk::TRUE
+        && features.multi_draw_indirect == vk::TRUE
+        && features.draw_indirect_first_instance == vk::TRUE
+}
+
+fn device_name(instance: &Instance, physical_device: vk::PhysicalDevice) -> String {
+    let props = unsafe { instance.get_physical_device_properties(physical_device) };
+    let name = unsafe { CStr::from_ptr(props.device_name.as_ptr()) };
+    name.to_string_lossy().into_owned()
 }
 
 pub fn pick_physical_device(
@@ -29,7 +94,9 @@ pub fn pick_physical_device(
     };
 
     let mut selected: Option<(vk::PhysicalDevice, u32, u32, bool)> = None;
-    let mut saw_missing_required_features = false;
+    let mut last_missing_1_0 = false;
+    let mut last_missing_1_2: Option<(String, Vec<&'static str>)> = None;
+
     for physical_device in physical_devices {
         let Some((graphics_family, present_family)) =
             find_queue_families(instance, surface_loader, surface, physical_device)?
@@ -45,8 +112,26 @@ pub fn pick_physical_device(
             continue;
         }
 
+        // Check Vulkan 1.0 required features.
         if !supports_required_features(instance, physical_device) {
-            saw_missing_required_features = true;
+            last_missing_1_0 = true;
+            let name = device_name(instance, physical_device);
+            log::warn!(
+                "Skipping GPU {name}: missing required Vulkan 1.0 features \
+                 (samplerAnisotropy, multiDrawIndirect, drawIndirectFirstInstance)"
+            );
+            continue;
+        }
+
+        // Check Vulkan 1.2 required features.
+        let missing = missing_vulkan12_features(instance, physical_device);
+        if !missing.is_empty() {
+            let name = device_name(instance, physical_device);
+            log::warn!(
+                "Skipping GPU {name}: Vulkan 1.2 feature(s) missing: {}",
+                missing.join(", ")
+            );
+            last_missing_1_2 = Some((name, missing));
             continue;
         }
 
@@ -74,8 +159,17 @@ pub fn pick_physical_device(
     }
 
     let (physical_device, graphics_family, present_family, _) = selected.ok_or_else(|| {
-        if saw_missing_required_features {
-            anyhow!(required_device_features_error())
+        if let Some((gpu_name, missing)) = last_missing_1_2 {
+            anyhow!(
+                "Vulkan 1.2 feature(s) missing: {}. GPU: {}.",
+                missing.join(", "),
+                gpu_name
+            )
+        } else if last_missing_1_0 {
+            anyhow!(
+                "Vulkan device missing required features: \
+                 samplerAnisotropy, multiDrawIndirect, drawIndirectFirstInstance"
+            )
         } else {
             anyhow!("no Vulkan device supports graphics, present, and swapchain")
         }
@@ -92,14 +186,31 @@ pub fn pick_physical_device(
         .collect();
 
     let required_extensions = [khr::swapchain::NAME.as_ptr()];
-    let device_features = vk::PhysicalDeviceFeatures::default()
+
+    // Vulkan 1.0 features — set via PhysicalDeviceFeatures2.features field.
+    let device_features_1_0 = vk::PhysicalDeviceFeatures::default()
         .sampler_anisotropy(true)
         .multi_draw_indirect(true)
         .draw_indirect_first_instance(true);
+
+    // Vulkan 1.2 features — chained via pNext on PhysicalDeviceFeatures2.
+    let mut vulkan12_features = vk::PhysicalDeviceVulkan12Features::default()
+        .descriptor_indexing(true)
+        .shader_sampled_image_array_non_uniform_indexing(true)
+        .runtime_descriptor_array(true)
+        .descriptor_binding_partially_bound(true)
+        .descriptor_binding_sampled_image_update_after_bind(true)
+        .descriptor_binding_storage_buffer_update_after_bind(true)
+        .draw_indirect_count(true);
+
+    let mut features2 = vk::PhysicalDeviceFeatures2::default()
+        .features(device_features_1_0)
+        .push_next(&mut vulkan12_features);
+
     let create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_create_infos)
         .enabled_extension_names(&required_extensions)
-        .enabled_features(&device_features);
+        .push_next(&mut features2);
 
     let device = unsafe {
         instance
@@ -118,13 +229,6 @@ pub fn pick_physical_device(
         graphics_family,
         present_family,
     })
-}
-
-fn supports_required_features(instance: &Instance, physical_device: vk::PhysicalDevice) -> bool {
-    let features = unsafe { instance.get_physical_device_features(physical_device) };
-    features.sampler_anisotropy == vk::TRUE
-        && features.multi_draw_indirect == vk::TRUE
-        && features.draw_indirect_first_instance == vk::TRUE
 }
 
 fn find_queue_families(
