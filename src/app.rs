@@ -117,6 +117,17 @@ pub fn run() -> Result<()> {
         bindless.register_buffer(&renderer.device_ctx.device, 6, cull_pipeline.hiz_config_buffer, std::mem::size_of::<crate::renderer::cull_pipeline::HiZConfig>() as u64);
     }
 
+    // Create and upload material table to bindless binding 8.
+    {
+        let material_table = crate::renderer::material::MaterialTable::default_table();
+        let (buf, alloc) = material_table.upload(&mut renderer)?;
+        renderer.material_buffer = Some(buf);
+        renderer.material_allocation = Some(alloc);
+    }
+
+    // Create texture array and register at bindless binding 9.
+    renderer.texture_array = Some(crate::renderer::texture_array::TextureArray::new(&mut renderer)?);
+
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);
 
     let mut app = App {
