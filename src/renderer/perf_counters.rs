@@ -14,4 +14,6 @@ pub struct GpuPerfCounters {
     pub frame_time_ms: f32,
     /// GPU-measured frame time in milliseconds (0.0 if unavailable).
     pub gpu_time_ms: f32,
+    /// Current chunk pool capacity (dynamic, grows by 2×).
+    pub chunk_capacity: u32,
 }

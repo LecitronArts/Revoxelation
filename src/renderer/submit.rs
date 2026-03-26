@@ -52,6 +52,22 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             staging_ring.reset_current_frame();
         }
 
+        // D-05: Check if ChunkPool needs capacity growth (after fence wait, before recording).
+        // Growth is rare (2× doubling) and uses a one-shot command buffer with fence wait.
+        {
+            let needs = renderer.chunk_pool.as_ref().map_or(false, |cp| cp.needs_grow());
+            if needs {
+                // Temporarily take chunk_pool and bindless to satisfy borrow checker.
+                let mut chunk_pool = renderer.chunk_pool.take().unwrap();
+                let bindless = renderer.bindless.take().expect("bindless must exist for growth");
+                if let Err(e) = chunk_pool.grow_capacity(renderer, &bindless) {
+                    log::error!("ChunkPool growth failed: {e:#}");
+                }
+                renderer.bindless = Some(bindless);
+                renderer.chunk_pool = Some(chunk_pool);
+            }
+        }
+
         // D-05: ERROR_OUT_OF_DATE_KHR from acquire_next_image → skip frame, recreate.
         let acquire_result = renderer
             .swapchain_ctx

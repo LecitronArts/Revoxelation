@@ -246,8 +246,10 @@ pub fn run() -> Result<()> {
                             ui.separator();
                             let pc = &app.perf_counters;
                             ui.label(format!(
-                                "Chunks: {}/{} | Frame: {:.1}ms",
-                                pc.visible_chunks, pc.total_chunks, pc.frame_time_ms
+                                "Chunks: {}/{} | Slots: {}/{} | Frame: {:.1}ms",
+                                pc.visible_chunks, pc.total_chunks,
+                                pc.total_chunks, pc.chunk_capacity,
+                                pc.frame_time_ms
                             ));
                         });
                     });
@@ -294,8 +296,12 @@ pub fn run() -> Result<()> {
                     let total_chunks = app.renderer.chunk_pool.as_ref()
                         .map(|cp| cp.active_draw_count())
                         .unwrap_or(0);
+                    let chunk_capacity = app.renderer.chunk_pool.as_ref()
+                        .map(|cp| cp.capacity() as u32)
+                        .unwrap_or(0);
                     app.perf_counters.frame_time_ms = frame_time_ms;
                     app.perf_counters.total_chunks = total_chunks;
+                    app.perf_counters.chunk_capacity = chunk_capacity;
                     // visible_chunks approximated as total (actual readback deferred to future)
                     app.perf_counters.visible_chunks = total_chunks;
 
