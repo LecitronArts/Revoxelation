@@ -94,13 +94,11 @@ pub fn run() -> Result<()> {
     // Create the unified bindless descriptor set 0 BEFORE pipelines (D-04).
     let bindless = BindlessTable::new(&renderer.device_ctx.device)?;
 
-    // Register all chunk pool buffers with the bindless table.
+    // Register the unified scene_buffer with the bindless table at binding 0 (D-07).
+    // Bindings 1-3 are now free (all 4 regions merged into scene_buffer).
     {
         let chunk_pool = renderer.chunk_pool.as_ref().expect("chunk pool must be initialized before bindless registration");
-        bindless.register_buffer(&renderer.device_ctx.device, 0, chunk_pool.metadata_buffer(), vk::WHOLE_SIZE);
-        bindless.register_buffer(&renderer.device_ctx.device, 1, chunk_pool.indirect_template_buffer(), vk::WHOLE_SIZE);
-        bindless.register_buffer(&renderer.device_ctx.device, 2, chunk_pool.draw_slot_buffer(), vk::WHOLE_SIZE);
-        bindless.register_buffer(&renderer.device_ctx.device, 3, chunk_pool.dense_indirect_buffer(), vk::WHOLE_SIZE);
+        bindless.register_buffer(&renderer.device_ctx.device, 0, chunk_pool.scene_buffer(), vk::WHOLE_SIZE);
     }
 
     let bindless_layout = bindless.descriptor_set_layout;

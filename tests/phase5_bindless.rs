@@ -248,10 +248,8 @@ fn phase5_shared_set0_pipelines() {
 
 // ---------------------------------------------------------------------------
 // Plan 05-03 Task 1 — GpuChunkInstance and unified scene_buffer layout
-// (Tests temporarily disabled — types not yet implemented, Plan 05-03 pending)
 // ---------------------------------------------------------------------------
 
-/*
 /// GpuChunkInstance must be exactly 48 bytes.
 #[test]
 fn phase5_gpu_chunk_instance_size() {
@@ -299,4 +297,3 @@ fn phase5_chunk_pool_three_buffers() {
         "ChunkPool must call create_allocated_buffer exactly 3 times (vertex, index, scene), found {alloc_count}"
     );
 }
-*/

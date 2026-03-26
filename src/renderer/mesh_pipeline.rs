@@ -195,8 +195,8 @@ impl ChunkMeshPipeline {
             );
             renderer.device_ctx.device.cmd_draw_indexed_indirect(
                 cmd,
-                chunk_pool.dense_indirect_buffer(),
-                0,
+                chunk_pool.scene_buffer(),
+                chunk_pool.dense_indirect_region_offset(),
                 draw_count,
                 std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
             );

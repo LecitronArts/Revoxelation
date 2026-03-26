@@ -153,12 +153,12 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             );
 
             // Barrier: compute shader writes → indirect draw reads for both dense indirect
-            // and draw count buffers.
+            // (within scene_buffer) and draw count buffers.
             let dense_barrier = vk::BufferMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ)
-                .buffer(chunk_pool.dense_indirect_buffer())
-                .offset(0)
+                .buffer(chunk_pool.scene_buffer())
+                .offset(chunk_pool.dense_indirect_region_offset())
                 .size(vk::WHOLE_SIZE);
             let draw_count_barrier = vk::BufferMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
