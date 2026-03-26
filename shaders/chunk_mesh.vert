@@ -1,7 +1,10 @@
 #version 450
 
 layout(location = 0) in uvec2 in_packed;
-layout(location = 0) out vec3 v_color;
+
+layout(location = 0) flat out uint v_block_id;
+layout(location = 1) out vec3 v_face_normal;
+layout(location = 2) out vec2 v_uv;
 
 struct ChunkDrawMetadata {
     vec3 aabb_min;
@@ -32,10 +35,23 @@ vec3 decode_position(uint word0) {
     return vec3(x, y, z);
 }
 
+// face_index: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
+vec3 face_normal_from_index(uint fi) {
+    // Look-up table for 6 face normals
+    if (fi == 0u) return vec3( 1.0, 0.0, 0.0);
+    if (fi == 1u) return vec3(-1.0, 0.0, 0.0);
+    if (fi == 2u) return vec3( 0.0, 1.0, 0.0);
+    if (fi == 3u) return vec3( 0.0,-1.0, 0.0);
+    if (fi == 4u) return vec3( 0.0, 0.0, 1.0);
+    return            vec3( 0.0, 0.0,-1.0);
+}
+
 void main() {
     ChunkDrawMetadata metadata = chunk_metadata.metadata[gl_InstanceIndex];
 
     uint word0 = in_packed.x;
+    uint word1 = in_packed.y;
+
     vec3 pos = decode_position(word0);
 
     uint face_index = (word0 >> 21) & 0x7u;
@@ -49,12 +65,17 @@ void main() {
     }
 
     vec3 local = (pos + face_offset) * metadata.chunk_scale;
-    uint block_id = in_packed.y & 0xFFFFu;
     vec3 world_position = metadata.chunk_origin + local;
     gl_Position = camera.view_proj * vec4(world_position, 1.0);
-    v_color = vec3(
-        float((block_id % 5u) + 1u) / 6.0,
-        float(((block_id / 5u) % 5u) + 1u) / 6.0,
-        float(((block_id / 25u) % 5u) + 1u) / 6.0
-    );
+
+    // Extract block_id from word1 low 16 bits
+    v_block_id = word1 & 0xFFFFu;
+
+    // Face normal for fragment shader material lookup
+    v_face_normal = face_normal_from_index(face_index);
+
+    // UV coordinates from packed vertex (bits 16-23 = u, bits 24-31 = v)
+    float u = float((word1 >> 16) & 0xFFu);
+    float v = float((word1 >> 24) & 0xFFu);
+    v_uv = vec2(u, v);
 }
