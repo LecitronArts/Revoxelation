@@ -37,7 +37,7 @@
 
 - [x] **BIND-01**: Vulkan 1.2 is a hard requirement; device creation fails gracefully with clear error message if GPU does not support required features.
 - [x] **BIND-02**: Single bindless descriptor set binds all GPU resources; no per-chunk descriptor updates needed.
-- [ ] **BIND-03**: Unified GPU scene buffer reduces per-chunk buffer count; rendering output unchanged.
+- [x] **BIND-03**: Unified GPU scene buffer reduces per-chunk buffer count; rendering output unchanged.
 - [x] **BIND-04**: Block material system supports distinct textures per block_id via texture array + bindless sampling.
 - [ ] **BIND-05**: Chunk render capacity grows dynamically beyond fixed limit; IndirectCount eliminates CPU-side draw count.
 
@@ -134,7 +134,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REND-07 | Phase 4 | Complete |
 | BIND-01 | Phase 5 | Complete |
 | BIND-02 | Phase 5 | Complete |
-| BIND-03 | Phase 5 | Pending |
+| BIND-03 | Phase 5 | Complete |
 | BIND-04 | Phase 5 | Complete |
 | BIND-05 | Phase 5 | Pending |
 | MSHL-01 | Phase 6 | Pending |

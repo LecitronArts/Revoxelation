@@ -22,7 +22,15 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 05-bindless-architecture-and-gpu-scene
-**Status:** Plan 04 complete, ready for Plan 05
+**Status:** Plan 03 complete, ready for Plan 05
+
+## Key Decisions (Phase 5 Plan 03)
+
+- GpuChunkInstance (48 bytes) replaces ChunkDrawMetadata — material_id replaces draw-command fields
+- Unified scene_buffer: 4 regions (instances, indirect templates, draw slots, dense indirect) with 16-byte alignment
+- Cull shader uses raw uint array with capacity-derived offsets; push constant expanded to { active_draw_count, capacity }
+- Vertex shader reads scene_data.instances[gl_InstanceIndex]; BindlessTable binding 0 → scene_buffer (WHOLE_SIZE)
+- ChunkPool reduced from 6 GPU buffers to 3 (vertex, index, scene_buffer)
 
 ## Key Decisions (Phase 5 Plan 04)
 
@@ -60,3 +68,4 @@ See: .planning/PROJECT.md
 - 2026-03-26: Executed 05-01 — Vulkan 1.2 hard requirement (BIND-01)
 - 2026-03-26: Executed 05-02 — BindlessTable + pipeline migration (BIND-02)
 - 2026-03-26: Executed 05-04 — BlockMaterial, texture array, shader sampling (BIND-04)
+- 2026-03-26: Executed 05-03 — Unified scene_buffer, GpuChunkInstance, 6→3 buffers (BIND-03)
