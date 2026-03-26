@@ -18,6 +18,7 @@ pub mod hiz;
 #[cfg(all(debug_assertions, feature = "hot-reload"))]
 pub mod hot_reload;
 pub mod instance;
+pub mod material;
 pub mod mesh_pipeline;
 pub mod perf_counters;
 pub mod pipeline_cache;

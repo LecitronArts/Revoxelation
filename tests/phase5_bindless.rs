@@ -172,6 +172,63 @@ fn phase5_mesh_pipeline_no_own_descriptor_set() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Plan 05-04 Task 1 — BlockMaterial and MaterialTable
+// ---------------------------------------------------------------------------
+
+/// BlockMaterial must be exactly 8 bytes (4 × u16).
+#[test]
+fn phase5_block_material_size() {
+    assert_eq!(
+        std::mem::size_of::<revoxelation::renderer::material::BlockMaterial>(),
+        8,
+        "BlockMaterial must be 8 bytes (top_texture, side_texture, bottom_texture, flags — all u16)"
+    );
+}
+
+/// Default MaterialTable must have at least 9 entries (air + 8 block types).
+#[test]
+fn phase5_block_material_ssbo_8_types() {
+    let table = revoxelation::renderer::material::MaterialTable::default_table();
+    let entries = table.entries();
+    assert!(
+        entries.len() >= 9,
+        "MaterialTable must have at least 9 entries (0=air + 8 blocks), got {}",
+        entries.len()
+    );
+    // Air (block_id=0) should have zero texture indices.
+    assert_eq!(entries[0].top_texture, 0);
+    assert_eq!(entries[0].side_texture, 0);
+    assert_eq!(entries[0].bottom_texture, 0);
+    // Non-air blocks should have non-zero texture indices.
+    for i in 1..=8 {
+        let m = &entries[i];
+        assert!(
+            m.top_texture != 0 || m.side_texture != 0 || m.bottom_texture != 0,
+            "Block {i} must have at least one non-zero texture index"
+        );
+    }
+}
+
+/// Grass (block_id=2) must have distinct top, side, bottom textures.
+#[test]
+fn phase5_grass_per_face_textures() {
+    let table = revoxelation::renderer::material::MaterialTable::default_table();
+    let grass = &table.entries()[2];
+    assert_ne!(
+        grass.top_texture, grass.side_texture,
+        "Grass top_texture must differ from side_texture"
+    );
+    assert_ne!(
+        grass.top_texture, grass.bottom_texture,
+        "Grass top_texture must differ from bottom_texture"
+    );
+    assert_ne!(
+        grass.side_texture, grass.bottom_texture,
+        "Grass side_texture must differ from bottom_texture"
+    );
+}
+
 /// Both pipelines must reference a bindless layout parameter.
 #[test]
 fn phase5_shared_set0_pipelines() {
