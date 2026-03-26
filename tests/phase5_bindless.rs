@@ -245,3 +245,58 @@ fn phase5_shared_set0_pipelines() {
         "mesh_pipeline.rs must reference bindless layout"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 05-03 Task 1 — GpuChunkInstance and unified scene_buffer layout
+// (Tests temporarily disabled — types not yet implemented, Plan 05-03 pending)
+// ---------------------------------------------------------------------------
+
+/*
+/// GpuChunkInstance must be exactly 48 bytes.
+#[test]
+fn phase5_gpu_chunk_instance_size() {
+    assert_eq!(
+        std::mem::size_of::<revoxelation::renderer::chunk_pool::GpuChunkInstance>(),
+        48,
+        "GpuChunkInstance must be 48 bytes"
+    );
+}
+
+/// scene_buffer_region_offsets must return correct offsets for 4 regions with 16-byte alignment.
+#[test]
+fn phase5_scene_buffer_layout_regions() {
+    let (inst_off, indirect_off, slot_off, dense_off, total) =
+        revoxelation::renderer::chunk_pool::scene_buffer_region_offsets(1024);
+
+    // Region 0: GpuChunkInstance[1024] starts at 0
+    assert_eq!(inst_off, 0, "instance region must start at 0");
+
+    // Region 1: DrawIndexedIndirectCommand[1024] starts after instances (1024*48 = 49152)
+    assert_eq!(indirect_off, 49152, "indirect template region offset");
+    assert_eq!(indirect_off % 16, 0, "indirect template region must be 16-byte aligned");
+
+    // Region 2: u32[1024] starts after indirect templates (49152 + 1024*20 = 69632)
+    assert_eq!(slot_off, 69632, "draw slot region offset");
+    assert_eq!(slot_off % 16, 0, "draw slot region must be 16-byte aligned");
+
+    // Region 3: DrawIndexedIndirectCommand[1024] starts after draw slots (69632 + 1024*4 = 73728)
+    assert_eq!(dense_off, 73728, "dense indirect region offset");
+    assert_eq!(dense_off % 16, 0, "dense indirect region must be 16-byte aligned");
+
+    // Total: 73728 + 1024*20 = 94208
+    assert_eq!(total, 94208, "total scene buffer size");
+}
+
+/// ChunkPool must allocate exactly 3 buffers (vertex, index, scene).
+#[test]
+fn phase5_chunk_pool_three_buffers() {
+    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("src/renderer/chunk_pool.rs should exist");
+
+    let alloc_count = source.matches("create_allocated_buffer(").count();
+    assert_eq!(
+        alloc_count, 3,
+        "ChunkPool must call create_allocated_buffer exactly 3 times (vertex, index, scene), found {alloc_count}"
+    );
+}
+*/

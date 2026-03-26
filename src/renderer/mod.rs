@@ -27,6 +27,7 @@ pub mod staging;
 pub mod staging_ring;
 pub mod submit;
 pub mod swapchain;
+pub mod texture_array;
 
 // Re-exports — keep external import paths stable.
 pub(crate) use helpers::{
@@ -76,6 +77,9 @@ pub struct Renderer {
     pub pipeline_cache: Option<pipeline_cache::PipelineCache>,
     pub egui_backend: Option<egui_backend::EguiAshBackend>,
     pub pending_egui_output: Option<crate::app::PendingEguiOutput>,
+    pub texture_array: Option<texture_array::TextureArray>,
+    pub material_buffer: Option<vk::Buffer>,
+    pub material_allocation: Option<gpu_allocator::vulkan::Allocation>,
 }
 
 impl Renderer {
@@ -170,6 +174,9 @@ impl Renderer {
             pipeline_cache: None,
             egui_backend: None,
             pending_egui_output: None,
+            texture_array: None,
+            material_buffer: None,
+            material_allocation: None,
         })
     }
 }
@@ -181,6 +188,18 @@ impl Drop for Renderer {
 
             if let Some(egui_backend) = self.egui_backend.take() {
                 let _ = egui_backend.destroy(self);
+            }
+
+            // Clean up texture array before bindless table.
+            if let Some(texture_array) = self.texture_array.take() {
+                let _ = texture_array.destroy(self);
+            }
+
+            // Clean up material buffer before bindless table.
+            if let Some(alloc) = self.material_allocation.take() {
+                if let Some(buf) = self.material_buffer.take() {
+                    let _ = destroy_allocated_buffer(self, buf, alloc);
+                }
             }
 
             // Save and destroy pipeline cache before pipelines are torn down.
