@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 04-rendering-foundation-overhaul
-status: planning
-last_updated: "2026-03-25T13:33:24.258Z"
+current_phase: 05-bindless-architecture-and-gpu-scene
+status: executing
+last_updated: "2026-03-26T04:17:19Z"
 progress:
   total_phases: 12
   completed_phases: 5
-  total_plans: 23
-  completed_plans: 23
+  total_plans: 24
+  completed_plans: 24
 ---
 
 # Session State
@@ -21,8 +21,15 @@ See: .planning/PROJECT.md
 ## Position
 
 **Milestone:** v1.0 milestone
-**Current phase:** 04-rendering-foundation-overhaul
-**Status:** Ready to plan
+**Current phase:** 05-bindless-architecture-and-gpu-scene
+**Status:** Plan 01 complete, ready for Plan 02
+
+## Key Decisions (Phase 5 Plan 01)
+
+- Vulkan 1.2 hard requirement: 7 features (descriptor_indexing, shader_sampled_image_array_non_uniform_indexing, runtime_descriptor_array, descriptor_binding_partially_bound, descriptor_binding_sampled_image_update_after_bind, descriptor_binding_storage_buffer_update_after_bind, draw_indirect_count)
+- PhysicalDeviceVulkan12Features via pNext chain (core 1.2 struct, not extension-era)
+- DeviceCreateInfo uses PhysicalDeviceFeatures2 + push_next for both 1.0 and 1.2 features
+- No fallback: missing features produce "Vulkan 1.2 feature(s) missing: {list}. GPU: {name}."
 
 ## Key Decisions (Phase 4 Plan 07)
 
@@ -91,3 +98,4 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - 2026-03-25: Executed 04-03-PLAN.md — Swapchain lifecycle: FrameOutcome enum, resize/OUT_OF_DATE/SUBOPTIMAL handling, minimization skip (REND-02)
 - 2026-03-25: Executed 04-06-PLAN.md — Hi-Z occlusion culling: depth pyramid generation, cull shader integration, runtime toggle (REND-04)
 - 2026-03-25: Executed 04-07-PLAN.md — Pipeline cache, perf counters, egui HUD, shader hot-reload, runtime config (REND-07). Phase 4 COMPLETE.
+- 2026-03-26: Executed 05-01-PLAN.md — Vulkan 1.2 hard requirement: 7 descriptor indexing + drawIndirectCount features, pNext chain device creation (BIND-01)

@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Streaming Lifecycle and Job Queues** - Make player-driven chunk activation work with explicit lifecycle states and bounded background work.
 - [x] **Phase 2.5: Vulkan Bootstrap and Render Infrastructure** (INSERTED) - Replace wgpu with raw Vulkan (ash) and establish gpu-allocator-backed staging pipeline and egui-ash integration.
 - [x] **Phase 3: Greedy Meshing and Render Delta Sync** - Produce greedy chunk meshes and push only chunk deltas to the renderer.
-- [ ] **Phase 4: Rendering Foundation Overhaul** - Fix critical renderer issues, establish real camera/projection, frustum+Hi-Z culling, GpuOnly memory, swapchain lifecycle.
+- [x] **Phase 4: Rendering Foundation Overhaul** - Fix critical renderer issues, establish real camera/projection, frustum+Hi-Z culling, GpuOnly memory, swapchain lifecycle.
 - [ ] **Phase 5: Bindless Architecture and GPU Scene** - Vulkan 1.2 descriptor indexing (hard requirement, no fallback), unified GPU scene buffer, block material/texture system.
 - [ ] **Phase 6: Meshlet Pipeline** - Meshlet generation, per-meshlet GPU culling, software mesh shader emulation, optional VK_EXT_mesh_shader hardware path.
 - [ ] **Phase 7: Lighting and Shadows** - Directional PBR lighting, cascaded shadow maps, SSAO, voxel AO, sky/atmosphere with day-night cycle.
@@ -112,7 +112,7 @@ Plans:
 - [x] 04-04: GpuOnly memory model + async transfer (ring-buffer staging, transfer queue).
 - [x] 04-05: Real frustum culling (AABB vs 6 planes, draw count buffer, IndirectCount).
 - [x] 04-06: Hi-Z occlusion culling (depth pyramid, temporal reprojection, occlusion test in cull shader).
-- [ ] 04-07: Pipeline cache + performance counters + shader hot-reload + runtime config.
+- [x] 04-07: Pipeline cache + performance counters + shader hot-reload + runtime config.
 
 ### Phase 5: Bindless Architecture and GPU Scene
 **Goal**: Leverage Vulkan 1.2 descriptor indexing (hard requirement) to eliminate per-material descriptor set switching, build a unified GPU scene buffer, and establish a block material/texture system. No Vulkan 1.0 fallback — simplifies code paths significantly.
@@ -127,7 +127,7 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 05-01: Vulkan 1.2 device upgrade + descriptor indexing (hard requirement, no fallback).
+- [x] 05-01: Vulkan 1.2 device upgrade + descriptor indexing (hard requirement, no fallback).
 - [ ] 05-02: Bindless descriptor set + global resource table (BindlessTable, shared set 0).
 - [ ] 05-03: Unified GPU scene buffer (GpuChunkInstance SSBO, gl_DrawID indexing).
 - [ ] 05-04: Block material system + texture array (BlockMaterial, 2D array texture, bindless sampling).
@@ -236,8 +236,8 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 
 | 2. Streaming Lifecycle and Job Queues | 2/2 | Complete | 2026-03-21 |
 | 2.5. Vulkan Bootstrap and Render Infrastructure | 2/2 | Complete | 2026-03-21 |
 | 3. Greedy Meshing and Render Delta Sync | 7/7 | Complete | 2026-03-22 |
-| 4. Rendering Foundation Overhaul | 6/7 | In Progress | - |
-| 5. Bindless Architecture and GPU Scene | 0/5 | Not started | - |
+| 4. Rendering Foundation Overhaul | 7/7 | Complete | 2026-03-25 |
+| 5. Bindless Architecture and GPU Scene | 1/5 | In Progress | - |
 | 6. Meshlet Pipeline | 0/5 | Not started | - |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |
