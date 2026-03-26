@@ -9,7 +9,7 @@ progress:
   total_phases: 12
   completed_phases: 5
   total_plans: 24
-  completed_plans: 24
+  completed_plans: 25
 ---
 
 # Session State
@@ -22,7 +22,17 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 05-bindless-architecture-and-gpu-scene
-**Status:** Plan 01 complete, ready for Plan 02
+**Status:** Plan 02 complete, ready for Plan 03
+
+## Key Decisions (Phase 5 Plan 02)
+
+- BindlessTable owns descriptor set 0 with 10 bindings (0-7 active, 8-9 reserved for Plan 04 materials)
+- PARTIALLY_BOUND + UPDATE_AFTER_BIND flags on all 10 bindings
+- Each pipeline keeps its own pipeline_layout (push constant ranges differ) but shares the descriptor set layout
+- Auxiliary buffers (frustum planes, draw count, Hi-Z config) remain owned by ChunkCullPipeline, registered with BindlessTable at init
+- Bindless descriptor set bound at each cmd_bind_pipeline point (compute for cull, graphics for mesh)
+- BindlessTable created BEFORE pipelines; pipelines take bindless_layout as constructor parameter
+- register_buffer/register_image API for dynamic descriptor updates
 
 ## Key Decisions (Phase 5 Plan 01)
 
@@ -99,3 +109,4 @@ Original Phase 4-7 (gameplay) renumbered to Phase 8-11. Four new rendering moder
 - 2026-03-25: Executed 04-06-PLAN.md — Hi-Z occlusion culling: depth pyramid generation, cull shader integration, runtime toggle (REND-04)
 - 2026-03-25: Executed 04-07-PLAN.md — Pipeline cache, perf counters, egui HUD, shader hot-reload, runtime config (REND-07). Phase 4 COMPLETE.
 - 2026-03-26: Executed 05-01-PLAN.md — Vulkan 1.2 hard requirement: 7 descriptor indexing + drawIndirectCount features, pNext chain device creation (BIND-01)
+- 2026-03-26: Executed 05-02-PLAN.md — BindlessTable with unified set 0 (UPDATE_AFTER_BIND + PARTIALLY_BOUND), cull+mesh pipelines migrated to shared descriptors (BIND-02)

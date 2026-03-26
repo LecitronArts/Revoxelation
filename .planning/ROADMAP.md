@@ -128,7 +128,7 @@ Plans:
 
 Plans:
 - [x] 05-01: Vulkan 1.2 device upgrade + descriptor indexing (hard requirement, no fallback).
-- [ ] 05-02: Bindless descriptor set + global resource table (BindlessTable, shared set 0).
+- [x] 05-02: Bindless descriptor set + global resource table (BindlessTable, shared set 0).
 - [ ] 05-03: Unified GPU scene buffer (GpuChunkInstance SSBO, gl_DrawID indexing).
 - [ ] 05-04: Block material system + texture array (BlockMaterial, 2D array texture, bindless sampling).
 - [ ] 05-05: Dynamic capacity + IndirectCount (runtime grow, vkCmdDrawIndexedIndirectCount).
@@ -237,7 +237,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 
 | 2.5. Vulkan Bootstrap and Render Infrastructure | 2/2 | Complete | 2026-03-21 |
 | 3. Greedy Meshing and Render Delta Sync | 7/7 | Complete | 2026-03-22 |
 | 4. Rendering Foundation Overhaul | 7/7 | Complete | 2026-03-25 |
-| 5. Bindless Architecture and GPU Scene | 1/5 | In Progress | - |
+| 5. Bindless Architecture and GPU Scene | 2/5 | In Progress | - |
 | 6. Meshlet Pipeline | 0/5 | Not started | - |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |
