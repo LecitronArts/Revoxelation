@@ -6,6 +6,7 @@ use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 
 use crate::{meshing::PackedMesh, streaming::types::ChunkKey};
 
+pub mod bindless;
 pub mod camera;
 pub mod chunk_pool;
 pub mod cull_pipeline;
@@ -65,6 +66,7 @@ pub struct Renderer {
     pub frames: [frame::FrameData; 2],
     pub current_frame: usize,
     pub chunk_pool: Option<chunk_pool::ChunkPool>,
+    pub bindless: Option<bindless::BindlessTable>,
     pub staging_ring: Option<staging_ring::StagingRing>,
     pub pending_chunk_deltas: VecDeque<RenderDelta>,
     pub mesh_pipeline: Option<mesh_pipeline::ChunkMeshPipeline>,
@@ -158,6 +160,7 @@ impl Renderer {
             frames,
             current_frame: 0,
             chunk_pool: None,
+            bindless: None,
             staging_ring: None,
             pending_chunk_deltas: VecDeque::new(),
             mesh_pipeline: None,
@@ -203,6 +206,10 @@ impl Drop for Renderer {
 
             if let Some(cull_pipeline) = self.cull_pipeline.take() {
                 cull_pipeline.destroy(self);
+            }
+
+            if let Some(bindless) = self.bindless.take() {
+                bindless.destroy(&self.device_ctx.device);
             }
 
             for frame in self.frames.iter().rev() {

@@ -81,3 +81,110 @@ fn phase5_no_fallback_path() {
         fallback_occurrences.len()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 05-02 Task 1 — BindlessTable creation
+// ---------------------------------------------------------------------------
+
+/// BindlessTable module must be declared in renderer/mod.rs.
+#[test]
+fn phase5_bindless_table_module_exists() {
+    let source = std::fs::read_to_string("src/renderer/mod.rs")
+        .expect("src/renderer/mod.rs should exist");
+    assert!(
+        source.contains("pub mod bindless"),
+        "src/renderer/mod.rs must contain 'pub mod bindless'"
+    );
+}
+
+/// BindlessTable must declare all 10 bindings (0-9) with UPDATE_AFTER_BIND and PARTIALLY_BOUND.
+#[test]
+fn phase5_bindless_table_has_required_bindings() {
+    let source = std::fs::read_to_string("src/renderer/bindless.rs")
+        .expect("src/renderer/bindless.rs should exist");
+
+    // Must reference UPDATE_AFTER_BIND and PARTIALLY_BOUND flags.
+    assert!(
+        source.contains("UPDATE_AFTER_BIND"),
+        "bindless.rs must contain UPDATE_AFTER_BIND flag"
+    );
+    assert!(
+        source.contains("PARTIALLY_BOUND"),
+        "bindless.rs must contain PARTIALLY_BOUND flag"
+    );
+
+    // Must have 10 bindings (0 through 9).
+    for i in 0..=9u32 {
+        let binding_str = format!(".binding({i})");
+        assert!(
+            source.contains(&binding_str),
+            "bindless.rs must contain binding {i} (looking for '{binding_str}')"
+        );
+    }
+}
+
+/// BindlessTable must define register_buffer and register_image methods.
+#[test]
+fn phase5_bindless_table_register_methods() {
+    let source = std::fs::read_to_string("src/renderer/bindless.rs")
+        .expect("src/renderer/bindless.rs should exist");
+    assert!(
+        source.contains("fn register_buffer"),
+        "bindless.rs must define a register_buffer method"
+    );
+    assert!(
+        source.contains("fn register_image"),
+        "bindless.rs must define a register_image method"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plan 05-02 Task 2 — Migrate pipelines to shared set 0
+// ---------------------------------------------------------------------------
+
+/// Cull pipeline must NOT have its own descriptor pool or set layout creation.
+#[test]
+fn phase5_cull_pipeline_no_own_descriptor_set() {
+    let source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
+        .expect("src/renderer/cull_pipeline.rs should exist");
+    assert!(
+        !source.contains("create_descriptor_pool"),
+        "cull_pipeline.rs must NOT contain create_descriptor_pool (moved to bindless.rs)"
+    );
+    assert!(
+        !source.contains("create_descriptor_set_layout"),
+        "cull_pipeline.rs must NOT contain create_descriptor_set_layout (moved to bindless.rs)"
+    );
+}
+
+/// Mesh pipeline must NOT have its own descriptor pool or set layout creation.
+#[test]
+fn phase5_mesh_pipeline_no_own_descriptor_set() {
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        !source.contains("create_descriptor_pool"),
+        "mesh_pipeline.rs must NOT contain create_descriptor_pool (moved to bindless.rs)"
+    );
+    assert!(
+        !source.contains("create_descriptor_set_layout"),
+        "mesh_pipeline.rs must NOT contain create_descriptor_set_layout (moved to bindless.rs)"
+    );
+}
+
+/// Both pipelines must reference a bindless layout parameter.
+#[test]
+fn phase5_shared_set0_pipelines() {
+    let cull_source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
+        .expect("src/renderer/cull_pipeline.rs should exist");
+    let mesh_source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        cull_source.contains("bindless_layout") || cull_source.contains("bindless"),
+        "cull_pipeline.rs must reference bindless layout"
+    );
+    assert!(
+        mesh_source.contains("bindless_layout") || mesh_source.contains("bindless"),
+        "mesh_pipeline.rs must reference bindless layout"
+    );
+}
