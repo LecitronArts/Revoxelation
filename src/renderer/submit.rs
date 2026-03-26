@@ -209,15 +209,31 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         if let (Some(mesh_pipeline), Some(chunk_pool)) =
             (&renderer.mesh_pipeline, &renderer.chunk_pool)
         {
-            let draw_count = chunk_pool.active_draw_count();
-            if draw_count > 0 {
+            let active = chunk_pool.active_draw_count();
+            if active > 0 {
                 // Pass the shared bindless descriptor set to the mesh draw.
                 let bindless_set = renderer
                     .bindless
                     .as_ref()
                     .map(|b| b.descriptor_set)
                     .unwrap_or(vk::DescriptorSet::null());
-                mesh_pipeline.draw(renderer, chunk_pool, command_buffer, draw_count, camera_uniforms, bindless_set);
+
+                // max_draw_count = capacity, draw_count comes from GPU cull shader (D-06, D-09).
+                let max_draw_count = chunk_pool.scene_buffer_capacity() as u32;
+                let draw_count_buffer = renderer
+                    .cull_pipeline
+                    .as_ref()
+                    .map(|cp| cp.draw_count_buffer())
+                    .unwrap_or(vk::Buffer::null());
+                mesh_pipeline.draw(
+                    renderer,
+                    chunk_pool,
+                    command_buffer,
+                    max_draw_count,
+                    draw_count_buffer,
+                    camera_uniforms,
+                    bindless_set,
+                );
             }
         }
 

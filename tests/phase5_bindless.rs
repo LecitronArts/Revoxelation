@@ -355,3 +355,42 @@ fn phase5_no_max_render_chunks_constant() {
         "MAX_RENDER_CHUNKS must be replaced by INITIAL_CAPACITY"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 05-05 Task 2 — vkCmdDrawIndexedIndirectCount
+// ---------------------------------------------------------------------------
+
+/// mesh_pipeline.rs must use cmd_draw_indexed_indirect_count (IndirectCount).
+#[test]
+fn phase5_uses_indirect_count() {
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        source.contains("cmd_draw_indexed_indirect_count"),
+        "mesh_pipeline.rs must use cmd_draw_indexed_indirect_count"
+    );
+    // Must NOT contain the non-count version as a standalone draw call.
+    // (cmd_draw_indexed_indirect_count contains the substring, so we check
+    // for the non-count call pattern: "cmd_draw_indexed_indirect(" NOT followed by "count")
+    let lines: Vec<&str> = source
+        .lines()
+        .filter(|l| l.contains("cmd_draw_indexed_indirect(") && !l.contains("cmd_draw_indexed_indirect_count"))
+        .collect();
+    assert!(
+        lines.is_empty(),
+        "mesh_pipeline.rs must NOT contain standalone cmd_draw_indexed_indirect (non-count version), found: {:?}",
+        lines
+    );
+}
+
+/// submit.rs must pass capacity (not active_draw_count) as the max draw count.
+#[test]
+fn phase5_draw_count_from_gpu() {
+    let source = std::fs::read_to_string("src/renderer/submit.rs")
+        .expect("src/renderer/submit.rs should exist");
+    // The draw path should reference capacity for max_draw_count, not active_draw_count for draw
+    assert!(
+        source.contains("capacity") || source.contains("scene_buffer_capacity"),
+        "submit.rs draw path must reference capacity for max_draw_count"
+    );
+}

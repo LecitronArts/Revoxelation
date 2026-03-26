@@ -133,12 +133,17 @@ impl ChunkMeshPipeline {
     }
 
     /// Draw chunks using the shared bindless descriptor set.
+    ///
+    /// Uses `vkCmdDrawIndexedIndirectCount` (Vulkan 1.2 core) so the GPU cull shader
+    /// determines the actual draw count. `max_draw_count` is the pool capacity and
+    /// `draw_count_buffer` holds the GPU-written visible-chunk count (D-06, D-09).
     pub fn draw(
         &self,
         renderer: &Renderer,
         chunk_pool: &ChunkPool,
         cmd: vk::CommandBuffer,
-        draw_count: u32,
+        max_draw_count: u32,
+        draw_count_buffer: vk::Buffer,
         camera_uniforms: &CameraUniforms,
         bindless_set: vk::DescriptorSet,
     ) {
@@ -193,11 +198,13 @@ impl ChunkMeshPipeline {
                 0,
                 vk::IndexType::UINT32,
             );
-            renderer.device_ctx.device.cmd_draw_indexed_indirect(
+            renderer.device_ctx.device.cmd_draw_indexed_indirect_count(
                 cmd,
                 chunk_pool.scene_buffer(),
                 chunk_pool.dense_indirect_region_offset(),
-                draw_count,
+                draw_count_buffer,
+                0,
+                max_draw_count,
                 std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
             );
         }
