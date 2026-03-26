@@ -4,6 +4,14 @@
 //! array layer to use for the top (+Y), side (±X/±Z), and bottom (-Y) faces.
 //! `MaterialTable` wraps the full array indexed by block_id.
 
+use anyhow::Result;
+use ash::vk;
+use gpu_allocator::vulkan::Allocation;
+use gpu_allocator::MemoryLocation;
+
+use super::Renderer;
+use super::helpers::{create_allocated_buffer, submit_one_shot_commands};
+
 /// Per-block material data uploaded to the material SSBO (binding 8).
 ///
 /// Layout (D-01): 4 × u16 = 8 bytes total.
@@ -127,5 +135,66 @@ impl MaterialTable {
     /// Return the raw bytes for GPU upload (SSBO contents).
     pub fn as_bytes(&self) -> &[u8] {
         bytemuck::cast_slice(&self.entries)
+    }
+
+    /// Create a GpuOnly SSBO from this table, upload via staging, and register
+    /// at bindless binding 8. Returns the buffer + allocation for cleanup.
+    pub fn upload(
+        &self,
+        renderer: &mut Renderer,
+    ) -> Result<(vk::Buffer, Allocation)> {
+        let data = self.as_bytes();
+        let size = data.len() as u64;
+
+        // Create GpuOnly SSBO
+        let (buffer, alloc) = create_allocated_buffer(
+            renderer,
+            size,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            MemoryLocation::GpuOnly,
+            gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+            "material-ssbo",
+        )?;
+
+        // Create staging buffer with material data
+        let (staging_buf, staging_alloc) = create_allocated_buffer(
+            renderer,
+            size,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            MemoryLocation::CpuToGpu,
+            gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+            "material-staging",
+        )?;
+
+        // Copy data to staging
+        if let Some(mapped) = staging_alloc.mapped_ptr() {
+            let ptr = mapped.as_ptr() as *mut u8;
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+            }
+        }
+
+        // Record copy command
+        let dst_buffer = buffer;
+        submit_one_shot_commands(renderer, |device, cmd| {
+            let region = vk::BufferCopy::default()
+                .src_offset(0)
+                .dst_offset(0)
+                .size(size);
+            unsafe {
+                device.cmd_copy_buffer(cmd, staging_buf, dst_buffer, &[region]);
+            }
+            Ok(())
+        })?;
+
+        // Clean up staging
+        super::helpers::destroy_allocated_buffer(renderer, staging_buf, staging_alloc)?;
+
+        // Register at bindless binding 8
+        if let Some(bindless) = renderer.bindless.as_ref() {
+            bindless.register_buffer(&renderer.device_ctx.device, 8, buffer, size);
+        }
+
+        Ok((buffer, alloc))
     }
 }
