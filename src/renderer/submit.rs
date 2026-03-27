@@ -4,7 +4,9 @@ use glam::Mat4;
 
 use super::Renderer;
 use super::camera::{CameraUniforms, extract_frustum_planes};
+use super::chunk_pool::INITIAL_MESHLET_CAPACITY;
 use super::cull_pipeline::{HiZConfig, MeshletCullPushConstants};
+use super::mesh_pipeline::MeshletPipeline;
 
 pub fn submit_frame_sequence() -> &'static [&'static str] {
     &[
@@ -14,10 +16,10 @@ pub fn submit_frame_sequence() -> &'static [&'static str] {
         "compute_cull_chunk",
         "chunk_to_meshlet_barrier",
         "compute_cull_meshlet",
+        "meshlet_cull_to_draw_barrier",
         "indirect_barrier",
         "render_pass",
-        "bind_chunk_pipeline",
-        "draw_indexed_indirect",
+        "meshlet_draw_or_chunk_draw",
         "egui",
         "hiz_generate",
     ]
@@ -209,12 +211,14 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                         meshlet_pool.meshlet_count_buffer,
                     );
 
-                    // Barrier: meshlet cull COMPUTE_WRITE → INDIRECT_READ for draw commands.
+                    // Barrier: meshlet cull COMPUTE_WRITE → INDIRECT_READ + VERTEX_INPUT for draw commands.
                     let meshlet_visible_barrier = vk::BufferMemoryBarrier::default()
                         .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                         .dst_access_mask(
                             vk::AccessFlags::SHADER_READ
-                                | vk::AccessFlags::INDIRECT_COMMAND_READ,
+                                | vk::AccessFlags::INDIRECT_COMMAND_READ
+                                | vk::AccessFlags::VERTEX_ATTRIBUTE_READ
+                                | vk::AccessFlags::INDEX_READ,
                         )
                         .buffer(meshlet_pool.visible_meshlet_buffer)
                         .offset(0)
@@ -228,14 +232,22 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                         .buffer(meshlet_pool.meshlet_count_buffer)
                         .offset(0)
                         .size(vk::WHOLE_SIZE);
+                    let meshlet_indirect_barrier = vk::BufferMemoryBarrier::default()
+                        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                        .dst_access_mask(vk::AccessFlags::INDIRECT_COMMAND_READ)
+                        .buffer(meshlet_pool.meshlet_indirect_buffer)
+                        .offset(0)
+                        .size(vk::WHOLE_SIZE);
                     renderer.device_ctx.device.cmd_pipeline_barrier(
                         command_buffer,
                         vk::PipelineStageFlags::COMPUTE_SHADER,
                         vk::PipelineStageFlags::COMPUTE_SHADER
-                            | vk::PipelineStageFlags::DRAW_INDIRECT,
+                            | vk::PipelineStageFlags::DRAW_INDIRECT
+                            | vk::PipelineStageFlags::VERTEX_INPUT
+                            | vk::PipelineStageFlags::VERTEX_SHADER,
                         vk::DependencyFlags::empty(),
                         &[],
-                        &[meshlet_visible_barrier, meshlet_count_barrier],
+                        &[meshlet_visible_barrier, meshlet_count_barrier, meshlet_indirect_barrier],
                         &[],
                     );
                 }
@@ -294,19 +306,42 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             vk::SubpassContents::INLINE,
         );
 
-        if let (Some(mesh_pipeline), Some(chunk_pool)) =
+        // ---- Meshlet rendering path (default) vs legacy per-chunk path ----
+        let bindless_set = renderer
+            .bindless
+            .as_ref()
+            .map(|b| b.descriptor_set)
+            .unwrap_or(vk::DescriptorSet::null());
+
+        let used_meshlet_path = renderer.use_meshlet_rendering
+            && renderer.meshlet_pipeline.is_some()
+            && renderer.meshlet_pool.is_some();
+
+        if used_meshlet_path {
+            // Meshlet rendering: ComputeIndirectPath::record_draw via MeshletPipeline trait
+            if let (Some(meshlet_pipeline), Some(meshlet_pool)) =
+                (&renderer.meshlet_pipeline, &renderer.meshlet_pool)
+            {
+                let total_meshlets = meshlet_pool.active_meshlet_count();
+                if total_meshlets > 0 {
+                    let extent = renderer.swapchain_ctx.extent;
+                    meshlet_pipeline.record_draw(
+                        &renderer.device_ctx.device,
+                        command_buffer,
+                        bindless_set,
+                        camera_uniforms,
+                        meshlet_pool,
+                        INITIAL_MESHLET_CAPACITY as u32,
+                        extent,
+                    );
+                }
+            }
+        } else if let (Some(mesh_pipeline), Some(chunk_pool)) =
             (&renderer.mesh_pipeline, &renderer.chunk_pool)
         {
+            // Legacy per-chunk path (fallback when meshlet rendering is disabled)
             let active = chunk_pool.active_draw_count();
             if active > 0 {
-                // Pass the shared bindless descriptor set to the mesh draw.
-                let bindless_set = renderer
-                    .bindless
-                    .as_ref()
-                    .map(|b| b.descriptor_set)
-                    .unwrap_or(vk::DescriptorSet::null());
-
-                // max_draw_count = capacity, draw_count comes from GPU cull shader (D-06, D-09).
                 let max_draw_count = chunk_pool.scene_buffer_capacity() as u32;
                 let draw_count_buffer = renderer
                     .cull_pipeline

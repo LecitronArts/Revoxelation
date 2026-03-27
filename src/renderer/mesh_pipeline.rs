@@ -22,6 +22,7 @@ pub trait MeshletPipeline {
     /// - `meshlet_pool`: GPU buffers for meshlet data (VB, IB, indirect, count).
     /// - `max_draw_count`: upper bound on indirect draw count (meshlet capacity).
     /// - `extent`: swapchain extent for viewport/scissor.
+    #[allow(clippy::too_many_arguments)]
     fn record_draw(
         &self,
         device: &ash::Device,
