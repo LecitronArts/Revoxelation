@@ -152,8 +152,8 @@ Plans:
 **Plans:** 6 plans
 
 Plans:
-- [ ] 05.1-01: Hi-Z pyramid resize recreation (CRITICAL — FIX-01).
-- [ ] 05.1-02: egui scratch buffer per-frame ring (HIGH — FIX-02).
+- [x] 05.1-01: Hi-Z pyramid resize recreation (CRITICAL — FIX-01).
+- [x] 05.1-02: egui scratch buffer per-frame ring (HIGH — FIX-02).
 - [ ] 05.1-03: Camera position passthrough + bounds checks (MEDIUM — FIX-03, FIX-04).
 - [ ] 05.1-04: Safety documentation + unsafe cleanup (MEDIUM — FIX-05, FIX-06, FIX-09).
 - [ ] 05.1-05: Staging ring graceful degradation (MEDIUM — FIX-07).

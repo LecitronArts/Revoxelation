@@ -24,6 +24,11 @@ See: .planning/PROJECT.md
 **Current phase:** 05.1-critical-bug-fixes-and-safety-hardening
 **Status:** Executing (plan 02 complete, 4 remaining)
 
+## Key Decisions (Phase 05.1 Plan 01)
+
+- Hi-Z recreation sequence: take Option -> destroy old -> create new -> register bindless binding 7 -> store
+- HiZPyramid::destroy called before ::new to free allocator memory before re-borrowing
+
 ## Key Decisions (Phase 05.1 Plan 02)
 
 - scratch_buffers: [Vec<(vk::Buffer, Allocation)>; 2] — per-frame ring indexed by current_frame
@@ -90,3 +95,4 @@ See: .planning/PROJECT.md
 - 2026-03-26: Executed 05-03 — Unified scene_buffer, GpuChunkInstance, 6→3 buffers (BIND-03)
 - 2026-03-26: Executed 05-05 — Dynamic capacity, IndirectCount draw (BIND-05) — Phase 5 COMPLETE
 - 2026-03-27: Executed 05.1-02 — egui scratch buffer per-frame ring (FIX-02)
+- 2026-03-27: Executed 05.1-01 — Hi-Z pyramid resize recreation (FIX-01)

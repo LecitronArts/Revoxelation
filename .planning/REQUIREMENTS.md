@@ -43,7 +43,7 @@
 
 ### Bug Fixes and Safety Hardening
 
-- [ ] **FIX-01**: Hi-Z pyramid is recreated on swapchain resize — no GPU crash or validation errors from stale depth image references.
+- [x] **FIX-01**: Hi-Z pyramid is recreated on swapchain resize — no GPU crash or validation errors from stale depth image references.
 - [x] **FIX-02**: egui scratch buffers respect double-buffered frame lifetimes — no GPU use-after-free.
 - [ ] **FIX-03**: Camera position is passed to streaming active-set computation — chunks follow the player, not stuck at origin.
 - [ ] **FIX-04**: dense_indirect_shadow access is bounds-checked — no OOB panic on malformed draw_index.
@@ -149,7 +149,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BIND-03 | Phase 5 | Complete |
 | BIND-04 | Phase 5 | Complete |
 | BIND-05 | Phase 5 | Complete |
-| FIX-01 | Phase 05.1 | Pending |
+| FIX-01 | Phase 05.1 | Complete |
 | FIX-02 | Phase 05.1 | Complete |
 | FIX-03 | Phase 05.1 | Pending |
 | FIX-04 | Phase 05.1 | Pending |
