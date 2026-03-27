@@ -2,7 +2,7 @@ use std::{collections::HashMap, mem::size_of};
 
 use anyhow::{Result, anyhow};
 use ash::vk;
-use bytemuck::cast_slice;
+use bytemuck::{cast_slice, Pod, Zeroable};
 use gpu_allocator::{MemoryLocation, vulkan::{Allocation, AllocationScheme}};
 
 use crate::{
@@ -645,7 +645,8 @@ impl ChunkPool {
 
         // Copy indirect template to scene_buffer indirect template region (region 1)
         {
-            let indirect_bytes = draw_cmd_as_bytes(&indirect);
+            let pod = DrawCmdPod::from_vk(&indirect);
+            let indirect_bytes = bytemuck::bytes_of(&pod);
             let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;
             alloc.write_bytes(indirect_bytes);
             let dst_offset =
@@ -733,7 +734,8 @@ impl ChunkPool {
         // Zero out indirect template in scene_buffer (region 1)
         {
             let zero_indirect = vk::DrawIndexedIndirectCommand::default();
-            let indirect_bytes = draw_cmd_as_bytes(&zero_indirect);
+            let pod = DrawCmdPod::from_vk(&zero_indirect);
+            let indirect_bytes = bytemuck::bytes_of(&pod);
             let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;
             alloc.write_bytes(indirect_bytes);
             let dst_offset = indirect_off
@@ -820,7 +822,8 @@ impl ChunkPool {
             self.capacity,
         );
         self.dense_indirect_shadow[write.draw_index as usize] = write.command;
-        let indirect_bytes = draw_cmd_as_bytes(&write.command);
+        let pod = DrawCmdPod::from_vk(&write.command);
+        let indirect_bytes = bytemuck::bytes_of(&pod);
         let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;
         alloc.write_bytes(indirect_bytes);
         let dst_offset = dense_region_offset
@@ -878,6 +881,33 @@ fn chunk_origin(key: ChunkKey, chunk_scale: f32) -> [f32; 3] {
     ]
 }
 
+/// Safe #[repr(C)] Pod wrapper for DrawIndexedIndirectCommand, used for bytemuck casts.
+///
+/// Mirrors the 5 u32 fields of `vk::DrawIndexedIndirectCommand` but derives Pod + Zeroable
+/// so we can use `bytemuck::bytes_of` for safe byte-level access.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+struct DrawCmdPod {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    vertex_offset: i32,
+    first_instance: u32,
+}
+
+impl DrawCmdPod {
+    /// Convert a `vk::DrawIndexedIndirectCommand` to a safe Pod wrapper.
+    fn from_vk(cmd: &vk::DrawIndexedIndirectCommand) -> Self {
+        Self {
+            index_count: cmd.index_count,
+            instance_count: cmd.instance_count,
+            first_index: cmd.first_index,
+            vertex_offset: cmd.vertex_offset,
+            first_instance: cmd.first_instance,
+        }
+    }
+}
+
 fn world_aabb(local: [f32; 3], origin: [f32; 3], chunk_scale: f32) -> [f32; 3] {
     [
         origin[0] + local[0] * chunk_scale,
@@ -886,23 +916,3 @@ fn world_aabb(local: [f32; 3], origin: [f32; 3], chunk_scale: f32) -> [f32; 3] {
     ]
 }
 
-/// Reinterpret a `Copy + repr(C)` struct as a byte slice for GPU buffer writes.
-///
-/// # Safety
-///
-/// The caller must ensure `T` is `#[repr(C)]` with no padding bytes.
-/// Currently only used with `vk::DrawIndexedIndirectCommand` (5 * 4-byte fields, repr(C)).
-fn draw_cmd_as_bytes(value: &vk::DrawIndexedIndirectCommand) -> &[u8] {
-    const {
-        assert!(
-            size_of::<vk::DrawIndexedIndirectCommand>() == 5 * 4,
-            "DrawIndexedIndirectCommand layout changed -- review safety"
-        );
-    }
-    unsafe {
-        std::slice::from_raw_parts(
-            (value as *const vk::DrawIndexedIndirectCommand).cast::<u8>(),
-            size_of::<vk::DrawIndexedIndirectCommand>(),
-        )
-    }
-}
