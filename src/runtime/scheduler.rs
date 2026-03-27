@@ -9,7 +9,7 @@ use log::{info, warn};
 
 use crate::meshing::{
     ALL_FACE_MASK, ChunkNeighborSet, MeshDirtyCause, MeshingJobResult, MeshingState,
-    build_greedy_mesh, fine_chunk_boundary_mask,
+    build_greedy_mesh, build_meshlets_from_packed, fine_chunk_boundary_mask,
 };
 use crate::renderer::RenderDelta;
 use crate::streaming::{
@@ -313,7 +313,9 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
                                 .get(&ChunkKey::new(key.x, key.y, key.z - 1, key.lod_level)),
                             finer_neighbor_face_mask: dirty_record.finer_neighbor_face_mask,
                         };
-                        Some((build_greedy_mesh(chunk, &neighbors, &dirty_record), dirty_record))
+                        let packed = build_greedy_mesh(chunk, &neighbors, &dirty_record);
+                        let meshlet_mesh = build_meshlets_from_packed(&packed);
+                        Some((packed, meshlet_mesh, dirty_record))
                     }
                     None => None,
                 },
@@ -321,7 +323,7 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
             }
         };
 
-        let Some((mesh, dirty_record)) = maybe_mesh else {
+        let Some((packed_mesh, meshlet_mesh, dirty_record)) = maybe_mesh else {
             continue;
         };
 
@@ -332,12 +334,12 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
         meshing.completed_meshes.retain(|completed| completed.key != key);
         meshing.completed_meshes.push(MeshingJobResult {
             key,
-            mesh: mesh.clone(),
+            mesh: packed_mesh,
             source_revision,
         });
         meshing.dirty.remove(&key);
         ss.pending_render_deltas
-            .push_back(RenderDelta::Upsert { key, mesh });
+            .push_back(RenderDelta::Upsert { key, mesh: meshlet_mesh });
     }
 }
 

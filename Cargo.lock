@@ -771,6 +771,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "float-cmp"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "foreign-types"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1197,6 +1206,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "meshopt"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa19b93af545a6bb30e8105b2a1450aa6b23e877f2131c9fb692dca6ec5bd80f"
+dependencies = [
+ "bitflags 2.11.0",
+ "cc",
+ "float-cmp",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1796,6 +1817,7 @@ dependencies = [
  "hecs",
  "image",
  "log",
+ "meshopt",
  "raw-window-handle",
  "rayon",
  "serde",

@@ -14,6 +14,15 @@ pub struct GpuPerfCounters {
     pub frame_time_ms: f32,
     /// GPU-measured frame time in milliseconds (0.0 if unavailable).
     pub gpu_time_ms: f32,
-    /// Current chunk pool capacity (dynamic, grows by 2×).
+    /// Current chunk pool capacity (dynamic, grows by 2x).
     pub chunk_capacity: u32,
+    // -- Meshlet statistics (Phase 6) --
+    /// Total meshlets across all active chunks.
+    pub total_meshlets: u32,
+    /// Meshlets that passed culling and are drawn.
+    pub visible_meshlets: u32,
+    /// Meshlet cull rate: (total - visible) / total, in [0.0, 1.0].
+    pub meshlet_cull_rate: f32,
+    /// Total bytes used by meshlet SSBOs (meta + vertex + tri).
+    pub meshlet_ssbo_bytes: u64,
 }

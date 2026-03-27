@@ -8,24 +8,31 @@ use anyhow::{Context, Result};
 use ash::vk;
 
 /// Number of bindings in the global bindless descriptor set 0.
-const BINDING_COUNT: usize = 10;
+///
+/// Extended from 10 to 16 in Phase 6 for meshlet SSBOs (D-08).
+const BINDING_COUNT: usize = 16;
 
 /// Manages the global descriptor set 0 shared by all pipelines.
 ///
-/// Layout (D-01):
-/// - binding 0: STORAGE_BUFFER (scene/metadata SSBO) — COMPUTE | VERTEX
-/// - binding 1: STORAGE_BUFFER (indirect templates) — COMPUTE
-/// - binding 2: STORAGE_BUFFER (draw slots) — COMPUTE
-/// - binding 3: STORAGE_BUFFER (dense indirect output) — COMPUTE
-/// - binding 4: STORAGE_BUFFER (frustum planes) — COMPUTE
-/// - binding 5: STORAGE_BUFFER (draw count) — COMPUTE
-/// - binding 6: STORAGE_BUFFER (Hi-Z config) — COMPUTE
-/// - binding 7: COMBINED_IMAGE_SAMPLER (Hi-Z pyramid) — COMPUTE
-/// - binding 8: STORAGE_BUFFER (material SSBO, reserved for Plan 04) — FRAGMENT
-/// - binding 9: COMBINED_IMAGE_SAMPLER (texture array, reserved for Plan 04) — FRAGMENT
+/// Layout (D-01, extended D-08):
+/// - binding  0: STORAGE_BUFFER (scene/metadata SSBO) — COMPUTE | VERTEX
+/// - binding  1: STORAGE_BUFFER (indirect templates) — COMPUTE
+/// - binding  2: STORAGE_BUFFER (draw slots) — COMPUTE
+/// - binding  3: STORAGE_BUFFER (dense indirect output) — COMPUTE
+/// - binding  4: STORAGE_BUFFER (frustum planes) — COMPUTE
+/// - binding  5: STORAGE_BUFFER (draw count) — COMPUTE
+/// - binding  6: STORAGE_BUFFER (Hi-Z config) — COMPUTE
+/// - binding  7: COMBINED_IMAGE_SAMPLER (Hi-Z pyramid) — COMPUTE
+/// - binding  8: STORAGE_BUFFER (material SSBO) — FRAGMENT
+/// - binding  9: COMBINED_IMAGE_SAMPLER (texture array) — FRAGMENT
+/// - binding 10: STORAGE_BUFFER (meshlet_meta) — COMPUTE
+/// - binding 11: STORAGE_BUFFER (meshlet_vertex) — COMPUTE | VERTEX
+/// - binding 12: STORAGE_BUFFER (meshlet_tri) — COMPUTE
+/// - binding 13: STORAGE_BUFFER (visible_meshlet) — COMPUTE
+/// - binding 14: STORAGE_BUFFER (meshlet_indirect) — COMPUTE
+/// - binding 15: STORAGE_BUFFER (meshlet_count) — COMPUTE
 ///
 /// All bindings have PARTIALLY_BOUND | UPDATE_AFTER_BIND flags (D-02).
-/// Bindings 8-9 can remain unbound until Plan 04 fills them.
 pub struct BindlessTable {
     pub descriptor_pool: vk::DescriptorPool,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
@@ -33,9 +40,9 @@ pub struct BindlessTable {
 }
 
 impl BindlessTable {
-    /// Create the BindlessTable with all 10 bindings, UPDATE_AFTER_BIND pool and layout.
+    /// Create the BindlessTable with all 16 bindings, UPDATE_AFTER_BIND pool and layout.
     pub fn new(device: &ash::Device) -> Result<Self> {
-        // Define all 10 bindings.
+        // Define all 16 bindings.
         let bindings = [
             // binding 0: scene/metadata SSBO — COMPUTE | VERTEX
             vk::DescriptorSetLayoutBinding::default()
@@ -85,18 +92,54 @@ impl BindlessTable {
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
-            // binding 8: material SSBO (reserved for Plan 04) — FRAGMENT
+            // binding 8: material SSBO — FRAGMENT
             vk::DescriptorSetLayoutBinding::default()
                 .binding(8)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-            // binding 9: texture array (reserved for Plan 04) — FRAGMENT
+            // binding 9: texture array — FRAGMENT
             vk::DescriptorSetLayoutBinding::default()
                 .binding(9)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            // binding 10: meshlet_meta SSBO — COMPUTE
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(10)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            // binding 11: meshlet_vertex SSBO — COMPUTE | VERTEX
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(11)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX),
+            // binding 12: meshlet_tri SSBO — COMPUTE
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(12)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            // binding 13: visible_meshlet SSBO — COMPUTE
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(13)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            // binding 14: meshlet_indirect SSBO — COMPUTE
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(14)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            // binding 15: meshlet_count SSBO — COMPUTE
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(15)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
         ];
 
         // All bindings get PARTIALLY_BOUND | UPDATE_AFTER_BIND flags (D-02).
@@ -121,10 +164,12 @@ impl BindlessTable {
         };
 
         // Pool created with UPDATE_AFTER_BIND_BIT flag (D-02).
+        // 14 STORAGE_BUFFER descriptors: bindings 0-6, 8, 10-15
+        //  2 COMBINED_IMAGE_SAMPLER descriptors: bindings 7, 9
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(8), // bindings 0-6, 8
+                .descriptor_count(14), // bindings 0-6, 8, 10-15
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .descriptor_count(2), // bindings 7, 9
@@ -161,6 +206,20 @@ impl BindlessTable {
             descriptor_set_layout,
             descriptor_set,
         })
+    }
+
+    /// Register all 6 meshlet SSBOs from MeshletPool at bindings 10-15.
+    pub fn register_meshlet_buffers(
+        &self,
+        device: &ash::Device,
+        meshlet_pool: &super::chunk_pool::MeshletPool,
+    ) {
+        self.register_buffer(device, 10, meshlet_pool.meshlet_meta_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, 11, meshlet_pool.meshlet_vertex_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, 12, meshlet_pool.meshlet_tri_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, 13, meshlet_pool.visible_meshlet_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, 14, meshlet_pool.meshlet_indirect_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, 15, meshlet_pool.meshlet_count_buffer, vk::WHOLE_SIZE);
     }
 
     /// Write a STORAGE_BUFFER descriptor to the given binding (D-03).

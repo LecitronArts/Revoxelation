@@ -10,7 +10,7 @@ pub use invalidation::{
     MeshDirtyCause, MeshDirtyRecord, MeshingState, fine_chunk_boundary_mask,
 };
 pub use greedy::build_greedy_mesh;
-pub use packing::{PackedMesh, PackedVertex, pack_quad, pack_vertex};
+pub use packing::{MeshletDescriptor, MeshletMesh, PackedMesh, PackedVertex, build_meshlets_from_packed, pack_quad, pack_vertex};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreedyQuad {

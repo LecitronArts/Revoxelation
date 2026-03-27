@@ -4,7 +4,8 @@ use anyhow::{Context, Result, anyhow};
 use ash::{ext, khr, vk};
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 
-use crate::{meshing::PackedMesh, streaming::types::ChunkKey};
+#[allow(unused_imports)]
+use crate::{meshing::{MeshletMesh, PackedMesh}, streaming::types::ChunkKey};
 
 pub mod bindless;
 pub mod camera;
@@ -39,7 +40,7 @@ pub use submit::{FrameOutcome, submit_frame, submit_frame_sequence};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RenderDelta {
-    Upsert { key: ChunkKey, mesh: PackedMesh },
+    Upsert { key: ChunkKey, mesh: MeshletMesh },
     Remove { key: ChunkKey },
 }
 
@@ -68,6 +69,7 @@ pub struct Renderer {
     pub frames: [frame::FrameData; 2],
     pub current_frame: usize,
     pub chunk_pool: Option<chunk_pool::ChunkPool>,
+    pub meshlet_pool: Option<chunk_pool::MeshletPool>,
     pub bindless: Option<bindless::BindlessTable>,
     pub staging_ring: Option<staging_ring::StagingRing>,
     pub pending_chunk_deltas: VecDeque<RenderDelta>,
@@ -165,6 +167,7 @@ impl Renderer {
             frames,
             current_frame: 0,
             chunk_pool: None,
+            meshlet_pool: None,
             bindless: None,
             staging_ring: None,
             pending_chunk_deltas: VecDeque::new(),
@@ -222,6 +225,11 @@ impl Drop for Renderer {
             if let Some(chunk_pool) = self.chunk_pool.take()
                 && let Err(e) = chunk_pool.destroy(self) {
                     log::warn!("failed to cleanup chunk pool: {e}");
+                }
+
+            if let Some(meshlet_pool) = self.meshlet_pool.take()
+                && let Err(e) = meshlet_pool.destroy(self) {
+                    log::warn!("failed to cleanup meshlet pool: {e}");
                 }
 
             if let Some(mesh_pipeline) = self.mesh_pipeline.take() {
