@@ -290,3 +290,31 @@ fn phase6_meshlet_pipeline_trait_exists() {
         "mesh_pipeline.rs must contain ComputeIndirectPath struct"
     );
 }
+
+// ============================================================================
+// Plan 06-04 Task 1 — VK_EXT_mesh_shader detection
+// ============================================================================
+
+#[test]
+fn phase6_mesh_shader_detection() {
+    let source = std::fs::read_to_string("src/renderer/device.rs")
+        .expect("src/renderer/device.rs should exist");
+    assert!(
+        source.contains("mesh_shader"),
+        "device.rs must contain mesh_shader extension detection"
+    );
+    assert!(
+        source.contains("MeshShaderFeatures"),
+        "device.rs must contain MeshShaderFeaturesEXT for feature query"
+    );
+}
+
+#[test]
+fn phase6_mesh_shader_fallback() {
+    let source = std::fs::read_to_string("src/renderer/device.rs")
+        .expect("src/renderer/device.rs should exist");
+    assert!(
+        source.contains("mesh_shader_supported"),
+        "device.rs must store mesh_shader_supported in DeviceContext"
+    );
+}

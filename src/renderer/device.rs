@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::ffi::CStr;
 
 use anyhow::{Context, Result, anyhow};
-use ash::{Instance, khr, vk};
+use ash::{Instance, ext, khr, vk};
 
 /// Information about the device's subgroup support, queried at device creation.
 #[derive(Debug, Clone, Copy)]
@@ -26,6 +26,10 @@ pub struct DeviceContext {
     pub present_family: u32,
     /// Subgroup feature info, queried at device creation (D-11).
     pub subgroup_info: SubgroupInfo,
+    /// Whether VK_EXT_mesh_shader (task + mesh) is supported and enabled.
+    pub mesh_shader_supported: bool,
+    /// ash mesh shader extension loader (present only when mesh_shader_supported == true).
+    pub mesh_shader_fn: Option<ext::mesh_shader::Device>,
 }
 
 /// Names of the 7 required Vulkan 1.2 features for bindless rendering.
@@ -200,7 +204,50 @@ pub fn pick_physical_device(
         })
         .collect();
 
-    let required_extensions = [khr::swapchain::NAME.as_ptr()];
+    // Check for optional VK_EXT_mesh_shader extension support.
+    let mesh_shader_ext_available = {
+        let available_extensions = unsafe {
+            instance
+                .enumerate_device_extension_properties(physical_device)
+                .unwrap_or_default()
+        };
+        available_extensions.iter().any(|ext_props| {
+            let name = unsafe { CStr::from_ptr(ext_props.extension_name.as_ptr()) };
+            name == ext::mesh_shader::NAME
+        })
+    };
+
+    // Query VkPhysicalDeviceMeshShaderFeaturesEXT if extension is available.
+    let mesh_shader_supported = if mesh_shader_ext_available {
+        let mut mesh_shader_features = vk::PhysicalDeviceMeshShaderFeaturesEXT::default();
+        let mut features2_query =
+            vk::PhysicalDeviceFeatures2::default().push_next(&mut mesh_shader_features);
+        unsafe {
+            instance.get_physical_device_features2(physical_device, &mut features2_query);
+        }
+        let supported =
+            mesh_shader_features.task_shader == vk::TRUE && mesh_shader_features.mesh_shader == vk::TRUE;
+        if supported {
+            log::info!("VK_EXT_mesh_shader: taskShader + meshShader supported — enabling mesh shader path");
+        } else {
+            log::info!(
+                "VK_EXT_mesh_shader extension present but features missing (taskShader={}, meshShader={}) — using compute fallback",
+                mesh_shader_features.task_shader == vk::TRUE,
+                mesh_shader_features.mesh_shader == vk::TRUE,
+            );
+        }
+        supported
+    } else {
+        log::info!("VK_EXT_mesh_shader not available — using compute+indirect fallback path");
+        false
+    };
+
+    // Build device extension list: always swapchain, optionally mesh_shader.
+    let device_extensions: Vec<*const std::ffi::c_char> = if mesh_shader_supported {
+        vec![khr::swapchain::NAME.as_ptr(), ext::mesh_shader::NAME.as_ptr()]
+    } else {
+        vec![khr::swapchain::NAME.as_ptr()]
+    };
 
     // Vulkan 1.0 features — set via PhysicalDeviceFeatures2.features field.
     let device_features_1_0 = vk::PhysicalDeviceFeatures::default()
@@ -222,9 +269,17 @@ pub fn pick_physical_device(
         .features(device_features_1_0)
         .push_next(&mut vulkan12_features);
 
+    // Optionally enable mesh shader features in pNext chain.
+    let mut mesh_shader_enable_features = vk::PhysicalDeviceMeshShaderFeaturesEXT::default()
+        .task_shader(true)
+        .mesh_shader(true);
+    if mesh_shader_supported {
+        features2 = features2.push_next(&mut mesh_shader_enable_features);
+    }
+
     let create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_create_infos)
-        .enabled_extension_names(&required_extensions)
+        .enabled_extension_names(&device_extensions)
         .push_next(&mut features2);
 
     let device = unsafe {
@@ -275,6 +330,13 @@ pub fn pick_physical_device(
         }
     };
 
+    // Create ash mesh shader extension loader if supported.
+    let mesh_shader_fn = if mesh_shader_supported {
+        Some(ext::mesh_shader::Device::new(instance, &device))
+    } else {
+        None
+    };
+
     Ok(DeviceContext {
         physical_device,
         device,
@@ -283,6 +345,8 @@ pub fn pick_physical_device(
         graphics_family,
         present_family,
         subgroup_info,
+        mesh_shader_supported,
+        mesh_shader_fn,
     })
 }
 
