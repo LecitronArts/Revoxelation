@@ -761,6 +761,10 @@ impl ChunkPool {
     }
 
     /// Record all pending uploads for a frame. Called from `record_chunk_delta_uploads`.
+    ///
+    /// When the staging ring is exhausted mid-batch, remaining deltas are deferred
+    /// (pushed back to the front of `pending_deltas`) for retry next frame.
+    /// Partially uploaded deltas within the same frame are still valid.
     pub fn record_uploads(
         &mut self,
         device: &ash::Device,
@@ -769,16 +773,33 @@ impl ChunkPool {
         pending_deltas: &mut std::collections::VecDeque<super::RenderDelta>,
     ) -> Result<()> {
         while let Some(delta) = pending_deltas.pop_front() {
-            match delta {
+            let result = match &delta {
                 super::RenderDelta::Upsert { key, mesh } => {
-                    let upload = self.slot_allocator.prepare_upload(key, &mesh)?;
-                    self.record_upload(device, cmd, staging_ring, upload)?;
-                }
-                super::RenderDelta::Remove { key } => {
-                    if let Some(remove) = self.prepare_remove(key) {
-                        self.record_remove(device, cmd, staging_ring, remove)?;
+                    match self.slot_allocator.prepare_upload(*key, mesh) {
+                        Ok(upload) => self.record_upload(device, cmd, staging_ring, upload),
+                        Err(e) => Err(e),
                     }
                 }
+                super::RenderDelta::Remove { key } => {
+                    if let Some(remove) = self.prepare_remove(*key) {
+                        self.record_remove(device, cmd, staging_ring, remove)
+                    } else {
+                        Ok(())
+                    }
+                }
+            };
+
+            if let Err(e) = result {
+                // Staging ring exhaustion — defer this delta and all remaining to next frame.
+                let remaining = pending_deltas.len() + 1; // +1 for the current failed delta
+                log::warn!(
+                    "staging ring exhausted: deferred {} chunk deltas to next frame ({})",
+                    remaining,
+                    e,
+                );
+                // Push the failed delta back to the front so it retries first next frame.
+                pending_deltas.push_front(delta);
+                return Ok(());
             }
         }
         Ok(())
