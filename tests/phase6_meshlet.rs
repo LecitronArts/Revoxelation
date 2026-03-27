@@ -1,4 +1,4 @@
-//! Phase 6 meshlet pipeline tests (Plan 06-01).
+//! Phase 6 meshlet pipeline tests (Plan 06-01 and 06-02).
 
 // ============================================================================
 // Task 1 — MeshletDescriptor and MeshletMesh type definitions
@@ -248,5 +248,23 @@ fn phase6_render_delta_meshlet_mesh() {
     assert!(
         source.contains("MeshletMesh"),
         "RenderDelta::Upsert must reference MeshletMesh in renderer/mod.rs"
+    );
+}
+
+// ============================================================================
+// Plan 06-02 Task 1 — Subgroup feature validation
+// ============================================================================
+
+#[test]
+fn phase6_subgroup_feature_check() {
+    let source = std::fs::read_to_string("src/renderer/device.rs")
+        .expect("src/renderer/device.rs should exist");
+    assert!(
+        source.contains("SubgroupProperties"),
+        "device.rs must query VkPhysicalDeviceSubgroupProperties"
+    );
+    assert!(
+        source.contains("BALLOT"),
+        "device.rs must check for SUBGROUP_FEATURE_BALLOT_BIT"
     );
 }

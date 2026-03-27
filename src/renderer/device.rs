@@ -4,6 +4,19 @@ use std::ffi::CStr;
 use anyhow::{Context, Result, anyhow};
 use ash::{Instance, khr, vk};
 
+/// Information about the device's subgroup support, queried at device creation.
+#[derive(Debug, Clone, Copy)]
+pub struct SubgroupInfo {
+    /// Subgroup size (typically 32 or 64).
+    pub subgroup_size: u32,
+    /// Raw bitmask of supported subgroup operations.
+    pub supported_operations: vk::SubgroupFeatureFlags,
+    /// Whether VK_SUBGROUP_FEATURE_BALLOT_BIT is supported.
+    pub has_ballot: bool,
+    /// Whether VK_SUBGROUP_FEATURE_BASIC_BIT is supported.
+    pub has_basic: bool,
+}
+
 pub struct DeviceContext {
     pub physical_device: vk::PhysicalDevice,
     pub device: ash::Device,
@@ -11,6 +24,8 @@ pub struct DeviceContext {
     pub present_queue: vk::Queue,
     pub graphics_family: u32,
     pub present_family: u32,
+    /// Subgroup feature info, queried at device creation (D-11).
+    pub subgroup_info: SubgroupInfo,
 }
 
 /// Names of the 7 required Vulkan 1.2 features for bindless rendering.
@@ -221,6 +236,45 @@ pub fn pick_physical_device(
     let graphics_queue = unsafe { device.get_device_queue(graphics_family, 0) };
     let present_queue = unsafe { device.get_device_queue(present_family, 0) };
 
+    // Query VkPhysicalDeviceSubgroupProperties for subgroup size and features (D-11).
+    let subgroup_info = {
+        let mut subgroup_props = vk::PhysicalDeviceSubgroupProperties::default();
+        let mut props2 = vk::PhysicalDeviceProperties2::default().push_next(&mut subgroup_props);
+        unsafe {
+            instance.get_physical_device_properties2(physical_device, &mut props2);
+        }
+        let has_basic = subgroup_props
+            .supported_operations
+            .contains(vk::SubgroupFeatureFlags::BASIC);
+        let has_ballot = subgroup_props
+            .supported_operations
+            .contains(vk::SubgroupFeatureFlags::BALLOT);
+        log::info!(
+            "Subgroup: size={}, operations={:?}, basic={}, ballot={}",
+            subgroup_props.subgroup_size,
+            subgroup_props.supported_operations,
+            has_basic,
+            has_ballot,
+        );
+        if !has_ballot {
+            log::warn!(
+                "VK_SUBGROUP_FEATURE_BALLOT_BIT not supported — meshlet subgroup compaction \
+                 will fall back to per-thread atomics"
+            );
+        }
+        if !has_basic {
+            log::warn!(
+                "VK_SUBGROUP_FEATURE_BASIC_BIT not supported — subgroup operations unavailable"
+            );
+        }
+        SubgroupInfo {
+            subgroup_size: subgroup_props.subgroup_size,
+            supported_operations: subgroup_props.supported_operations,
+            has_ballot,
+            has_basic,
+        }
+    };
+
     Ok(DeviceContext {
         physical_device,
         device,
@@ -228,6 +282,7 @@ pub fn pick_physical_device(
         present_queue,
         graphics_family,
         present_family,
+        subgroup_info,
     })
 }
 
