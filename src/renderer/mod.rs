@@ -53,6 +53,8 @@ pub fn shader_source_files() -> &'static [&'static str] {
         "shaders/egui.vert",
         "shaders/egui.frag",
         "shaders/meshlet_cull.comp",
+        "shaders/meshlet_draw.vert",
+        "shaders/meshlet_draw.frag",
     ]
 }
 

@@ -104,12 +104,12 @@ impl BindlessTable {
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-            // binding 10: meshlet_meta SSBO — COMPUTE
+            // binding 10: meshlet_meta SSBO — COMPUTE | VERTEX
             vk::DescriptorSetLayoutBinding::default()
                 .binding(10)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX),
             // binding 11: meshlet_vertex SSBO — COMPUTE | VERTEX
             vk::DescriptorSetLayoutBinding::default()
                 .binding(11)
@@ -122,12 +122,12 @@ impl BindlessTable {
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
-            // binding 13: visible_meshlet SSBO — COMPUTE
+            // binding 13: visible_meshlet SSBO — COMPUTE | VERTEX
             vk::DescriptorSetLayoutBinding::default()
                 .binding(13)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX),
             // binding 14: meshlet_indirect SSBO — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
                 .binding(14)
