@@ -13,7 +13,7 @@ fn main() {
     }
 }
 
-fn shader_sources() -> [&'static str; 6] {
+fn shader_sources() -> [&'static str; 7] {
     [
         "shaders/chunk_mesh.vert",
         "shaders/chunk_mesh.frag",
@@ -21,6 +21,7 @@ fn shader_sources() -> [&'static str; 6] {
         "shaders/hiz_generate.comp",
         "shaders/egui.vert",
         "shaders/egui.frag",
+        "shaders/meshlet_cull.comp",
     ]
 }
 
@@ -29,8 +30,12 @@ fn compile_shader(compiler: &shaderc::Compiler, shader: &str, out_dir: &Path) {
         panic!("failed to read shader source {shader}: {err}");
     });
     let kind = shader_kind(shader);
+    let mut options = shaderc::CompileOptions::new().expect("shaderc options should initialize");
+    // Target SPIR-V 1.5 (Vulkan 1.2) to enable subgroup operations.
+    options.set_target_spirv(shaderc::SpirvVersion::V1_5);
+    options.set_target_env(shaderc::TargetEnv::Vulkan, shaderc::EnvVersion::Vulkan1_2 as u32);
     let artifact = compiler
-        .compile_into_spirv(&source, kind, shader, "main", None)
+        .compile_into_spirv(&source, kind, shader, "main", Some(&options))
         .unwrap_or_else(|err| panic!("failed to compile shader {shader}: {err}"));
     let file_name = Path::new(shader)
         .file_name()
