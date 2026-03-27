@@ -109,6 +109,11 @@ pub fn run() -> Result<()> {
     renderer.mesh_pipeline = Some(ChunkMeshPipeline::new(&renderer, bindless_layout)?);
     renderer.cull_pipeline = Some(ChunkCullPipeline::new(&mut renderer, bindless_layout)?);
 
+    // Create meshlet cull pipeline (MSHL-02, D-10).
+    renderer.meshlet_cull_pipeline = Some(
+        crate::renderer::cull_pipeline::MeshletCullPipeline::new(&renderer, bindless_layout)?
+    );
+
     // Register cull pipeline auxiliary buffers with the bindless table.
     {
         let cull_pipeline = renderer.cull_pipeline.as_ref().expect("cull pipeline must be initialized");

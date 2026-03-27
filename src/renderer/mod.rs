@@ -76,6 +76,11 @@ pub struct Renderer {
     pub pending_chunk_deltas: VecDeque<RenderDelta>,
     pub mesh_pipeline: Option<mesh_pipeline::ChunkMeshPipeline>,
     pub cull_pipeline: Option<cull_pipeline::ChunkCullPipeline>,
+    pub meshlet_cull_pipeline: Option<cull_pipeline::MeshletCullPipeline>,
+    /// Runtime toggles for meshlet culling modes (egui-accessible).
+    pub meshlet_cull_backface: bool,
+    pub meshlet_cull_frustum: bool,
+    pub meshlet_cull_hiz: bool,
     pub hiz_pyramid: Option<hiz::HiZPyramid>,
     pub pipeline_cache: Option<pipeline_cache::PipelineCache>,
     pub egui_backend: Option<egui_backend::EguiAshBackend>,
@@ -174,6 +179,10 @@ impl Renderer {
             pending_chunk_deltas: VecDeque::new(),
             mesh_pipeline: None,
             cull_pipeline: None,
+            meshlet_cull_pipeline: None,
+            meshlet_cull_backface: true,
+            meshlet_cull_frustum: true,
+            meshlet_cull_hiz: true,
             hiz_pyramid: None,
             pipeline_cache: None,
             egui_backend: None,
@@ -243,6 +252,10 @@ impl Drop for Renderer {
 
             if let Some(cull_pipeline) = self.cull_pipeline.take() {
                 cull_pipeline.destroy(self);
+            }
+
+            if let Some(meshlet_cull_pipeline) = self.meshlet_cull_pipeline.take() {
+                meshlet_cull_pipeline.destroy(self);
             }
 
             if let Some(bindless) = self.bindless.take() {

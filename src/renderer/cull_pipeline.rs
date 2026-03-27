@@ -276,3 +276,180 @@ impl ChunkCullPipeline {
         }
     }
 }
+
+// ============================================================================
+// MeshletCullPipeline — per-meshlet GPU culling (MSHL-02, D-10)
+// ============================================================================
+
+/// Push constants for meshlet_cull.comp (32 bytes, D-02 extended D-12).
+///
+/// Layout matches the GLSL `PushConstants` struct in meshlet_cull.comp.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MeshletCullPushConstants {
+    pub total_meshlet_count: u32,
+    pub enable_backface: u32,   // 0 or 1
+    pub enable_frustum: u32,    // 0 or 1
+    pub enable_hiz: u32,        // 0 or 1
+    pub camera_pos: [f32; 3],   // world-space camera position
+    pub _pad: u32,
+}
+
+/// Per-meshlet GPU culling compute pipeline (meshlet_cull.comp).
+///
+/// Performs 3 independent culling modes (backface, frustum, Hi-Z) with subgroup
+/// ballot compaction. Uses the shared bindless descriptor set 0 (D-10).
+pub struct MeshletCullPipeline {
+    pub pipeline: vk::Pipeline,
+    pub pipeline_layout: vk::PipelineLayout,
+}
+
+impl MeshletCullPipeline {
+    /// Create the meshlet cull pipeline. Uses the shared bindless descriptor set
+    /// layout (same as ChunkCullPipeline).
+    pub fn new(renderer: &Renderer, bindless_layout: vk::DescriptorSetLayout) -> Result<Self> {
+        // Push constant: 32 bytes (MeshletCullPushConstants)
+        let push_constant_ranges = [vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .offset(0)
+            .size(size_of::<MeshletCullPushConstants>() as u32)];
+
+        let set_layouts = [bindless_layout];
+        let pipeline_layout = unsafe {
+            renderer
+                .device_ctx
+                .device
+                .create_pipeline_layout(
+                    &vk::PipelineLayoutCreateInfo::default()
+                        .set_layouts(&set_layouts)
+                        .push_constant_ranges(&push_constant_ranges),
+                    None,
+                )
+                .context("failed to create meshlet cull pipeline layout")?
+        };
+
+        let shader_module = create_shader_module(
+            &renderer.device_ctx.device,
+            include_bytes!(concat!(env!("OUT_DIR"), "/meshlet_cull.comp.spv")),
+        )?;
+        let entry_name = c"main";
+        let stage = vk::PipelineShaderStageCreateInfo::default()
+            .module(shader_module)
+            .name(entry_name)
+            .stage(vk::ShaderStageFlags::COMPUTE);
+        let cache_handle = renderer
+            .pipeline_cache
+            .as_ref()
+            .expect("pipeline cache must be initialized before meshlet cull pipeline")
+            .handle();
+        let pipeline = unsafe {
+            renderer
+                .device_ctx
+                .device
+                .create_compute_pipelines(
+                    cache_handle,
+                    &[vk::ComputePipelineCreateInfo::default()
+                        .stage(stage)
+                        .layout(pipeline_layout)],
+                    None,
+                )
+                .map_err(|(_, err)| err)
+                .context("failed to create meshlet cull compute pipeline")?
+                .into_iter()
+                .next()
+                .context("meshlet cull pipeline creation returned no pipeline")?
+        };
+
+        unsafe {
+            renderer
+                .device_ctx
+                .device
+                .destroy_shader_module(shader_module, None);
+        }
+
+        Ok(Self {
+            pipeline,
+            pipeline_layout,
+        })
+    }
+
+    /// Record meshlet cull dispatch: reset count buffer, bind pipeline, push
+    /// constants, dispatch workgroups (D-06, D-08).
+    pub fn record_dispatch(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        pc: &MeshletCullPushConstants,
+        bindless_set: vk::DescriptorSet,
+        meshlet_count_buffer: vk::Buffer,
+    ) {
+        if pc.total_meshlet_count == 0 {
+            return;
+        }
+
+        unsafe {
+            // Reset meshlet_count_buffer to 0 via vkCmdFillBuffer (D-08).
+            device.cmd_fill_buffer(
+                cmd,
+                meshlet_count_buffer,
+                0,
+                size_of::<u32>() as u64,
+                0,
+            );
+
+            // Barrier: TRANSFER_WRITE → SHADER_READ|SHADER_WRITE for count buffer.
+            let fill_barrier = vk::BufferMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+                .buffer(meshlet_count_buffer)
+                .offset(0)
+                .size(size_of::<u32>() as u64);
+            device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[fill_barrier],
+                &[],
+            );
+
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                self.pipeline_layout,
+                0,
+                &[bindless_set],
+                &[],
+            );
+
+            let pc_bytes = bytemuck::bytes_of(pc);
+            device.cmd_push_constants(
+                cmd,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                pc_bytes,
+            );
+
+            // Dispatch ceil(total_meshlet_count / 64) workgroups.
+            let group_count = pc.total_meshlet_count.div_ceil(WORKGROUP_SIZE);
+            device.cmd_dispatch(cmd, group_count, 1, 1);
+        }
+    }
+
+    /// Destroy the pipeline and layout.
+    pub fn destroy(self, renderer: &mut Renderer) {
+        unsafe {
+            renderer
+                .device_ctx
+                .device
+                .destroy_pipeline(self.pipeline, None);
+            renderer
+                .device_ctx
+                .device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+        }
+    }
+}

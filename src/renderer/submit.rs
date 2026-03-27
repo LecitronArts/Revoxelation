@@ -4,14 +4,16 @@ use glam::Mat4;
 
 use super::Renderer;
 use super::camera::{CameraUniforms, extract_frustum_planes};
-use super::cull_pipeline::HiZConfig;
+use super::cull_pipeline::{HiZConfig, MeshletCullPushConstants};
 
 pub fn submit_frame_sequence() -> &'static [&'static str] {
     &[
         "staging_ring_reset",
         "chunk_delta_uploads",
         "transfer_to_compute_barrier",
-        "compute_cull",
+        "compute_cull_chunk",
+        "chunk_to_meshlet_barrier",
+        "compute_cull_meshlet",
         "indirect_barrier",
         "render_pass",
         "bind_chunk_pipeline",
@@ -160,6 +162,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                 .map(|b| b.descriptor_set)
                 .unwrap_or(vk::DescriptorSet::null());
 
+            // ---- Level 1: Chunk-level frustum + Hi-Z culling ----
             cull_pipeline.dispatch(
                 &renderer.device_ctx.device,
                 command_buffer,
@@ -168,6 +171,75 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                 &frustum_planes,
                 bindless_set,
             );
+
+            // ---- Barrier: chunk_cull COMPUTE_WRITE → meshlet_cull COMPUTE_READ (D-09) ----
+            // Ensure chunk cull writes complete before meshlet cull reads.
+            let chunk_to_meshlet_barrier = vk::MemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ);
+            renderer.device_ctx.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[chunk_to_meshlet_barrier],
+                &[],
+                &[],
+            );
+
+            // ---- Level 2: Meshlet-level backface + frustum + Hi-Z culling ----
+            if let (Some(meshlet_cull), Some(meshlet_pool)) =
+                (&renderer.meshlet_cull_pipeline, &renderer.meshlet_pool)
+            {
+                let total_meshlets = meshlet_pool.active_meshlet_count();
+                if total_meshlets > 0 {
+                    let meshlet_pc = MeshletCullPushConstants {
+                        total_meshlet_count: total_meshlets,
+                        enable_backface: u32::from(renderer.meshlet_cull_backface),
+                        enable_frustum: u32::from(renderer.meshlet_cull_frustum),
+                        enable_hiz: u32::from(renderer.meshlet_cull_hiz),
+                        camera_pos: camera_uniforms.camera_pos,
+                        _pad: 0,
+                    };
+                    meshlet_cull.record_dispatch(
+                        &renderer.device_ctx.device,
+                        command_buffer,
+                        &meshlet_pc,
+                        bindless_set,
+                        meshlet_pool.meshlet_count_buffer,
+                    );
+
+                    // Barrier: meshlet cull COMPUTE_WRITE → INDIRECT_READ for draw commands.
+                    let meshlet_visible_barrier = vk::BufferMemoryBarrier::default()
+                        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                        .dst_access_mask(
+                            vk::AccessFlags::SHADER_READ
+                                | vk::AccessFlags::INDIRECT_COMMAND_READ,
+                        )
+                        .buffer(meshlet_pool.visible_meshlet_buffer)
+                        .offset(0)
+                        .size(vk::WHOLE_SIZE);
+                    let meshlet_count_barrier = vk::BufferMemoryBarrier::default()
+                        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                        .dst_access_mask(
+                            vk::AccessFlags::SHADER_READ
+                                | vk::AccessFlags::INDIRECT_COMMAND_READ,
+                        )
+                        .buffer(meshlet_pool.meshlet_count_buffer)
+                        .offset(0)
+                        .size(vk::WHOLE_SIZE);
+                    renderer.device_ctx.device.cmd_pipeline_barrier(
+                        command_buffer,
+                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                        vk::PipelineStageFlags::COMPUTE_SHADER
+                            | vk::PipelineStageFlags::DRAW_INDIRECT,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[meshlet_visible_barrier, meshlet_count_barrier],
+                        &[],
+                    );
+                }
+            }
 
             // Barrier: compute shader writes → indirect draw reads for both dense indirect
             // (within scene_buffer) and draw count buffers.
