@@ -13,7 +13,7 @@ fn main() {
     }
 }
 
-fn shader_sources() -> [&'static str; 9] {
+fn shader_sources() -> [&'static str; 11] {
     [
         "shaders/chunk_mesh.vert",
         "shaders/chunk_mesh.frag",
@@ -24,6 +24,8 @@ fn shader_sources() -> [&'static str; 9] {
         "shaders/meshlet_cull.comp",
         "shaders/meshlet_draw.vert",
         "shaders/meshlet_draw.frag",
+        "shaders/meshlet.task",
+        "shaders/meshlet.mesh",
     ]
 }
 
@@ -55,6 +57,10 @@ fn shader_kind(shader: &str) -> shaderc::ShaderKind {
         shaderc::ShaderKind::Fragment
     } else if shader.ends_with(".comp") {
         shaderc::ShaderKind::Compute
+    } else if shader.ends_with(".task") {
+        shaderc::ShaderKind::Task
+    } else if shader.ends_with(".mesh") {
+        shaderc::ShaderKind::Mesh
     } else {
         panic!("unsupported shader extension for {shader}");
     }

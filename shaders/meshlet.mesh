@@ -1,0 +1,200 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(triangles, max_vertices = 64, max_primitives = 124) out;
+
+// -----------------------------------------------------------------------
+// Per-vertex outputs — must match meshlet_draw.frag
+// -----------------------------------------------------------------------
+layout(location = 0) flat out uint v_block_id[];
+layout(location = 1) out vec3 v_face_normal[];
+layout(location = 2) out vec2 v_uv[];
+
+// -----------------------------------------------------------------------
+// GpuMeshlet (64 bytes)
+// -----------------------------------------------------------------------
+struct GpuMeshlet {
+    vec3 center;
+    float radius;
+    vec3 cone_axis;
+    float cone_cutoff;
+    uint vertex_offset;
+    uint triangle_offset;
+    uint vertex_count;
+    uint triangle_count;
+    uint chunk_slot;
+    uint lod_level;
+    uint pad0;
+    uint pad1;
+};
+
+// GpuChunkInstance (48 bytes, matches Rust #[repr(C)] layout)
+struct GpuChunkInstance {
+    vec3 aabb_min;
+    uint material_id;
+    vec3 aabb_max;
+    uint lod_level;
+    vec3 chunk_origin;
+    float chunk_scale;
+};
+
+// -----------------------------------------------------------------------
+// SSBO bindings (shared bindless set 0)
+// -----------------------------------------------------------------------
+
+// binding 0: scene buffer — GpuChunkInstance[]
+layout(std430, set = 0, binding = 0) readonly buffer SceneBuffer {
+    GpuChunkInstance instances[];
+} scene_data;
+
+// binding 10: meshlet metadata SSBO (read)
+layout(std430, set = 0, binding = 10) readonly buffer MeshletMetaBuffer {
+    uint data[];
+} meshlet_meta;
+
+// binding 11: meshlet vertex buffer — PackedVertex (uvec2)
+layout(std430, set = 0, binding = 11) readonly buffer MeshletVertexBuffer {
+    uvec2 vertices[];
+} vertex_buf;
+
+// binding 12: meshlet triangle index buffer — u32 (widened from u8)
+layout(std430, set = 0, binding = 12) readonly buffer MeshletTriBuffer {
+    uint indices[];
+} tri_buf;
+
+// -----------------------------------------------------------------------
+// Push constants — camera uniforms (80 bytes, matching CameraUniforms)
+// -----------------------------------------------------------------------
+layout(push_constant) uniform CameraUniforms {
+    mat4 view_proj;
+    vec3 camera_pos;
+    float _pad;
+} camera;
+
+// -----------------------------------------------------------------------
+// Task payload — received from task shader
+// -----------------------------------------------------------------------
+struct TaskPayload {
+    uint meshlet_ids[32];
+};
+
+taskPayloadSharedEXT TaskPayload payload;
+
+// -----------------------------------------------------------------------
+// GpuMeshlet loader — reads from raw uint array
+// -----------------------------------------------------------------------
+const uint MESHLET_UINT32S = 16u; // 64 bytes / 4
+
+GpuMeshlet load_meshlet(uint meshlet_id) {
+    uint base = meshlet_id * MESHLET_UINT32S;
+    GpuMeshlet m;
+    m.center = vec3(
+        uintBitsToFloat(meshlet_meta.data[base + 0]),
+        uintBitsToFloat(meshlet_meta.data[base + 1]),
+        uintBitsToFloat(meshlet_meta.data[base + 2])
+    );
+    m.radius          = uintBitsToFloat(meshlet_meta.data[base + 3]);
+    m.cone_axis = vec3(
+        uintBitsToFloat(meshlet_meta.data[base + 4]),
+        uintBitsToFloat(meshlet_meta.data[base + 5]),
+        uintBitsToFloat(meshlet_meta.data[base + 6])
+    );
+    m.cone_cutoff      = uintBitsToFloat(meshlet_meta.data[base + 7]);
+    m.vertex_offset    = meshlet_meta.data[base + 8];
+    m.triangle_offset  = meshlet_meta.data[base + 9];
+    m.vertex_count     = meshlet_meta.data[base + 10];
+    m.triangle_count   = meshlet_meta.data[base + 11];
+    m.chunk_slot       = meshlet_meta.data[base + 12];
+    m.lod_level        = meshlet_meta.data[base + 13];
+    m.pad0             = meshlet_meta.data[base + 14];
+    m.pad1             = meshlet_meta.data[base + 15];
+    return m;
+}
+
+// -----------------------------------------------------------------------
+// Vertex decoding — identical to meshlet_draw.vert
+// -----------------------------------------------------------------------
+vec3 decode_position(uint word0) {
+    uint x = word0 & 0x7Fu;
+    uint y = (word0 >> 7) & 0x7Fu;
+    uint z = (word0 >> 14) & 0x7Fu;
+    return vec3(x, y, z);
+}
+
+vec3 face_normal_from_index(uint fi) {
+    if (fi == 0u) return vec3( 1.0, 0.0, 0.0);
+    if (fi == 1u) return vec3(-1.0, 0.0, 0.0);
+    if (fi == 2u) return vec3( 0.0, 1.0, 0.0);
+    if (fi == 3u) return vec3( 0.0,-1.0, 0.0);
+    if (fi == 4u) return vec3( 0.0, 0.0, 1.0);
+    return            vec3( 0.0, 0.0,-1.0);
+}
+
+// -----------------------------------------------------------------------
+// main
+// -----------------------------------------------------------------------
+void main() {
+    // Each mesh shader workgroup processes one visible meshlet.
+    // gl_WorkGroupID.x indexes into the task payload.
+    uint payload_index = gl_WorkGroupID.x;
+    uint meshlet_id = payload.meshlet_ids[payload_index];
+
+    GpuMeshlet m = load_meshlet(meshlet_id);
+    GpuChunkInstance inst = scene_data.instances[m.chunk_slot];
+
+    uint vertex_count = m.vertex_count;
+    uint triangle_count = m.triangle_count;
+
+    SetMeshOutputsEXT(vertex_count, triangle_count);
+
+    // Each thread processes one vertex (local_size_x = 64 >= max_vertices = 64).
+    uint tid = gl_LocalInvocationIndex;
+
+    if (tid < vertex_count) {
+        uvec2 packed = vertex_buf.vertices[m.vertex_offset + tid];
+        uint word0 = packed.x;
+        uint word1 = packed.y;
+
+        vec3 pos = decode_position(word0);
+
+        uint face_index = (word0 >> 21) & 0x7u;
+        uint face_axis = face_index / 2u;
+        bool is_positive = (face_index % 2u) == 0u;
+        vec3 face_offset = vec3(0.0);
+        if (is_positive) {
+            if (face_axis == 0u) face_offset.x = 1.0;
+            else if (face_axis == 1u) face_offset.y = 1.0;
+            else face_offset.z = 1.0;
+        }
+
+        vec3 local = (pos + face_offset) * inst.chunk_scale;
+        vec3 world_position = inst.chunk_origin + local;
+        gl_MeshVerticesEXT[tid].gl_Position = camera.view_proj * vec4(world_position, 1.0);
+
+        // Per-vertex outputs
+        v_block_id[tid] = word1 & 0xFFFFu;
+        v_face_normal[tid] = face_normal_from_index(face_index);
+
+        float u = float((word1 >> 16) & 0xFFu);
+        float v = float((word1 >> 24) & 0xFFu);
+        v_uv[tid] = vec2(u, v);
+    }
+
+    // Each thread also processes triangle indices.
+    // triangle_count <= 124, local_size_x = 64, so we may need 2 iterations.
+    if (tid < triangle_count) {
+        uint i0 = tri_buf.indices[m.triangle_offset + tid * 3u + 0u];
+        uint i1 = tri_buf.indices[m.triangle_offset + tid * 3u + 1u];
+        uint i2 = tri_buf.indices[m.triangle_offset + tid * 3u + 2u];
+        gl_PrimitiveTriangleIndicesEXT[tid] = uvec3(i0, i1, i2);
+    }
+    // Handle remaining triangles (tid + 64).
+    uint tid2 = tid + 64u;
+    if (tid2 < triangle_count) {
+        uint i0 = tri_buf.indices[m.triangle_offset + tid2 * 3u + 0u];
+        uint i1 = tri_buf.indices[m.triangle_offset + tid2 * 3u + 1u];
+        uint i2 = tri_buf.indices[m.triangle_offset + tid2 * 3u + 2u];
+        gl_PrimitiveTriangleIndicesEXT[tid2] = uvec3(i0, i1, i2);
+    }
+}
