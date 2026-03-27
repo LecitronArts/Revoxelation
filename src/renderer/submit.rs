@@ -255,10 +255,12 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
 
         if let Some(mut egui_backend) = renderer.egui_backend.take() {
             let egui_output = renderer.pending_egui_output.take();
+            let egui_frame = renderer.current_frame;
             if let Some(output) = egui_output {
                 let paint_result = egui_backend.paint(
                     renderer,
                     command_buffer,
+                    egui_frame,
                     output.textures_delta,
                     output.clipped_primitives,
                     output.screen_size,
@@ -271,6 +273,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                 let paint_result = egui_backend.paint(
                     renderer,
                     command_buffer,
+                    egui_frame,
                     egui::TexturesDelta::default(),
                     Vec::new(),
                     [extent.width as f32, extent.height as f32],

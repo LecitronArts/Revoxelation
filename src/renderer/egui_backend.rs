@@ -51,8 +51,11 @@ pub struct EguiAshBackend {
     pub(crate) font_sampler: vk::Sampler,
     pub(crate) descriptor_set: vk::DescriptorSet,
     font_extent: Option<vk::Extent3D>,
-    /// Scratch buffers from previous frame — freed at the start of next paint().
-    scratch_buffers: Vec<(vk::Buffer, Allocation)>,
+    /// Per-frame scratch buffer ring (2 = FRAMES_IN_FLIGHT).
+    /// Buffers recorded into slot `current_frame` during paint() are only freed
+    /// when that same slot is reused 2 frames later — after the corresponding
+    /// frame fence has been waited on, guaranteeing the GPU is done with them.
+    scratch_buffers: [Vec<(vk::Buffer, Allocation)>; 2],
 }
 
 impl EguiAshBackend {
@@ -126,7 +129,7 @@ impl EguiAshBackend {
             font_sampler: vk::Sampler::null(),
             descriptor_set,
             font_extent: None,
-            scratch_buffers: Vec::new(),
+            scratch_buffers: [Vec::new(), Vec::new()],
         })
     }
 
@@ -266,9 +269,13 @@ impl EguiAshBackend {
         Ok(())
     }
 
-    /// Free scratch buffers from the previous frame.
-    fn free_stale_scratch(&mut self, renderer: &mut Renderer) -> Result<()> {
-        for (buffer, allocation) in self.scratch_buffers.drain(..) {
+    /// Free scratch buffers for the given frame slot.
+    ///
+    /// Called at the start of each frame after the fence for `current_frame` has
+    /// been waited on. Since we just reused this slot, the buffers it contains
+    /// are from 2 frames ago and the GPU is guaranteed to be done with them.
+    fn free_stale_scratch(&mut self, renderer: &mut Renderer, current_frame: usize) -> Result<()> {
+        for (buffer, allocation) in self.scratch_buffers[current_frame].drain(..) {
             destroy_allocated_buffer(renderer, buffer, allocation)?;
         }
         Ok(())
@@ -278,12 +285,13 @@ impl EguiAshBackend {
         &mut self,
         renderer: &mut Renderer,
         cmd: vk::CommandBuffer,
+        current_frame: usize,
         textures_delta: TexturesDelta,
         clipped_primitives: Vec<ClippedPrimitive>,
         screen_size_points: [f32; 2],
     ) -> Result<()> {
-        // 0. Free scratch buffers from the previous frame.
-        self.free_stale_scratch(renderer)?;
+        // 0. Free scratch buffers for THIS frame slot (safe — fence was waited on).
+        self.free_stale_scratch(renderer, current_frame)?;
 
         // 1. Process texture updates.
         for (texture_id, delta) in textures_delta.set {
@@ -349,7 +357,7 @@ impl EguiAshBackend {
             let clip_rect = clipped.clip_rect;
 
             if let Primitive::Mesh(mesh) = clipped.primitive {
-                let Some(scratch) = self.upload_mesh_scratch(renderer, &mesh)? else {
+                let Some(scratch) = self.upload_mesh_scratch(renderer, current_frame, &mesh)? else {
                     continue;
                 };
 
@@ -392,8 +400,12 @@ impl EguiAshBackend {
     }
 
     pub fn destroy(mut self, renderer: &mut Renderer) -> Result<()> {
-        // Free any remaining scratch buffers.
-        self.free_stale_scratch(renderer)?;
+        // Free any remaining scratch buffers from ALL frame slots.
+        for slot in 0..self.scratch_buffers.len() {
+            for (buffer, allocation) in self.scratch_buffers[slot].drain(..) {
+                destroy_allocated_buffer(renderer, buffer, allocation)?;
+            }
+        }
         self.destroy_font_texture(renderer)?;
 
         let device = &renderer.device_ctx.device;
@@ -554,6 +566,7 @@ impl EguiAshBackend {
     fn upload_mesh_scratch(
         &mut self,
         renderer: &mut Renderer,
+        current_frame: usize,
         mesh: &epaint::Mesh,
     ) -> Result<Option<ScratchMeshBuffers>> {
         if mesh.is_empty() {
@@ -598,9 +611,9 @@ impl EguiAshBackend {
 
         let index_count = mesh.indices.len() as u32;
 
-        // Register for deferred cleanup — freed at the start of next paint().
-        self.scratch_buffers.push((vb, vb_alloc));
-        self.scratch_buffers.push((ib, ib_alloc));
+        // Register for deferred cleanup — freed when this frame slot is reused.
+        self.scratch_buffers[current_frame].push((vb, vb_alloc));
+        self.scratch_buffers[current_frame].push((ib, ib_alloc));
 
         Ok(Some(ScratchMeshBuffers {
             vertex_buffer: vb,
