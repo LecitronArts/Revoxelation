@@ -17,7 +17,9 @@ pub struct StagingAllocation {
     mapped_ptr: *mut u8,
 }
 
-// Safety: StagingAllocation's raw pointer is only used for writes in the same thread.
+// SAFETY: StagingAllocation's `mapped_ptr` (*mut u8) points into gpu-allocator CpuToGpu mapped
+// memory. Send is safe because: (1) write_bytes requires &mut self (exclusive access), (2) each
+// allocation is a unique non-overlapping sub-range, (3) the StagingRing outlives all allocations.
 unsafe impl Send for StagingAllocation {}
 
 impl StagingAllocation {
@@ -55,7 +57,9 @@ pub struct StagingRing {
     cursor: u64,
 }
 
-// Safety: The mapped pointer is only written to from a single thread per frame.
+// SAFETY: StagingRing's `mapped_base` (*mut u8) points to gpu-allocator CpuToGpu mapped memory.
+// Send is safe because: (1) writes go through allocate(&mut self) → StagingAllocation::write_bytes,
+// (2) per-frame regions are isolated by fence waits, (3) only accessed from the main render thread.
 unsafe impl Send for StagingRing {}
 
 impl StagingRing {

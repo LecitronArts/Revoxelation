@@ -39,7 +39,10 @@ pub struct ChunkCullPipeline {
     hiz_config_mapped: *mut u8,
 }
 
-// Safety: raw pointer is only used for mapped writes from the main thread.
+// SAFETY: ChunkCullPipeline's `frustum_planes_mapped` and `hiz_config_mapped` (*mut u8) point
+// into gpu-allocator CpuToGpu mapped memory. Send is safe because: (1) writes use
+// copy_nonoverlapping to disjoint regions, (2) uploads happen before cmd submit (no concurrent GPU
+// read), (3) pipeline is owned by Renderer and only accessed from the main render thread.
 unsafe impl Send for ChunkCullPipeline {}
 
 impl ChunkCullPipeline {
