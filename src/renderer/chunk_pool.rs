@@ -813,6 +813,12 @@ impl ChunkPool {
         dense_region_offset: u64,
         write: DenseIndirectWrite,
     ) -> Result<()> {
+        debug_assert!(
+            (write.draw_index as usize) < self.capacity,
+            "dense_indirect_shadow: draw_index {} out of bounds (capacity {})",
+            write.draw_index,
+            self.capacity,
+        );
         self.dense_indirect_shadow[write.draw_index as usize] = write.command;
         let indirect_bytes = draw_cmd_as_bytes(&write.command);
         let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;

@@ -277,11 +277,15 @@ pub fn run() -> Result<()> {
                     });
 
                     // Run scheduler frame, then handle renderer submission.
+                    let camera_pos = app.camera.position.to_array();
                     let _result = crate::runtime::run_frame(
                         &mut app.streaming,
                         &mut app.meshing,
                         Some(&mut app.renderer),
                         app.frame_index,
+                        camera_pos,
+                        screen_size[1],
+                        app.camera.fov_y,
                     );
 
                     // Drain pending render deltas and submit frame from app-owned renderer.

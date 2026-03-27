@@ -16,14 +16,14 @@ fn full_round_trip() {
     let mut streaming = StreamingState::new();
     let mut meshing = MeshingState::default();
 
-    let r0 = run_frame(&mut streaming, &mut meshing, None, 2000);
+    let r0 = run_frame(&mut streaming, &mut meshing, None, 2000, [0.0, 0.0, 0.0], 720.0, std::f32::consts::FRAC_PI_3);
     assert_eq!(
         r0.executed_stages.len(),
         5,
         "frame 2000 must execute all 5 stages"
     );
 
-    let r1 = run_frame(&mut streaming, &mut meshing, None, 2001);
+    let r1 = run_frame(&mut streaming, &mut meshing, None, 2001, [0.0, 0.0, 0.0], 720.0, std::f32::consts::FRAC_PI_3);
     assert_eq!(
         r1.executed_stages.len(),
         5,
@@ -43,10 +43,10 @@ fn cancel_in_flight_no_panic() {
     let mut meshing = MeshingState::default();
 
     // Frame 2002: WorldUpdate enqueues work.
-    let r0 = run_frame(&mut streaming, &mut meshing, None, 2002);
+    let r0 = run_frame(&mut streaming, &mut meshing, None, 2002, [0.0, 0.0, 0.0], 720.0, std::f32::consts::FRAC_PI_3);
     assert_eq!(r0.executed_stages.len(), 5);
 
     // Frame 2003: MeshSync drains whatever rayon has produced.
-    let r1 = run_frame(&mut streaming, &mut meshing, None, 2003);
+    let r1 = run_frame(&mut streaming, &mut meshing, None, 2003, [0.0, 0.0, 0.0], 720.0, std::f32::consts::FRAC_PI_3);
     assert_eq!(r1.executed_stages.len(), 5);
 }

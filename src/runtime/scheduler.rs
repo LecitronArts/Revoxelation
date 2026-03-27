@@ -111,6 +111,9 @@ pub fn run_frame(
     meshing: &mut MeshingState,
     renderer: Option<&mut crate::renderer::Renderer>,
     frame_index: u64,
+    camera_pos: [f32; 3],
+    screen_height: f32,
+    fov_y: f32,
 ) -> FrameExecution {
     let mut executed_stages = Vec::with_capacity(STAGE_ORDER.len());
     let mut trace_entries = Vec::with_capacity(STAGE_ORDER.len() * 2);
@@ -130,7 +133,12 @@ pub fn run_frame(
                 // Renderer interaction only when a renderer is available.
                 // Tests pass None; the real app passes Some(&mut renderer).
             }
-            Stage::WorldUpdate => run_world_update(streaming, frame_index),
+            Stage::WorldUpdate => {
+                // Update SseConfig with actual viewport parameters each frame (D-04).
+                streaming.sse_config.screen_height = screen_height;
+                streaming.sse_config.fov_y_radians = fov_y;
+                run_world_update(streaming, frame_index, camera_pos);
+            }
             Stage::MeshSync => run_mesh_sync(streaming, meshing, frame_index),
         }
 
@@ -157,10 +165,7 @@ pub fn run_frame(
 // WorldUpdate arm
 // ---------------------------------------------------------------------------
 
-fn run_world_update(ss: &mut StreamingState, frame_index: u64) {
-    // Camera at origin for default/test scenarios.
-    let camera_pos = [0.0f32, 0.0, 0.0];
-
+fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32; 3]) {
     if frame_index < 10 || (frame_index % 60 == 0) {
         eprintln!(
             "[DIAG-WU] frame={} octree_nodes={} active_set_size={}",
