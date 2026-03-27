@@ -17,7 +17,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2.5: Vulkan Bootstrap and Render Infrastructure** (INSERTED) - Replace wgpu with raw Vulkan (ash) and establish gpu-allocator-backed staging pipeline and egui-ash integration.
 - [x] **Phase 3: Greedy Meshing and Render Delta Sync** - Produce greedy chunk meshes and push only chunk deltas to the renderer.
 - [x] **Phase 4: Rendering Foundation Overhaul** - Fix critical renderer issues, establish real camera/projection, frustum+Hi-Z culling, GpuOnly memory, swapchain lifecycle.
-- [ ] **Phase 5: Bindless Architecture and GPU Scene** - Vulkan 1.2 descriptor indexing (hard requirement, no fallback), unified GPU scene buffer, block material/texture system.
+- [x] **Phase 5: Bindless Architecture and GPU Scene** - Vulkan 1.2 descriptor indexing (hard requirement, no fallback), unified GPU scene buffer, block material/texture system.
+- [ ] **Phase 05.1: Critical Bug Fixes and Safety Hardening** (INSERTED) - Fix critical GPU resource bugs (Hi-Z resize, egui UAF), harden safety (bounds checks, unsafe docs, safe casts), improve robustness (staging exhaustion, camera passthrough, clippy cleanup).
 - [ ] **Phase 6: Meshlet Pipeline** - Meshlet generation, per-meshlet GPU culling, software mesh shader emulation, optional VK_EXT_mesh_shader hardware path.
 - [ ] **Phase 7: Lighting and Shadows** - Directional PBR lighting, cascaded shadow maps, SSAO, voxel AO, sky/atmosphere with day-night cycle.
 - [ ] **Phase 8: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
@@ -129,9 +130,34 @@ Plans:
 Plans:
 - [x] 05-01: Vulkan 1.2 device upgrade + descriptor indexing (hard requirement, no fallback).
 - [x] 05-02: Bindless descriptor set + global resource table (BindlessTable, shared set 0).
-- [ ] 05-03: Unified GPU scene buffer (GpuChunkInstance SSBO, gl_DrawID indexing).
-- [ ] 05-04: Block material system + texture array (BlockMaterial, 2D array texture, bindless sampling).
-- [ ] 05-05: Dynamic capacity + IndirectCount (runtime grow, vkCmdDrawIndexedIndirectCount).
+- [x] 05-03: Unified GPU scene buffer (GpuChunkInstance SSBO, gl_DrawID indexing).
+- [x] 05-04: Block material system + texture array (BlockMaterial, 2D array texture, bindless sampling).
+- [x] 05-05: Dynamic capacity + IndirectCount (runtime grow, vkCmdDrawIndexedIndirectCount).
+
+### Phase 05.1: Critical Bug Fixes and Safety Hardening (INSERTED)
+
+**Goal:** Fix critical GPU resource management bugs, harden unsafe code safety, and improve codebase robustness before further feature work. Addresses Hi-Z resize crash, egui use-after-free, camera streaming mismatch, unsafe code documentation, and code quality.
+**Requirements**: FIX-01, FIX-02, FIX-03, FIX-04, FIX-05, FIX-06, FIX-07, FIX-08, FIX-09
+**Depends on:** Phase 5
+**Success Criteria** (what must be TRUE):
+  1. Window resize correctly recreates the Hi-Z pyramid with new dimensions — no GPU crash or validation errors.
+  2. egui scratch buffers respect double-buffered frame lifetimes — no GPU use-after-free.
+  3. Camera position drives streaming active set — chunks follow the player, not stuck at origin.
+  4. dense_indirect_shadow has bounds checking — no OOB panic on malformed data.
+  5. All unsafe impl Send have documented SAFETY invariants.
+  6. draw_cmd_as_bytes uses safe bytemuck cast — no manual from_raw_parts.
+  7. Staging ring exhaustion degrades gracefully — partial batch, deferred deltas.
+  8. Zero clippy warnings across the entire codebase.
+  9. Drop implementations log cleanup failures instead of swallowing errors.
+**Plans:** 6 plans
+
+Plans:
+- [ ] 05.1-01: Hi-Z pyramid resize recreation (CRITICAL — FIX-01).
+- [ ] 05.1-02: egui scratch buffer per-frame ring (HIGH — FIX-02).
+- [ ] 05.1-03: Camera position passthrough + bounds checks (MEDIUM — FIX-03, FIX-04).
+- [ ] 05.1-04: Safety documentation + unsafe cleanup (MEDIUM — FIX-05, FIX-06, FIX-09).
+- [ ] 05.1-05: Staging ring graceful degradation (MEDIUM — FIX-07).
+- [ ] 05.1-06: Clippy cleanup (LOW — FIX-08).
 
 ### Phase 6: Meshlet Pipeline
 **Goal**: Split greedy mesh output into meshlets (64 verts / 124 tris clusters), implement per-meshlet GPU culling (backface+frustum+Hi-Z), and optionally leverage VK_EXT_mesh_shader hardware path with compute+indirect fallback.
@@ -228,7 +254,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10 -> 11
+Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -237,7 +263,8 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 
 | 2.5. Vulkan Bootstrap and Render Infrastructure | 2/2 | Complete | 2026-03-21 |
 | 3. Greedy Meshing and Render Delta Sync | 7/7 | Complete | 2026-03-22 |
 | 4. Rendering Foundation Overhaul | 7/7 | Complete | 2026-03-25 |
-| 5. Bindless Architecture and GPU Scene | 2/5 | In Progress | - |
+| 5. Bindless Architecture and GPU Scene | 5/5 | Complete | 2026-03-26 |
+| 05.1. Critical Bug Fixes and Safety Hardening | 0/6 | Not started | - |
 | 6. Meshlet Pipeline | 0/5 | Not started | - |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |

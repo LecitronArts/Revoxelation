@@ -41,6 +41,18 @@
 - [x] **BIND-04**: Block material system supports distinct textures per block_id via texture array + bindless sampling.
 - [x] **BIND-05**: Chunk render capacity grows dynamically beyond fixed limit; IndirectCount eliminates CPU-side draw count.
 
+### Bug Fixes and Safety Hardening
+
+- [ ] **FIX-01**: Hi-Z pyramid is recreated on swapchain resize — no GPU crash or validation errors from stale depth image references.
+- [ ] **FIX-02**: egui scratch buffers respect double-buffered frame lifetimes — no GPU use-after-free.
+- [ ] **FIX-03**: Camera position is passed to streaming active-set computation — chunks follow the player, not stuck at origin.
+- [ ] **FIX-04**: dense_indirect_shadow access is bounds-checked — no OOB panic on malformed draw_index.
+- [ ] **FIX-05**: All unsafe impl Send have documented SAFETY invariants explaining raw pointer ownership and thread safety.
+- [ ] **FIX-06**: draw_cmd_as_bytes replaced with safe bytemuck cast or field-by-field write — no manual from_raw_parts.
+- [ ] **FIX-07**: Staging ring exhaustion degrades gracefully — partial batch with deferred deltas instead of frame failure.
+- [ ] **FIX-08**: All clippy warnings resolved — zero warnings from cargo clippy --all-targets.
+- [ ] **FIX-09**: Drop implementations log resource cleanup failures instead of silently discarding errors.
+
 ### Meshlet Pipeline
 
 - [ ] **MSHL-01**: Greedy mesh output is split into meshlets with precomputed bounding spheres and orientation cones.
@@ -137,6 +149,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BIND-03 | Phase 5 | Complete |
 | BIND-04 | Phase 5 | Complete |
 | BIND-05 | Phase 5 | Complete |
+| FIX-01 | Phase 05.1 | Pending |
+| FIX-02 | Phase 05.1 | Pending |
+| FIX-03 | Phase 05.1 | Pending |
+| FIX-04 | Phase 05.1 | Pending |
+| FIX-05 | Phase 05.1 | Pending |
+| FIX-06 | Phase 05.1 | Pending |
+| FIX-07 | Phase 05.1 | Pending |
+| FIX-08 | Phase 05.1 | Pending |
+| FIX-09 | Phase 05.1 | Pending |
 | MSHL-01 | Phase 6 | Pending |
 | MSHL-02 | Phase 6 | Pending |
 | MSHL-03 | Phase 6 | Pending |
@@ -161,10 +182,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUAL-01 | Phase 1 | Complete |
 
 **Coverage:**
-- v1 requirements: 43 total
-- Mapped to phases: 43
+- v1 requirements: 52 total
+- Mapped to phases: 52
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-15*
-*Last updated: 2026-03-25 — added REND, BIND, MSHL, LGHT requirements for new rendering phases*
+*Last updated: 2026-03-27 — added FIX-01 through FIX-09 for Phase 05.1 bug fixes and safety hardening*
