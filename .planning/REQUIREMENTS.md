@@ -47,11 +47,11 @@
 - [x] **FIX-02**: egui scratch buffers respect double-buffered frame lifetimes — no GPU use-after-free.
 - [x] **FIX-03**: Camera position is passed to streaming active-set computation — chunks follow the player, not stuck at origin.
 - [x] **FIX-04**: dense_indirect_shadow access is bounds-checked — no OOB panic on malformed draw_index.
-- [ ] **FIX-05**: All unsafe impl Send have documented SAFETY invariants explaining raw pointer ownership and thread safety.
-- [ ] **FIX-06**: draw_cmd_as_bytes replaced with safe bytemuck cast or field-by-field write — no manual from_raw_parts.
+- [x] **FIX-05**: All unsafe impl Send have documented SAFETY invariants explaining raw pointer ownership and thread safety.
+- [x] **FIX-06**: draw_cmd_as_bytes replaced with safe bytemuck cast or field-by-field write — no manual from_raw_parts.
 - [ ] **FIX-07**: Staging ring exhaustion degrades gracefully — partial batch with deferred deltas instead of frame failure.
 - [ ] **FIX-08**: All clippy warnings resolved — zero warnings from cargo clippy --all-targets.
-- [ ] **FIX-09**: Drop implementations log resource cleanup failures instead of silently discarding errors.
+- [x] **FIX-09**: Drop implementations log resource cleanup failures instead of silently discarding errors.
 
 ### Meshlet Pipeline
 
@@ -153,11 +153,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FIX-02 | Phase 05.1 | Complete |
 | FIX-03 | Phase 05.1 | Complete |
 | FIX-04 | Phase 05.1 | Complete |
-| FIX-05 | Phase 05.1 | Pending |
-| FIX-06 | Phase 05.1 | Pending |
+| FIX-05 | Phase 05.1 | Complete |
+| FIX-06 | Phase 05.1 | Complete |
 | FIX-07 | Phase 05.1 | Pending |
 | FIX-08 | Phase 05.1 | Pending |
-| FIX-09 | Phase 05.1 | Pending |
+| FIX-09 | Phase 05.1 | Complete |
 | MSHL-01 | Phase 6 | Pending |
 | MSHL-02 | Phase 6 | Pending |
 | MSHL-03 | Phase 6 | Pending |

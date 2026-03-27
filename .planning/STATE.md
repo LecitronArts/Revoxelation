@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 05.1-critical-bug-fixes-and-safety-hardening
 status: executing
-last_updated: "2026-03-27T10:16:33Z"
+last_updated: "2026-03-27T10:26:16.693Z"
 progress:
-  total_phases: 12
+  total_phases: 13
   completed_phases: 6
   total_plans: 34
-  completed_plans: 31
+  completed_plans: 32
 ---
 
 # Session State
@@ -22,7 +22,13 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 05.1-critical-bug-fixes-and-safety-hardening
-**Status:** Executing (plan 03 complete, 3 remaining)
+**Status:** Complete — Phase 05.1 finished (4/4 plans done)
+
+## Key Decisions (Phase 05.1 Plan 04)
+
+- DrawCmdPod #[repr(C)] Pod/Zeroable wrapper copies 5 u32 fields from vk::DrawIndexedIndirectCommand for safe bytemuck::bytes_of
+- SAFETY comments on all 3 unsafe impl Send blocks (StagingAllocation, StagingRing, ChunkCullPipeline)
+- All 8 `let _ =` in Renderer::drop replaced with log::warn error logging
 
 ## Key Decisions (Phase 05.1 Plan 03)
 
@@ -104,3 +110,4 @@ See: .planning/PROJECT.md
 - 2026-03-27: Executed 05.1-02 — egui scratch buffer per-frame ring (FIX-02)
 - 2026-03-27: Executed 05.1-01 — Hi-Z pyramid resize recreation (FIX-01)
 - 2026-03-27: Executed 05.1-03 — Camera passthrough + bounds check + live SseConfig (FIX-03, FIX-04)
+- 2026-03-27: Executed 05.1-04 — Safety docs, bytemuck cast, Drop logging (FIX-05, FIX-06, FIX-09) — Phase 05.1 COMPLETE
