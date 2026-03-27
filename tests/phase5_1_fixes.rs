@@ -137,6 +137,87 @@ fn app_passes_camera_pos_to_run_frame() {
     );
 }
 
+/// FIX-05: All `unsafe impl Send` blocks must have `// SAFETY:` documentation
+/// explaining the invariant and where it is enforced.
+#[test]
+fn send_safety_documented() {
+    let files_with_unsafe_send = [
+        "src/renderer/staging_ring.rs",
+        "src/renderer/cull_pipeline.rs",
+    ];
+
+    for file_path in &files_with_unsafe_send {
+        let source = std::fs::read_to_string(file_path)
+            .unwrap_or_else(|_| panic!("failed to read {file_path}"));
+        let lines: Vec<&str> = source.lines().collect();
+
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("unsafe impl Send") {
+                // Check that a `// SAFETY:` comment exists within 5 lines above.
+                let start = i.saturating_sub(5);
+                let preceding = &lines[start..i];
+                let has_safety_comment = preceding
+                    .iter()
+                    .any(|l| l.contains("// SAFETY:"));
+                assert!(
+                    has_safety_comment,
+                    "{file_path}:{}: `unsafe impl Send` at line {} lacks a `// SAFETY:` comment \
+                     within 5 lines above it (FIX-05)",
+                    i + 1,
+                    i + 1,
+                );
+            }
+        }
+    }
+}
+
+/// FIX-06: `draw_cmd_as_bytes` must be replaced with a safe bytemuck cast.
+/// No `from_raw_parts` manual pointer reinterpretation should remain for draw commands.
+#[test]
+fn draw_cmd_no_raw_parts() {
+    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("failed to read src/renderer/chunk_pool.rs");
+
+    assert!(
+        !source.contains("from_raw_parts"),
+        "chunk_pool.rs still contains `from_raw_parts` — \
+         draw_cmd_as_bytes must be replaced with a safe bytemuck cast (FIX-06)"
+    );
+}
+
+/// FIX-09: Drop implementations must log cleanup failures instead of
+/// silently discarding them with `let _ = ...`.
+#[test]
+fn drop_impl_logs_errors() {
+    let source = std::fs::read_to_string("src/renderer/mod.rs")
+        .expect("failed to read src/renderer/mod.rs");
+
+    // Find the `fn drop` block.
+    let drop_start = source
+        .find("fn drop(&mut self)")
+        .expect("fn drop not found in mod.rs");
+    let drop_body = &source[drop_start..];
+
+    // The drop body should NOT contain `let _ =` for fallible calls.
+    // Count occurrences of `let _ =` in the drop function.
+    let let_underscore_count = drop_body
+        .lines()
+        .take_while(|line| {
+            // Rough heuristic: stop at end of impl block (closing brace at column 0)
+            // We'll scan until we see enough context.
+            true
+        })
+        .filter(|line| line.contains("let _ ="))
+        .count();
+
+    assert_eq!(
+        let_underscore_count, 0,
+        "Drop impl in mod.rs contains {} occurrences of `let _ =` — \
+         all cleanup failures must be logged with log::warn (FIX-09)",
+        let_underscore_count,
+    );
+}
+
 /// FIX-02: egui scratch buffers must use a per-frame ring (array of Vecs)
 /// instead of a single Vec, so buffers from frame N are not freed until
 /// frame N+2's fence has been waited on.
