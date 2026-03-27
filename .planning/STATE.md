@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 05.1-critical-bug-fixes-and-safety-hardening
 status: executing
-last_updated: "2026-03-27T10:07:52Z"
+last_updated: "2026-03-27T10:16:33Z"
 progress:
   total_phases: 12
   completed_phases: 6
   total_plans: 34
-  completed_plans: 30
+  completed_plans: 31
 ---
 
 # Session State
@@ -22,7 +22,14 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 05.1-critical-bug-fixes-and-safety-hardening
-**Status:** Executing (plan 02 complete, 4 remaining)
+**Status:** Executing (plan 03 complete, 3 remaining)
+
+## Key Decisions (Phase 05.1 Plan 03)
+
+- run_frame/run_world_update accept camera_pos: [f32; 3], screen_height: f32, fov_y: f32
+- Camera position extracted from FpsCamera.position.to_array() in app.rs
+- debug_assert! bounds check on dense_indirect_shadow draw_index (zero-cost in release)
+- SseConfig.screen_height/fov_y_radians updated inline before WorldUpdate each frame
 
 ## Key Decisions (Phase 05.1 Plan 01)
 
@@ -96,3 +103,4 @@ See: .planning/PROJECT.md
 - 2026-03-26: Executed 05-05 — Dynamic capacity, IndirectCount draw (BIND-05) — Phase 5 COMPLETE
 - 2026-03-27: Executed 05.1-02 — egui scratch buffer per-frame ring (FIX-02)
 - 2026-03-27: Executed 05.1-01 — Hi-Z pyramid resize recreation (FIX-01)
+- 2026-03-27: Executed 05.1-03 — Camera passthrough + bounds check + live SseConfig (FIX-03, FIX-04)
