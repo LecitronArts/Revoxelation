@@ -55,7 +55,7 @@ impl EventBus {
     }
 
     pub fn publish_command(&mut self, command: RuntimeCommand) -> SequenceMetadata {
-        let sequence = self.sequence_clock.next();
+        let sequence = self.sequence_clock.next_seq();
         self.pending_commands
             .push_back(CommandEnvelope { sequence, command });
         sequence
@@ -101,7 +101,7 @@ impl EventBus {
 
     fn emit_event(&mut self, event: RuntimeEvent) {
         let envelope = EventEnvelope {
-            sequence: self.sequence_clock.next(),
+            sequence: self.sequence_clock.next_seq(),
             event,
         };
         self.pending_events.push_back(envelope.clone());

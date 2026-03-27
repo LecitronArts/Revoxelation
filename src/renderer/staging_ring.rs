@@ -49,6 +49,7 @@ pub struct StagingRing {
     buffer: vk::Buffer,
     allocation: Option<Allocation>,
     mapped_base: *mut u8,
+    #[allow(dead_code)]
     total_size: u64,
     frame_size: u64,
     frame_count: usize,

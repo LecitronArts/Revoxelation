@@ -32,7 +32,7 @@ impl SequenceClock {
         }
     }
 
-    pub fn next(&mut self) -> SequenceMetadata {
+    pub fn next_seq(&mut self) -> SequenceMetadata {
         let metadata = SequenceMetadata::new(self.frame_index, self.next_sequence);
         self.next_sequence = self.next_sequence.saturating_add(1);
         metadata

@@ -462,10 +462,12 @@ fn rend_03_point_inside_frustum_passes() {
     use revoxelation::renderer::camera::{extract_frustum_planes, FpsCamera};
     // Camera at origin looking +Z... but our camera looks -Z at yaw=0
     // So let's create a perspective projection looking along -Z and test point at (0,0,-5)
-    let mut camera = FpsCamera::default();
-    camera.position = Vec3::ZERO;
-    camera.yaw = 0.0;
-    camera.pitch = 0.0;
+    let camera = FpsCamera {
+        position: Vec3::ZERO,
+        yaw: 0.0,
+        pitch: 0.0,
+        ..Default::default()
+    };
     let uniforms = camera.view_proj(1.0);
     let vp = Mat4::from_cols_array_2d(&uniforms.view_proj);
     let planes = extract_frustum_planes(&vp);
@@ -485,10 +487,12 @@ fn rend_03_point_inside_frustum_passes() {
 fn rend_03_point_behind_camera_fails() {
     use glam::{Mat4, Vec3};
     use revoxelation::renderer::camera::{extract_frustum_planes, FpsCamera};
-    let mut camera = FpsCamera::default();
-    camera.position = Vec3::ZERO;
-    camera.yaw = 0.0;
-    camera.pitch = 0.0;
+    let camera = FpsCamera {
+        position: Vec3::ZERO,
+        yaw: 0.0,
+        pitch: 0.0,
+        ..Default::default()
+    };
     let uniforms = camera.view_proj(1.0);
     let vp = Mat4::from_cols_array_2d(&uniforms.view_proj);
     let planes = extract_frustum_planes(&vp);

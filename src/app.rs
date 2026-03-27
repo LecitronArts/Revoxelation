@@ -42,6 +42,7 @@ pub struct App {
     /// D-08: Flag indicating swapchain recreation is needed before next acquire.
     pub needs_resize: bool,
     /// Current window extent (updated on Resized events).
+    #[allow(dead_code)]
     pub window_extent: vk::Extent2D,
     /// GPU performance counters for the HUD overlay.
     pub perf_counters: GpuPerfCounters,
@@ -161,16 +162,12 @@ pub fn run() -> Result<()> {
             Event::WindowEvent { window_id, event } if window_id == window.id() => match event {
                 WindowEvent::CloseRequested => elwt.exit(),
                 // D-08: Handle window Resized — store new extent, flag for recreation.
-                WindowEvent::Resized(new_size) => {
-                    app.window_extent = vk::Extent2D {
-                        width: new_size.width,
-                        height: new_size.height,
-                    };
+                WindowEvent::Resized(_new_size) => {
                     app.needs_resize = true;
                     log::info!(
                         "Window Resized to {}x{} — flagged for swapchain recreation",
-                        new_size.width,
-                        new_size.height,
+                        _new_size.width,
+                        _new_size.height,
                     );
                 }
                 WindowEvent::KeyboardInput {
@@ -212,7 +209,6 @@ pub fn run() -> Result<()> {
                             return;
                         }
                         app.needs_resize = false;
-                        app.window_extent = new_extent;
                     }
 
                     // Delta time for smooth movement.

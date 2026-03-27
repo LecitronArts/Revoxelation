@@ -28,6 +28,12 @@ pub struct ShaderHotReload {
     compiler: Option<shaderc::Compiler>,
 }
 
+impl Default for ShaderHotReload {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShaderHotReload {
     /// Create a new hot-reload tracker for all known shader source files.
     pub fn new() -> Self {

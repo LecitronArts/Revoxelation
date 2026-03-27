@@ -28,6 +28,7 @@ impl WorldBoundaryRegistry {
 // ---------------------------------------------------------------------------
 
 /// Boundary-registered stub for the streaming world update system.
+#[allow(dead_code)]
 pub struct WorldStreamingSystem;
 
 impl DomainSystem for WorldStreamingSystem {
@@ -36,6 +37,7 @@ impl DomainSystem for WorldStreamingSystem {
 }
 
 /// Register all world streaming systems into `reg`.
+#[allow(dead_code)]
 pub fn register_streaming_systems(
     reg: &mut WorldBoundaryRegistry,
 ) -> Result<(), RegistrationError> {

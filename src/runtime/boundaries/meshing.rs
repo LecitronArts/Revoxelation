@@ -28,6 +28,7 @@ impl MeshingBoundaryRegistry {
 // ---------------------------------------------------------------------------
 
 /// Boundary-registered stub for the mesh synchronisation system.
+#[allow(dead_code)]
 pub struct MeshSyncSystem;
 
 impl DomainSystem for MeshSyncSystem {
@@ -36,6 +37,7 @@ impl DomainSystem for MeshSyncSystem {
 }
 
 /// Register all mesh sync systems into `reg`.
+#[allow(dead_code)]
 pub fn register_mesh_sync_systems(
     reg: &mut MeshingBoundaryRegistry,
 ) -> Result<(), RegistrationError> {

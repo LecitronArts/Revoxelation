@@ -201,8 +201,7 @@ fn phase5_block_material_ssbo_8_types() {
     assert_eq!(entries[0].side_texture, 0);
     assert_eq!(entries[0].bottom_texture, 0);
     // Non-air blocks should have non-zero texture indices.
-    for i in 1..=8 {
-        let m = &entries[i];
+    for (i, m) in entries.iter().enumerate().take(9).skip(1) {
         assert!(
             m.top_texture != 0 || m.side_texture != 0 || m.bottom_texture != 0,
             "Block {i} must have at least one non-zero texture index"

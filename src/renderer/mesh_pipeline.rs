@@ -137,6 +137,7 @@ impl ChunkMeshPipeline {
     /// Uses `vkCmdDrawIndexedIndirectCount` (Vulkan 1.2 core) so the GPU cull shader
     /// determines the actual draw count. `max_draw_count` is the pool capacity and
     /// `draw_count_buffer` holds the GPU-written visible-chunk count (D-06, D-09).
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
         renderer: &Renderer,
