@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 05.1-critical-bug-fixes-and-safety-hardening
 status: executing
-last_updated: "2026-03-27T10:26:16.693Z"
+last_updated: "2026-03-27T10:30:51.000Z"
 progress:
   total_phases: 13
   completed_phases: 6
   total_plans: 34
-  completed_plans: 32
+  completed_plans: 33
 ---
 
 # Session State
@@ -22,7 +22,13 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 05.1-critical-bug-fixes-and-safety-hardening
-**Status:** Complete — Phase 05.1 finished (4/4 plans done)
+**Status:** Executing — Plan 05.1-05 done (5/6 plans), next: 05.1-06
+
+## Key Decisions (Phase 05.1 Plan 05)
+
+- On staging Err, push failed delta back to front of VecDeque and return Ok (partial success)
+- log::warn with deferred count and error message for diagnosability
+- No separate retry counter — deferred deltas retry naturally next frame via existing VecDeque
 
 ## Key Decisions (Phase 05.1 Plan 04)
 
@@ -110,4 +116,5 @@ See: .planning/PROJECT.md
 - 2026-03-27: Executed 05.1-02 — egui scratch buffer per-frame ring (FIX-02)
 - 2026-03-27: Executed 05.1-01 — Hi-Z pyramid resize recreation (FIX-01)
 - 2026-03-27: Executed 05.1-03 — Camera passthrough + bounds check + live SseConfig (FIX-03, FIX-04)
-- 2026-03-27: Executed 05.1-04 — Safety docs, bytemuck cast, Drop logging (FIX-05, FIX-06, FIX-09) — Phase 05.1 COMPLETE
+- 2026-03-27: Executed 05.1-04 — Safety docs, bytemuck cast, Drop logging (FIX-05, FIX-06, FIX-09)
+- 2026-03-27: Executed 05.1-05 — Staging ring graceful exhaustion (FIX-07)

@@ -154,9 +154,9 @@ Plans:
 Plans:
 - [x] 05.1-01: Hi-Z pyramid resize recreation (CRITICAL — FIX-01).
 - [x] 05.1-02: egui scratch buffer per-frame ring (HIGH — FIX-02).
-- [ ] 05.1-03: Camera position passthrough + bounds checks (MEDIUM — FIX-03, FIX-04).
-- [ ] 05.1-04: Safety documentation + unsafe cleanup (MEDIUM — FIX-05, FIX-06, FIX-09).
-- [ ] 05.1-05: Staging ring graceful degradation (MEDIUM — FIX-07).
+- [x] 05.1-03: Camera position passthrough + bounds checks (MEDIUM — FIX-03, FIX-04).
+- [x] 05.1-04: Safety documentation + unsafe cleanup (MEDIUM — FIX-05, FIX-06, FIX-09).
+- [x] 05.1-05: Staging ring graceful degradation (MEDIUM — FIX-07).
 - [ ] 05.1-06: Clippy cleanup (LOW — FIX-08).
 
 ### Phase 6: Meshlet Pipeline
@@ -264,7 +264,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 7 -> 8 
 | 3. Greedy Meshing and Render Delta Sync | 7/7 | Complete | 2026-03-22 |
 | 4. Rendering Foundation Overhaul | 7/7 | Complete | 2026-03-25 |
 | 5. Bindless Architecture and GPU Scene | 5/5 | Complete | 2026-03-26 |
-| 05.1. Critical Bug Fixes and Safety Hardening | 2/6 | In Progress | - |
+| 05.1. Critical Bug Fixes and Safety Hardening | 5/6 | In Progress | - |
 | 6. Meshlet Pipeline | 0/5 | Not started | - |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |
