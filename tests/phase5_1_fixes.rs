@@ -218,6 +218,49 @@ fn drop_impl_logs_errors() {
     );
 }
 
+/// FIX-07: Staging ring exhaustion during record_uploads must be handled
+/// gracefully — remaining deltas deferred to next frame instead of failing
+/// the entire frame.
+#[test]
+fn staging_exhaustion_graceful() {
+    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("failed to read src/renderer/chunk_pool.rs");
+
+    // Find the record_uploads function body.
+    let fn_start = source
+        .find("fn record_uploads")
+        .expect("record_uploads function not found in chunk_pool.rs");
+    let body = &source[fn_start..];
+    // Approximate end of function: next `pub fn` or `fn` at method indent level.
+    let fn_end = body[1..]
+        .find("\n    fn ")
+        .or_else(|| body[1..].find("\n    pub fn "))
+        .map(|i| i + 1)
+        .unwrap_or(body.len());
+    let fn_body = &body[..fn_end];
+
+    // record_uploads must handle staging errors gracefully, not propagate them with `?`.
+    // It should contain: error handling (Err), warning logging, and deferral of remaining deltas.
+    let has_err_handling = fn_body.contains("Err(") || fn_body.contains("Err(_");
+    let has_warn_log = fn_body.contains("log::warn") || fn_body.contains("warn!");
+    let has_defer = fn_body.contains("push_front")
+        || fn_body.contains("defer")
+        || fn_body.contains("remaining");
+
+    assert!(
+        has_err_handling,
+        "record_uploads must handle Err from staging allocation (not just propagate with `?`) (FIX-07)"
+    );
+    assert!(
+        has_warn_log,
+        "record_uploads must log a warning when staging ring is exhausted (FIX-07)"
+    );
+    assert!(
+        has_defer,
+        "record_uploads must defer remaining deltas to next frame on staging exhaustion (FIX-07)"
+    );
+}
+
 /// FIX-02: egui scratch buffers must use a per-frame ring (array of Vecs)
 /// instead of a single Vec, so buffers from frame N are not freed until
 /// frame N+2's fence has been waited on.
