@@ -401,6 +401,30 @@ pub fn recreate_swapchain_context(
     renderer.swapchain_ctx.depth_image_view = depth_image_view;
     renderer.swapchain_ctx.depth_allocation = Some(depth_allocation);
 
+    // 12. Recreate Hi-Z pyramid for the new swapchain dimensions (FIX-01).
+    // Sequence per D-04: take → destroy old → create new → re-register bindless → store.
+    if let Some(old_hiz) = renderer.hiz_pyramid.take() {
+        old_hiz.destroy(renderer);
+        let new_hiz = super::hiz::HiZPyramid::new(renderer, extent.width, extent.height)?;
+        // Re-register the new Hi-Z full_view + sampler at bindless binding 7.
+        if let Some(bindless) = &renderer.bindless {
+            bindless.register_image(
+                &renderer.device_ctx.device,
+                7,
+                new_hiz.full_view,
+                new_hiz.sampler,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+        }
+        log::info!(
+            "Hi-Z pyramid recreated: {}x{} ({} mips)",
+            extent.width,
+            extent.height,
+            super::hiz::hiz_mip_count(extent.width, extent.height),
+        );
+        renderer.hiz_pyramid = Some(new_hiz);
+    }
+
     log::info!(
         "Swapchain recreated: {}x{}",
         extent.width,
