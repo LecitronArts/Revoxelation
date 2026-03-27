@@ -53,6 +53,15 @@ layout(std430, set = 0, binding = 13) buffer VisibleMeshletBuffer {
     uint visible_meshlets[];
 } visible_out;
 
+// binding 14: meshlet indirect draw commands (write)
+// Each visible meshlet gets one DrawIndexedIndirectCommand (5 x uint32 = 20 bytes).
+layout(std430, set = 0, binding = 14) buffer MeshletIndirectBuffer {
+    // Packed as 5 consecutive uint32 per command:
+    //   [0] indexCount, [1] instanceCount, [2] firstIndex,
+    //   [3] vertexOffset, [4] firstInstance
+    uint commands[];
+} indirect_out;
+
 // binding 15: meshlet count (read+write) — single u32
 layout(std430, set = 0, binding = 15) buffer MeshletCountBuffer {
     uint meshlet_count;
@@ -232,6 +241,20 @@ void main() {
     global_offset = subgroupBroadcastFirst(global_offset);
 
     if (visible) {
-        visible_out.visible_meshlets[global_offset + local_offset] = meshlet_id;
+        uint write_idx = global_offset + local_offset;
+        visible_out.visible_meshlets[write_idx] = meshlet_id;
+
+        // Emit DrawIndexedIndirectCommand (D-04):
+        //   indexCount    = triangle_count * 3
+        //   instanceCount = 1
+        //   firstIndex    = triangle_offset (into global triangle index buffer bound as IB)
+        //   vertexOffset  = vertex_offset (into global vertex buffer bound as VB)
+        //   firstInstance = 0 (gl_DrawID auto-provided via VK_KHR_shader_draw_parameters)
+        uint cmd_base = write_idx * 5u;
+        indirect_out.commands[cmd_base + 0] = m.triangle_count * 3u;  // indexCount
+        indirect_out.commands[cmd_base + 1] = 1u;                     // instanceCount
+        indirect_out.commands[cmd_base + 2] = m.triangle_offset;      // firstIndex
+        indirect_out.commands[cmd_base + 3] = m.vertex_offset;        // vertexOffset (as int32, but unsigned is fine for positive offsets)
+        indirect_out.commands[cmd_base + 4] = 0u;                     // firstInstance
     }
 }
