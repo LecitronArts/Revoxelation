@@ -11,14 +11,13 @@ pub fn validate(command: &RuntimeCommand) -> Result<(), RejectionReason> {
                 ));
             }
 
-            if let PlayerAction::StartMining { position } = player_action.action {
-                if !(0..=511).contains(&position.y) {
+            if let PlayerAction::StartMining { position } = player_action.action
+                && !(0..=511).contains(&position.y) {
                     return Err(RejectionReason::new(
                         "block_position_out_of_scope",
                         "player action target y must remain within [0, 511]",
                     ));
                 }
-            }
 
             Ok(())
         }
@@ -57,14 +56,13 @@ pub fn validate(command: &RuntimeCommand) -> Result<(), RejectionReason> {
                 ));
             }
 
-            if let BlockEditOperation::Place { block_id } = &block_edit.edit {
-                if block_id.trim().is_empty() {
+            if let BlockEditOperation::Place { block_id } = &block_edit.edit
+                && block_id.trim().is_empty() {
                     return Err(RejectionReason::new(
                         "empty_block_id",
                         "block edit place commands require a non-empty block id",
                     ));
                 }
-            }
 
             Ok(())
         }

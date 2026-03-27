@@ -64,6 +64,12 @@ pub struct StreamingState {
     pub pending_render_deltas: std::collections::VecDeque<RenderDelta>,
 }
 
+impl Default for StreamingState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamingState {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
@@ -109,7 +115,7 @@ pub struct FrameExecution {
 pub fn run_frame(
     streaming: &mut StreamingState,
     meshing: &mut MeshingState,
-    renderer: Option<&mut crate::renderer::Renderer>,
+    _renderer: Option<&mut crate::renderer::Renderer>,
     frame_index: u64,
     camera_pos: [f32; 3],
     screen_height: f32,
@@ -166,7 +172,7 @@ pub fn run_frame(
 // ---------------------------------------------------------------------------
 
 fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32; 3]) {
-    if frame_index < 10 || (frame_index % 60 == 0) {
+    if frame_index < 10 || frame_index.is_multiple_of(60) {
         eprintln!(
             "[DIAG-WU] frame={} octree_nodes={} active_set_size={}",
             frame_index,
@@ -190,7 +196,7 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
         },
     );
 
-    if frame_index < 10 || (frame_index % 60 == 0) {
+    if frame_index < 10 || frame_index.is_multiple_of(60) {
         eprintln!(
             "[DIAG-WU] frame={} to_activate={} to_deactivate={}",
             frame_index, diff.to_activate.len(), diff.to_deactivate.len(),
@@ -230,11 +236,10 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
     for task in &tasks {
         let key = task.key;
         let entry_state = ss.state_store.get(&key).map(|e| e.state);
-        if entry_state == Some(ChunkState::Queued) {
-            if let Err(e) = ss.state_store.transition_to(key, ChunkState::Loading) {
+        if entry_state == Some(ChunkState::Queued)
+            && let Err(e) = ss.state_store.transition_to(key, ChunkState::Loading) {
                 warn!("chunk {key:?} transition to Loading failed: {e}");
             }
-        }
     }
 
     // Now borrow pool and spawn.
@@ -271,7 +276,7 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
 
     let dirty_batch = {
         let batch = meshing.take_dirty_batch(PER_FRAME_CAP);
-        if frame_index < 10 || (frame_index % 60 == 0) {
+        if frame_index < 10 || frame_index.is_multiple_of(60) {
             eprintln!(
                 "[DIAG-MS] frame={} results_received={} dirty_batch_size={} queued_remaining={} pending_render_deltas={}",
                 frame_index, recv_count, batch.len(),

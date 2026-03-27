@@ -55,7 +55,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         // D-05: Check if ChunkPool needs capacity growth (after fence wait, before recording).
         // Growth is rare (2× doubling) and uses a one-shot command buffer with fence wait.
         {
-            let needs = renderer.chunk_pool.as_ref().map_or(false, |cp| cp.needs_grow());
+            let needs = renderer.chunk_pool.as_ref().is_some_and(|cp| cp.needs_grow());
             if needs {
                 // Temporarily take chunk_pool and bindless to satisfy borrow checker.
                 let mut chunk_pool = renderer.chunk_pool.take().unwrap();
@@ -375,7 +375,9 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                     .swapchains(&swapchains)
                     .image_indices(&image_indices),
             );
-        let needs_recreate = match present_result {
+        
+
+        match present_result {
             Ok(false) => false, // success, not suboptimal
             Ok(true) => {
                 // SUBOPTIMAL — present succeeded but swapchain should be recreated.
@@ -389,9 +391,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             Err(e) => {
                 return Err(anyhow::anyhow!("failed to present Vulkan swapchain image: {e}"));
             }
-        };
-
-        needs_recreate
+        }
     };
 
     // Advance staging ring to next frame's region for the next submit.

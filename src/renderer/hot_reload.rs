@@ -33,11 +33,10 @@ impl ShaderHotReload {
     pub fn new() -> Self {
         let mut mod_times = HashMap::new();
         for path in super::shader_source_files() {
-            if let Ok(metadata) = fs::metadata(path) {
-                if let Ok(modified) = metadata.modified() {
+            if let Ok(metadata) = fs::metadata(path)
+                && let Ok(modified) = metadata.modified() {
                     mod_times.insert(path.to_string(), modified);
                 }
-            }
         }
         Self {
             mod_times,
@@ -51,7 +50,7 @@ impl ShaderHotReload {
     /// Returns `Ok(true)` if any shader was reloaded, `Ok(false)` otherwise.
     pub fn check_and_reload(&mut self, renderer: &mut Renderer) -> Result<bool> {
         self.frame_counter += 1;
-        if self.frame_counter % CHECK_INTERVAL != 0 {
+        if !self.frame_counter.is_multiple_of(CHECK_INTERVAL) {
             return Ok(false);
         }
 
@@ -65,7 +64,7 @@ impl ShaderHotReload {
                 continue;
             };
             let prev = self.mod_times.get(*path_str);
-            if prev.map_or(true, |prev_time| modified > *prev_time) {
+            if prev.is_none_or(|prev_time| modified > *prev_time) {
                 changed_shaders.push(path_str.to_string());
                 self.mod_times.insert(path_str.to_string(), modified);
             }
@@ -139,7 +138,9 @@ impl ShaderHotReload {
             .unwrap_or_default()
             .to_string_lossy();
 
-        let rebuild_result = if file_name.starts_with("chunk_mesh") {
+        
+
+        if file_name.starts_with("chunk_mesh") {
             self.rebuild_mesh_pipeline(device, cache_handle, renderer, new_module, &file_name)
         } else if file_name.starts_with("chunk_cull") {
             self.rebuild_cull_pipeline(device, cache_handle, renderer, new_module)
@@ -148,9 +149,7 @@ impl ShaderHotReload {
             unsafe { device.destroy_shader_module(new_module, None); }
             log::info!("Shader hot-reload: no pipeline rebuild for {}", shader_path);
             Ok(())
-        };
-
-        rebuild_result
+        }
     }
 
     fn rebuild_mesh_pipeline(

@@ -202,7 +202,7 @@ fn drop_impl_logs_errors() {
     // Count occurrences of `let _ =` in the drop function.
     let let_underscore_count = drop_body
         .lines()
-        .take_while(|line| {
+        .take_while(|_line| {
             // Rough heuristic: stop at end of impl block (closing brace at column 0)
             // We'll scan until we see enough context.
             true

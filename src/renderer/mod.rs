@@ -188,27 +188,23 @@ impl Drop for Renderer {
                 log::warn!("failed to wait for device idle during cleanup: {e}");
             }
 
-            if let Some(egui_backend) = self.egui_backend.take() {
-                if let Err(e) = egui_backend.destroy(self) {
+            if let Some(egui_backend) = self.egui_backend.take()
+                && let Err(e) = egui_backend.destroy(self) {
                     log::warn!("failed to cleanup egui backend: {e}");
                 }
-            }
 
             // Clean up texture array before bindless table.
-            if let Some(texture_array) = self.texture_array.take() {
-                if let Err(e) = texture_array.destroy(self) {
+            if let Some(texture_array) = self.texture_array.take()
+                && let Err(e) = texture_array.destroy(self) {
                     log::warn!("failed to cleanup texture array: {e}");
                 }
-            }
 
             // Clean up material buffer before bindless table.
-            if let Some(alloc) = self.material_allocation.take() {
-                if let Some(buf) = self.material_buffer.take() {
-                    if let Err(e) = destroy_allocated_buffer(self, buf, alloc) {
+            if let Some(alloc) = self.material_allocation.take()
+                && let Some(buf) = self.material_buffer.take()
+                    && let Err(e) = destroy_allocated_buffer(self, buf, alloc) {
                         log::warn!("failed to free material buffer: {e}");
                     }
-                }
-            }
 
             // Save and destroy pipeline cache before pipelines are torn down.
             if let Some(pipeline_cache) = self.pipeline_cache.take() {
@@ -218,17 +214,15 @@ impl Drop for Renderer {
                 pipeline_cache.destroy(&self.device_ctx.device);
             }
 
-            if let Some(staging_ring) = self.staging_ring.take() {
-                if let Err(e) = staging_ring.destroy(self) {
+            if let Some(staging_ring) = self.staging_ring.take()
+                && let Err(e) = staging_ring.destroy(self) {
                     log::warn!("failed to cleanup staging ring: {e}");
                 }
-            }
 
-            if let Some(chunk_pool) = self.chunk_pool.take() {
-                if let Err(e) = chunk_pool.destroy(self) {
+            if let Some(chunk_pool) = self.chunk_pool.take()
+                && let Err(e) = chunk_pool.destroy(self) {
                     log::warn!("failed to cleanup chunk pool: {e}");
                 }
-            }
 
             if let Some(mesh_pipeline) = self.mesh_pipeline.take() {
                 mesh_pipeline.destroy(self);
@@ -266,11 +260,10 @@ impl Drop for Renderer {
             self.device_ctx
                 .device
                 .destroy_image_view(self.swapchain_ctx.depth_image_view, None);
-            if let Some(alloc) = self.swapchain_ctx.depth_allocation.take() {
-                if let Err(e) = self.allocator.free(alloc) {
+            if let Some(alloc) = self.swapchain_ctx.depth_allocation.take()
+                && let Err(e) = self.allocator.free(alloc) {
                     log::warn!("failed to free depth allocation: {e}");
                 }
-            }
             self.device_ctx
                 .device
                 .destroy_image(self.swapchain_ctx.depth_image, None);
@@ -308,11 +301,10 @@ impl Drop for Renderer {
                 self.surface = vk::SurfaceKHR::null();
             }
 
-            if let Some(debug_messenger) = self.debug_messenger.take() {
-                if let Some(debug_utils_loader) = &self.debug_utils_loader {
+            if let Some(debug_messenger) = self.debug_messenger.take()
+                && let Some(debug_utils_loader) = &self.debug_utils_loader {
                     debug_utils_loader.destroy_debug_utils_messenger(debug_messenger, None);
                 }
-            }
 
             self.instance.destroy_instance(None);
         }

@@ -49,7 +49,7 @@ impl ChunkCullPipeline {
     /// Create the cull pipeline. Uses the shared bindless descriptor set layout
     /// from BindlessTable instead of creating its own descriptor infrastructure.
     pub fn new(renderer: &mut Renderer, bindless_layout: vk::DescriptorSetLayout) -> Result<Self> {
-        let device = &renderer.device_ctx.device;
+        let _device = &renderer.device_ctx.device;
 
         // Create frustum planes buffer (96 bytes, CpuToGpu for easy per-frame update)
         let (frustum_planes_buffer, frustum_planes_allocation) = create_allocated_buffer(
@@ -249,7 +249,7 @@ impl ChunkCullPipeline {
                 self.pipeline_layout,
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                &pc_bytes,            );
+                pc_bytes,            );
 
             // Dispatch ceil(active_draw_count / 64) workgroups.
             let group_count = active_draw_count.div_ceil(WORKGROUP_SIZE);

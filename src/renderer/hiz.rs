@@ -17,7 +17,7 @@ pub fn hiz_mip_count(width: u32, height: u32) -> u32 {
         return 1;
     }
     // floor(log2(max_dim)) + 1
-    (u32::BITS - max_dim.leading_zeros())
+    u32::BITS - max_dim.leading_zeros() 
 }
 
 /// Hi-Z depth pyramid — R32_SFLOAT image with a full mip chain for GPU occlusion culling.
@@ -471,11 +471,7 @@ impl HiZPyramid {
             .subresource_range(
                 vk::ImageSubresourceRange::default()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_mip_level(if self.mip_count > 1 {
-                        (self.mip_count - 1)
-                    } else {
-                        0
-                    })
+                    .base_mip_level(self.mip_count.saturating_sub(1))
                     .level_count(1)
                     .layer_count(1),
             );

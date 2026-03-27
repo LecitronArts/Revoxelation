@@ -35,7 +35,6 @@ pub fn resolve_debug_instance_config(
         .any(|name| name == VALIDATION_LAYER_NAME);
     if !validation_layer_enabled {
         eprintln!(
-            "{}",
             "VK_LAYER_KHRONOS_validation not available; continuing without validation layer."
         );
     }
@@ -46,7 +45,6 @@ pub fn resolve_debug_instance_config(
             .any(|name| name == DEBUG_UTILS_EXTENSION_NAME);
     if validation_layer_enabled && !debug_utils_enabled {
         eprintln!(
-            "{}",
             "VK_EXT_debug_utils not available; continuing without Vulkan debug messenger."
         );
     }

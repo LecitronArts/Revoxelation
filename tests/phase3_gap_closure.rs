@@ -6,7 +6,6 @@
 
 use std::{sync::mpsc, time::Duration};
 
-use ash::vk;
 use revoxelation::{
     meshing::{
         ChunkNeighborSet, GreedyQuad, MeshDirtyRecord, PackedMesh, PackedVertex,
@@ -17,7 +16,6 @@ use revoxelation::{
         instance::{
             DEBUG_UTILS_EXTENSION_NAME, VALIDATION_LAYER_NAME, resolve_debug_instance_config,
         },
-        mesh_pipeline,
         spirv::decode_spirv_words,
     },
     streaming::{

@@ -100,7 +100,7 @@ impl ChunkStateStore {
         key: ChunkKey,
         to: ChunkState,
     ) -> Result<&ChunkEntry, TransitionError> {
-        let entry = self.entries.get_mut(&key).ok_or_else(|| TransitionError {
+        let entry = self.entries.get_mut(&key).ok_or(TransitionError {
             key,
             from: ChunkState::Inactive, // best-effort for unknown keys
             to,

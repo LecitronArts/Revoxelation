@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use ash::vk;
 
 pub fn decode_spirv_words(bytes: &[u8]) -> Result<Vec<u32>> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err(anyhow!("SPIR-V byte length must be a multiple of 4"));
     }
 
