@@ -268,3 +268,25 @@ fn phase6_subgroup_feature_check() {
         "device.rs must check for SUBGROUP_FEATURE_BALLOT_BIT"
     );
 }
+
+// ============================================================================
+// Plan 06-03 Task 3 — MeshletPipeline trait + ComputeIndirectPath
+// ============================================================================
+
+#[test]
+fn phase6_meshlet_pipeline_trait_exists() {
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        source.contains("MeshletPipeline"),
+        "mesh_pipeline.rs must contain MeshletPipeline trait"
+    );
+    assert!(
+        source.contains("record_draw"),
+        "mesh_pipeline.rs must contain record_draw method"
+    );
+    assert!(
+        source.contains("ComputeIndirectPath"),
+        "mesh_pipeline.rs must contain ComputeIndirectPath struct"
+    );
+}

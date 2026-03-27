@@ -90,6 +90,10 @@ pub struct Renderer {
     pub texture_array: Option<texture_array::TextureArray>,
     pub material_buffer: Option<vk::Buffer>,
     pub material_allocation: Option<gpu_allocator::vulkan::Allocation>,
+    /// Meshlet draw pipeline (ComputeIndirectPath) — MSHL-03.
+    pub meshlet_pipeline: Option<mesh_pipeline::ComputeIndirectPath>,
+    /// Runtime toggle: use meshlet rendering (true, default) or legacy per-chunk path (false).
+    pub use_meshlet_rendering: bool,
 }
 
 impl Renderer {
@@ -192,6 +196,8 @@ impl Renderer {
             texture_array: None,
             material_buffer: None,
             material_allocation: None,
+            meshlet_pipeline: None,
+            use_meshlet_rendering: true,
         })
     }
 }
@@ -246,6 +252,10 @@ impl Drop for Renderer {
 
             if let Some(mesh_pipeline) = self.mesh_pipeline.take() {
                 mesh_pipeline.destroy(self);
+            }
+
+            if let Some(meshlet_pipeline) = self.meshlet_pipeline.take() {
+                meshlet_pipeline.destroy(self);
             }
 
             if let Some(hiz_pyramid) = self.hiz_pyramid.take() {
