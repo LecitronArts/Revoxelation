@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 05-bindless-architecture-and-gpu-scene
-status: planning
-last_updated: "2026-03-26T05:22:55.529Z"
+current_phase: 05.1-critical-bug-fixes-and-safety-hardening
+status: executing
+last_updated: "2026-03-27T10:07:52Z"
 progress:
   total_phases: 12
   completed_phases: 6
-  total_plans: 28
-  completed_plans: 28
+  total_plans: 34
+  completed_plans: 30
 ---
 
 # Session State
@@ -21,8 +21,14 @@ See: .planning/PROJECT.md
 ## Position
 
 **Milestone:** v1.0 milestone
-**Current phase:** 05-bindless-architecture-and-gpu-scene
-**Status:** Ready to plan
+**Current phase:** 05.1-critical-bug-fixes-and-safety-hardening
+**Status:** Executing (plan 02 complete, 4 remaining)
+
+## Key Decisions (Phase 05.1 Plan 02)
+
+- scratch_buffers: [Vec<(vk::Buffer, Allocation)>; 2] — per-frame ring indexed by current_frame
+- free_stale_scratch(current_frame) drains current slot (safe after fence wait)
+- paint() accepts current_frame to select correct ring slot
 
 ## Key Decisions (Phase 5 Plan 05)
 
@@ -68,6 +74,11 @@ See: .planning/PROJECT.md
 - GPU frustum + Hi-Z occlusion culling
 - Pipeline cache, perf counters, shader hot-reload, runtime config
 
+## Accumulated Context
+
+### Roadmap Evolution
+- Phase 05.1 inserted after Phase 5: Critical Bug Fixes and Safety Hardening (URGENT)
+
 ## Session Log
 
 - 2026-03-22: Executed 03-07 — gap closure complete
@@ -78,3 +89,4 @@ See: .planning/PROJECT.md
 - 2026-03-26: Executed 05-04 — BlockMaterial, texture array, shader sampling (BIND-04)
 - 2026-03-26: Executed 05-03 — Unified scene_buffer, GpuChunkInstance, 6→3 buffers (BIND-03)
 - 2026-03-26: Executed 05-05 — Dynamic capacity, IndirectCount draw (BIND-05) — Phase 5 COMPLETE
+- 2026-03-27: Executed 05.1-02 — egui scratch buffer per-frame ring (FIX-02)
