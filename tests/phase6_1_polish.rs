@@ -1,7 +1,10 @@
-//! Source-grep tests for Phase 06.1 Plan 01 — 4 CRIT Vulkan correctness fixes.
+//! Source-grep tests for Phase 06.1 — Vulkan correctness fixes, streaming
+//! state management, and rendering polish.
 //!
-//! These tests read source files and verify that the expected patterns
-//! exist (or don't exist) after applying the CRIT fixes.
+//! Plan 01 tests: CRIT Vulkan bugs (depth store_op, scene grow, push constants, Hi-Z).
+//! Plan 02 tests: MeshletPool reclamation, SSE world-coords, deactivation state handling,
+//!                state store remove, cancel flag cleanup, dirty map cleanup, eviction
+//!                comparison, real SSE enqueue, dirty HashSet dedup, mesh sync limit.
 
 /// CRIT-01: Depth attachment store_op must be STORE (not DONT_CARE)
 /// so the Hi-Z pyramid generator can read valid depth data.
@@ -140,5 +143,190 @@ fn phase6_1_hiz_pass0() {
     assert!(
         shader_src.contains("copy_mode"),
         "hiz_generate.comp should have a copy_mode push constant for 1:1 pass 0"
+    );
+}
+
+// ===========================================================================
+// Plan 02 tests — MeshletPool reclamation + streaming state fixes
+// ===========================================================================
+
+/// CRIT-04: MeshletPool::record_remove must decrement active_meshlet_count
+/// by the removed range's meshlet count (not just remove from HashMap).
+#[test]
+fn phase6_1_meshlet_pool_remove() {
+    let src = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("should read chunk_pool.rs");
+
+    // Find record_remove in MeshletPool (not ChunkPool).
+    let meshlet_pool_start = src
+        .find("impl MeshletPool")
+        .expect("MeshletPool impl must exist");
+    let meshlet_body = &src[meshlet_pool_start..];
+    let remove_start = meshlet_body
+        .find("fn record_remove")
+        .expect("MeshletPool::record_remove must exist");
+    let remove_body = &meshlet_body[remove_start..];
+
+    // Must decrement active_meshlet_count.
+    assert!(
+        remove_body.contains("active_meshlet_count") && remove_body.contains("-="),
+        "record_remove must decrement active_meshlet_count"
+    );
+
+    // Must track freed ranges for reuse.
+    assert!(
+        src.contains("free_ranges"),
+        "MeshletPool should have a free_ranges field for reclaiming space"
+    );
+}
+
+/// CRIT-05: SSE distance calculation must convert chunk key to world-space
+/// coordinates using CHUNK_EDGE and BLOCK_SIZE (or lod_scale).
+#[test]
+fn phase6_1_sse_world_coords() {
+    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("should read scheduler.rs");
+
+    // The SSE distance calculation must reference CHUNK_EDGE and some form
+    // of block size or lod_scale for world-space conversion.
+    assert!(
+        src.contains("CHUNK_EDGE") && (src.contains("BLOCK_SIZE") || src.contains("lod_scale") || src.contains("chunk_world")),
+        "SSE distance must use CHUNK_EDGE and block/lod scale for world-space conversion"
+    );
+}
+
+/// CRIT-06: deactivate_chunk must handle Queued state → Inactive transition.
+#[test]
+fn phase6_1_deactivate_queued() {
+    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("should read scheduler.rs");
+
+    // Find deactivate_chunk function.
+    let fn_start = src
+        .find("fn deactivate_chunk")
+        .expect("deactivate_chunk must exist");
+    let fn_body = &src[fn_start..];
+
+    // Must explicitly handle Queued state.
+    assert!(
+        fn_body.contains("Queued") && fn_body.contains("Inactive"),
+        "deactivate_chunk must handle Queued → Inactive transition"
+    );
+}
+
+/// HIGH-03: ChunkStateStore must have a remove() method.
+#[test]
+fn phase6_1_state_store_remove() {
+    let src = std::fs::read_to_string("src/streaming/state_store.rs")
+        .expect("should read state_store.rs");
+
+    assert!(
+        src.contains("fn remove"),
+        "ChunkStateStore must have a remove() method"
+    );
+}
+
+/// HIGH-04: cancel_flags must be removed for Queued deactivations.
+#[test]
+fn phase6_1_cancel_flag_cleanup() {
+    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("should read scheduler.rs");
+
+    // Find deactivate_chunk function.
+    let fn_start = src
+        .find("fn deactivate_chunk")
+        .expect("deactivate_chunk must exist");
+    let fn_body = &src[fn_start..];
+
+    // Must call cancel_flags.remove in deactivate_chunk.
+    assert!(
+        fn_body.contains("cancel_flags.remove"),
+        "deactivate_chunk must call cancel_flags.remove for cleanup"
+    );
+}
+
+/// HIGH-05: Dirty mesh records with absent payload must be removed from dirty map.
+#[test]
+fn phase6_1_dirty_cleanup() {
+    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("should read scheduler.rs");
+
+    // Find run_mesh_sync function.
+    let fn_start = src
+        .find("fn run_mesh_sync")
+        .expect("run_mesh_sync must exist");
+    let fn_body = &src[fn_start..];
+
+    // When payload is None, must remove from dirty map (not just continue/skip).
+    assert!(
+        fn_body.contains("dirty.remove") || fn_body.contains("remove_absent") || fn_body.contains("dirty_map.remove"),
+        "run_mesh_sync must remove dirty entries when payload is absent"
+    );
+}
+
+/// HIGH-06: Job queue eviction must compare new task SSE vs evicted task SSE.
+#[test]
+fn phase6_1_eviction_comparison() {
+    let src = std::fs::read_to_string("src/streaming/job_queue.rs")
+        .expect("should read job_queue.rs");
+
+    // Find enqueue function.
+    let fn_start = src.find("fn enqueue").expect("enqueue must exist");
+    let fn_body = &src[fn_start..];
+
+    // Must compare SSE of new task vs evicted task (reject if lower).
+    assert!(
+        fn_body.contains("sse_bits") && (fn_body.contains("reject") || fn_body.contains("<=") || fn_body.contains("<")),
+        "enqueue must compare new task SSE against evicted task SSE"
+    );
+}
+
+/// MED-06: PrioritizedTask must use real SSE at enqueue time (not placeholder 1.0).
+#[test]
+fn phase6_1_real_sse_enqueue() {
+    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("should read scheduler.rs");
+
+    // Find run_world_update function.
+    let fn_start = src
+        .find("fn run_world_update")
+        .expect("run_world_update must exist");
+    let fn_body = &src[fn_start..];
+
+    // Must NOT have placeholder `sse: 1.0` or `sse_bits: 1.0f32.to_bits()`.
+    assert!(
+        !fn_body.contains("1.0f32.to_bits()"),
+        "run_world_update must not use placeholder SSE 1.0 at enqueue time"
+    );
+}
+
+/// MED-07: InvalidationTracker (MeshingState) should use HashSet for O(1) dirty dedup.
+#[test]
+fn phase6_1_dirty_hashset() {
+    let src = std::fs::read_to_string("src/meshing/invalidation.rs")
+        .expect("should read invalidation.rs");
+
+    assert!(
+        src.contains("HashSet"),
+        "invalidation.rs must use HashSet for O(1) dirty dedup"
+    );
+}
+
+/// MED-08: run_mesh_sync must limit job results processed per frame.
+#[test]
+fn phase6_1_mesh_sync_limit() {
+    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("should read scheduler.rs");
+
+    // Find run_mesh_sync function.
+    let fn_start = src
+        .find("fn run_mesh_sync")
+        .expect("run_mesh_sync must exist");
+    let fn_body = &src[fn_start..];
+
+    // Must have a per-frame results cap (max_results, recv_count limit, etc.).
+    assert!(
+        fn_body.contains("max_results") || fn_body.contains("MAX_RESULTS") || fn_body.contains("recv_cap"),
+        "run_mesh_sync must have a per-frame result processing limit"
     );
 }
