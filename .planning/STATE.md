@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06.1-rendering-polish
 status: in_progress
-last_updated: "2026-03-28T05:04:49.000Z"
+last_updated: "2026-03-28T05:20:43.000Z"
 progress:
   total_phases: 14
   completed_phases: 8
   total_plans: 47
-  completed_plans: 40
+  completed_plans: 41
 ---
 
 # Session State
@@ -22,7 +22,17 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 06.1-rendering-polish
-**Status:** In progress — Plan 01 complete (4 CRIT fixes). 7 plans remaining.
+**Status:** In progress — Plan 02 complete (CRIT-04~06, HIGH-03~06, MED-06~08). 6 plans remaining.
+
+## Key Decisions (Phase 06.1 Plan 02)
+
+- MeshletRange struct (6 fields) replaces (u32, u32) tuple for GPU buffer range tracking + free-list reuse
+- BLOCK_SIZE=1/16m constant in scheduler.rs; world-space: key.x * CHUNK_EDGE * BLOCK_SIZE * lod_scale + half_edge
+- Queued deactivation: direct Queued→Inactive + state_store.remove + cancel_flags.remove
+- Loading deactivation: set cancel flag → handle_job_result checks was_cancelled → Inactive
+- Job queue eviction: reject if new_task.sse_bits <= evicted.sse_bits
+- MAX_RESULTS_PER_FRAME=16 caps run_mesh_sync to prevent frame stalls
+- HashSet<ChunkKey> queued_set shadows VecDeque for O(1) membership checks
 
 ## Key Decisions (Phase 06.1 Plan 01)
 
@@ -89,3 +99,4 @@ See: .planning/PROJECT.md
 - 2026-03-28: Phase 06.1 inserted — Rendering Polish and Optimization (9 POLISH requirements, 4 plans)
 - 2026-03-28: Phase 06.1 expanded after deep code review — added 7 CRIT + 7 HIGH + 12 MED bugs + 8 REFAC items, total 8 plans
 - 2026-03-28: Executed 06.1-01 — 4 CRIT Vulkan bugs fixed (depth store_op, scene_buffer grow, push constants, Hi-Z pass 0)
+- 2026-03-28: Executed 06.1-02 — MeshletPool reclamation + streaming state fixes (CRIT-04~06, HIGH-03~06, MED-06~08)

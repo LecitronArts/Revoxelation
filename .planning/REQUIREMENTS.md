@@ -66,19 +66,19 @@
 - [x] **CRIT-01**: Depth attachment store_op changed from DONT_CARE to STORE — Hi-Z pyramid reads valid depth data on all GPU vendors.
 - [x] **CRIT-02**: scene_buffer grow copies data per-region with correct src/dst offsets — no rendering corruption after capacity growth.
 - [x] **CRIT-03**: Mesh shader push constants split into two calls matching pipeline layout ranges — no Vulkan spec violation.
-- [ ] **CRIT-04**: MeshletPool tracks removals and reclaims GPU buffer space — active counts decrement on chunk unload, no unbounded growth.
-- [ ] **CRIT-05**: SSE distance calculation uses world-space chunk coordinates (key × chunk_edge × lod_scale) — streaming loads correct chunks.
-- [ ] **CRIT-06**: deactivate_chunk handles Queued/Loading states — chunks transition to Inactive and can be re-activated.
+- [x] **CRIT-04**: MeshletPool tracks removals and reclaims GPU buffer space — active counts decrement on chunk unload, no unbounded growth.
+- [x] **CRIT-05**: SSE distance calculation uses world-space chunk coordinates (key × chunk_edge × lod_scale) — streaming loads correct chunks.
+- [x] **CRIT-06**: deactivate_chunk handles Queued/Loading states — chunks transition to Inactive and can be re-activated.
 - [x] **CRIT-07**: Hi-Z pass 0 correctly handles equal src/dst resolution — no incorrect 2×2 sampling of out-of-bounds texels.
 
 ### High-Priority Bug Fixes (Phase 06.1)
 
 - [ ] **HIGH-01**: egui descriptor set uses UPDATE_AFTER_BIND or per-frame sets — no use-after-free on font texture update.
 - [ ] **HIGH-02**: destroy_allocated_buffer/image destroys resource before freeing allocation — correct Vulkan destruction order.
-- [ ] **HIGH-03**: ChunkStateStore removes entries on Inactive transition — no unbounded HashMap growth during exploration.
-- [ ] **HIGH-04**: cancel_flags entries cleaned up on Queued deactivation — no Arc<AtomicBool> leaks.
-- [ ] **HIGH-05**: Dirty mesh records removed when payload absent — no unbounded dirty HashMap growth.
-- [ ] **HIGH-06**: Job queue eviction compares new task SSE against evicted — no incorrect eviction of higher-priority tasks.
+- [x] **HIGH-03**: ChunkStateStore removes entries on Inactive transition — no unbounded HashMap growth during exploration.
+- [x] **HIGH-04**: cancel_flags entries cleaned up on Queued deactivation — no Arc<AtomicBool> leaks.
+- [x] **HIGH-05**: Dirty mesh records removed when payload absent — no unbounded dirty HashMap growth.
+- [x] **HIGH-06**: Job queue eviction compares new task SSE against evicted — no incorrect eviction of higher-priority tasks.
 - [ ] **HIGH-07**: Bindless descriptor stageFlags include TASK_SHADER_BIT_EXT and MESH_SHADER_BIT_EXT — mesh shader path has valid descriptor access.
 
 ### Medium Bug Fixes and Hardening (Phase 06.1)
@@ -88,9 +88,9 @@
 - [ ] **MED-03**: transition_image_layout catch-all uses conservative access masks and logs warning — no silent zero-synchronization.
 - [ ] **MED-04**: StagingBuffer::write returns Result and fails on unmapped memory — no silent data loss.
 - [ ] **MED-05**: max_draw_count uses meshlet_pool capacity instead of hardcoded constant — correct after future grow.
-- [ ] **MED-06**: PrioritizedTask computes real SSE at enqueue time — job queue priority sorting is effective.
-- [ ] **MED-07**: Dirty queue uses HashSet for O(1) dedup instead of O(n) VecDeque scan.
-- [ ] **MED-08**: run_mesh_sync limits job results processed per frame — no frame stall on bulk completion.
+- [x] **MED-06**: PrioritizedTask computes real SSE at enqueue time — job queue priority sorting is effective.
+- [x] **MED-07**: Dirty queue uses HashSet for O(1) dedup instead of O(n) VecDeque scan.
+- [x] **MED-08**: run_mesh_sync limits job results processed per frame — no frame stall on bulk completion.
 - [ ] **MED-09**: cancel_flags use Acquire/Release ordering — correct cross-thread visibility on ARM.
 - [ ] **MED-10**: seed_input_commands placeholder removed or guarded by cfg(test) — no per-frame dummy events in production.
 - [ ] **MED-11**: eprintln! diagnostics replaced with log::debug! — respects log level configuration.
@@ -233,25 +233,25 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CRIT-01 | Phase 06.1 | Complete |
 | CRIT-02 | Phase 06.1 | Complete |
 | CRIT-03 | Phase 06.1 | Complete |
-| CRIT-04 | Phase 06.1 | Pending |
-| CRIT-05 | Phase 06.1 | Pending |
-| CRIT-06 | Phase 06.1 | Pending |
+| CRIT-04 | Phase 06.1 | Complete |
+| CRIT-05 | Phase 06.1 | Complete |
+| CRIT-06 | Phase 06.1 | Complete |
 | CRIT-07 | Phase 06.1 | Complete |
 | HIGH-01 | Phase 06.1 | Pending |
 | HIGH-02 | Phase 06.1 | Pending |
-| HIGH-03 | Phase 06.1 | Pending |
-| HIGH-04 | Phase 06.1 | Pending |
-| HIGH-05 | Phase 06.1 | Pending |
-| HIGH-06 | Phase 06.1 | Pending |
+| HIGH-03 | Phase 06.1 | Complete |
+| HIGH-04 | Phase 06.1 | Complete |
+| HIGH-05 | Phase 06.1 | Complete |
+| HIGH-06 | Phase 06.1 | Complete |
 | HIGH-07 | Phase 06.1 | Pending |
 | MED-01 | Phase 06.1 | Pending |
 | MED-02 | Phase 06.1 | Pending |
 | MED-03 | Phase 06.1 | Pending |
 | MED-04 | Phase 06.1 | Pending |
 | MED-05 | Phase 06.1 | Pending |
-| MED-06 | Phase 06.1 | Pending |
-| MED-07 | Phase 06.1 | Pending |
-| MED-08 | Phase 06.1 | Pending |
+| MED-06 | Phase 06.1 | Complete |
+| MED-07 | Phase 06.1 | Complete |
+| MED-08 | Phase 06.1 | Complete |
 | MED-09 | Phase 06.1 | Pending |
 | MED-10 | Phase 06.1 | Pending |
 | MED-11 | Phase 06.1 | Pending |
