@@ -300,13 +300,16 @@ pub struct MeshShaderPath {
 
 /// Combined push constant layout for MeshShaderPath.
 ///
-/// Bytes [0..32): MeshletCullPushConstants (used by task shader for culling).
-/// Bytes [32..112): CameraUniforms (used by mesh shader for vertex transform).
+/// Bytes [0..40): MeshletCullPushConstants (used by task shader for culling).
+/// Bytes [40..48): padding for mat4 alignment.
+/// Bytes [48..128): CameraUniforms (used by mesh shader for vertex transform).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MeshShaderPushConstants {
-    /// Task shader push constants (culling config, 32 bytes).
+    /// Task shader push constants (culling config, 40 bytes).
     pub cull: MeshletCullPushConstants,
+    /// Padding to align camera to 16-byte boundary (mat4 requires it).
+    pub _pad_align: [u32; 2],
     /// Mesh shader push constants (camera uniforms, 80 bytes).
     pub camera: CameraUniforms,
 }
@@ -314,8 +317,8 @@ pub struct MeshShaderPushConstants {
 impl MeshShaderPath {
     /// Create the mesh shader graphics pipeline (task + mesh + fragment stages).
     ///
-    /// Pipeline layout: shared bindless set 0 + extended push constants (112 bytes:
-    /// 32 bytes MeshletCullPushConstants for task shader + 80 bytes CameraUniforms for mesh shader).
+    /// Pipeline layout: shared bindless set 0 + extended push constants (128 bytes:
+    /// 40 bytes MeshletCullPushConstants for task shader + 8 bytes padding + 80 bytes CameraUniforms for mesh shader).
     /// No vertex input — mesh shader generates vertices from SSBOs.
     pub fn new(
         renderer: &Renderer,
@@ -324,9 +327,9 @@ impl MeshShaderPath {
     ) -> Result<Self> {
         let device = &renderer.device_ctx.device;
 
-        // Push constant range for combined task+mesh push constants (112 bytes).
-        // TASK_BIT_EXT for task shader (cull config at offset 0..32),
-        // MESH_BIT_EXT for mesh shader (camera uniforms at offset 32..112).
+        // Push constant range for combined task+mesh push constants (128 bytes).
+        // TASK_BIT_EXT for task shader (cull config at offset 0..40),
+        // MESH_BIT_EXT for mesh shader (camera uniforms at offset 48..128).
         let push_constant_ranges = [
             vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::TASK_EXT,
@@ -335,7 +338,7 @@ impl MeshShaderPath {
             },
             vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::MESH_EXT,
-                offset: std::mem::size_of::<MeshletCullPushConstants>() as u32,
+                offset: 48, // 40 bytes cull + 8 bytes padding for mat4 alignment
                 size: std::mem::size_of::<CameraUniforms>() as u32,
             },
         ];
@@ -505,9 +508,12 @@ impl MeshletPipeline for MeshShaderPath {
             enable_hiz: 1,
             camera_pos: camera.camera_pos,
             _pad: 0,
+            sse_threshold: 2.0,
+            screen_height: extent.height as f32,
         };
         let combined_pc = MeshShaderPushConstants {
             cull: cull_pc,
+            _pad_align: [0; 2],
             camera: *camera,
         };
 
@@ -516,13 +522,26 @@ impl MeshletPipeline for MeshShaderPath {
             device.cmd_set_viewport(cmd, 0, &[viewport]);
             device.cmd_set_scissor(cmd, 0, &[scissor]);
 
-            // Push combined constants (112 bytes).
+            // Push constants split into two calls to match pipeline layout ranges (CRIT-03).
+            // Range 1: TASK_EXT at offset 0, size 40 (MeshletCullPushConstants).
+            // Range 2: MESH_EXT at offset 48, size 80 (CameraUniforms).
+            // A single push covering [0..128) would span the gap at [40..48),
+            // violating the Vulkan spec requirement that push constant data must
+            // exactly match a declared range.
+            let combined_bytes = bytemuck::bytes_of(&combined_pc);
             device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::TASK_EXT | vk::ShaderStageFlags::MESH_EXT,
+                vk::ShaderStageFlags::TASK_EXT,
                 0,
-                bytemuck::bytes_of(&combined_pc),
+                &combined_bytes[0..40],
+            );
+            device.cmd_push_constants(
+                cmd,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::MESH_EXT,
+                48,
+                &combined_bytes[48..128],
             );
 
             // Bind the shared bindless descriptor set 0.
