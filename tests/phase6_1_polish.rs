@@ -677,6 +677,106 @@ fn phase6_1_msaa_enabled() {
     );
 }
 
+// ===========================================================================
+// Plan 07 tests — Camera smoothing, chunk fade-in, octree fix, dead code
+// ===========================================================================
+
+/// POLISH-09: Camera must have move_speed and mouse_sensitivity configurable fields,
+/// and use delta_time for frame-rate-independent movement.
+#[test]
+fn phase6_1_camera_smoothing() {
+    let src = std::fs::read_to_string("src/renderer/camera.rs")
+        .expect("should read camera.rs");
+
+    assert!(
+        src.contains("move_speed"),
+        "camera.rs must have a move_speed field"
+    );
+    assert!(
+        src.contains("mouse_sensitivity"),
+        "camera.rs must have a mouse_sensitivity field"
+    );
+    assert!(
+        src.contains("delta_time") || src.contains("dt: f32"),
+        "camera.rs must use delta_time for frame-rate-independent movement"
+    );
+}
+
+/// POLISH-08: GpuChunkInstance must have spawn_time field for chunk fade-in transition.
+#[test]
+fn phase6_1_chunk_fade_in() {
+    let src = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("should read chunk_pool.rs");
+
+    let struct_start = src
+        .find("struct GpuChunkInstance")
+        .expect("GpuChunkInstance struct must exist");
+    let struct_body = &src[struct_start..struct_start + 600.min(src.len() - struct_start)];
+
+    assert!(
+        struct_body.contains("spawn_time") || struct_body.contains("fade_alpha"),
+        "GpuChunkInstance must have spawn_time or fade_alpha field"
+    );
+}
+
+/// POLISH-08: Fragment shader must apply chunk fade-in alpha.
+#[test]
+fn phase6_1_shader_fade() {
+    let src = std::fs::read_to_string("shaders/meshlet_draw.frag")
+        .expect("should read meshlet_draw.frag");
+
+    assert!(
+        src.contains("fade") || src.contains("spawn_time"),
+        "meshlet_draw.frag must contain fade/spawn_time for chunk fade-in"
+    );
+}
+
+/// MED-12: Octree parent mapping must skip out-of-range coordinates instead of clamping.
+#[test]
+fn phase6_1_octree_skip_link() {
+    let src = std::fs::read_to_string("src/streaming/octree.rs")
+        .expect("should read octree.rs");
+
+    let build_start = src
+        .find("fn build")
+        .expect("build function must exist");
+    let build_body = &src[build_start..];
+
+    // Must NOT clamp parent coordinates — should skip instead.
+    assert!(
+        !build_body.contains("px.clamp(") && !build_body.contains("py.clamp(")
+            && !build_body.contains("pz.clamp("),
+        "octree parent coords must not use .clamp — should skip out-of-range coordinates"
+    );
+}
+
+/// REFAC-06: hecs dependency must be removed from Cargo.toml.
+#[test]
+fn phase6_1_no_hecs() {
+    let src = std::fs::read_to_string("Cargo.toml")
+        .expect("should read Cargo.toml");
+
+    for line in src.lines() {
+        assert!(
+            !line.contains("hecs"),
+            "Cargo.toml must not contain hecs dependency, found: '{}'",
+            line.trim()
+        );
+    }
+}
+
+/// REFAC-07: ChunkDrawMetadata dead code must be removed.
+#[test]
+fn phase6_1_dead_code_removed() {
+    let src = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("should read chunk_pool.rs");
+
+    assert!(
+        !src.contains("ChunkDrawMetadata"),
+        "chunk_pool.rs must not contain ChunkDrawMetadata (dead legacy struct)"
+    );
+}
+
 /// POLISH-02: Sampler must have anisotropy_enable set to true.
 #[test]
 fn phase6_1_aniso_sampler() {
