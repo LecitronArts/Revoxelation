@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Bindless Architecture and GPU Scene** - Vulkan 1.2 descriptor indexing (hard requirement, no fallback), unified GPU scene buffer, block material/texture system.
 - [x] **Phase 05.1: Critical Bug Fixes and Safety Hardening** (INSERTED) - Fix critical GPU resource bugs (Hi-Z resize, egui UAF), harden safety (bounds checks, unsafe docs, safe casts), improve robustness (staging exhaustion, camera passthrough, clippy cleanup).
 - [x] **Phase 6: Meshlet Pipeline** - Meshlet generation, per-meshlet GPU culling, software mesh shader emulation, optional VK_EXT_mesh_shader hardware path.
-- [ ] **Phase 06.1: Rendering Polish, Bug Fixes, and Architecture Refactoring** (INSERTED) - Fix all critical/high/medium bugs, refactor God Objects, harden error handling, improve visual quality, smooth runtime behavior.
+- [x] **Phase 06.1: Rendering Polish, Bug Fixes, and Architecture Refactoring** (INSERTED) - Fix all critical/high/medium bugs, refactor God Objects, harden error handling, improve visual quality, smooth runtime behavior.
 - [ ] **Phase 7: Lighting and Shadows** - Directional PBR lighting, cascaded shadow maps, SSAO, voxel AO, sky/atmosphere with day-night cycle.
 - [ ] **Phase 8: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
 - [ ] **Phase 9: Authoritative Block Editing Feedback** - Apply block edits authoritatively and reflect them visually near-immediately.
@@ -209,7 +209,7 @@ Plans:
 - [x] 06.1-05: Texture quality + anti-aliasing (POLISH-02, POLISH-03).
 - [x] 06.1-06: Error handling hardening + GPU readback counters (POLISH-05, POLISH-06, MED-10~11).
 - [x] 06.1-07: Camera smoothing + chunk fade-in + dead code cleanup (POLISH-08, POLISH-09, MED-12, REFAC-06~07).
-- [ ] 06.1-08: Architecture refactoring (REFAC-01~05, REFAC-08).
+- [x] 06.1-08: Architecture refactoring (REFAC-01~05, REFAC-08).
 
 ### Phase 7: Lighting and Shadows
 **Goal**: Establish a complete real-time lighting system with directional PBR, cascaded shadow maps, SSAO, voxel AO, and sky/atmosphere rendering with day-night cycle. Transform the visual quality from flat-colored blocks to a scene with depth and atmosphere.
@@ -299,7 +299,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 06.1 ->
 | 5. Bindless Architecture and GPU Scene | 5/5 | Complete | 2026-03-26 |
 | 05.1. Critical Bug Fixes and Safety Hardening | 6/6 | Complete | 2026-03-27 |
 | 6. Meshlet Pipeline | 5/5 | Complete | 2026-03-28 |
-| 06.1. Rendering Polish, Bug Fixes, Refactoring | 7/8 | In Progress | - |
+| 06.1. Rendering Polish, Bug Fixes, Refactoring | 8/8 | Complete | 2026-03-28 |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |
 | 9. Authoritative Block Editing Feedback | 0/2 | Not started | - |

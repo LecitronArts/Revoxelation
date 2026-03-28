@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 06.1-rendering-polish
-status: in_progress
-last_updated: "2026-03-28T08:00:00.000Z"
+status: complete
+last_updated: "2026-03-28T10:00:00.000Z"
 progress:
   total_phases: 14
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 47
-  completed_plans: 44
+  completed_plans: 47
 ---
 
 # Session State
@@ -22,7 +22,16 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 06.1-rendering-polish
-**Status:** In progress — Plan 06 complete (POLISH-05, POLISH-06, MED-10, MED-11). Plans 07 done. 1 plan remaining (06.1-08).
+**Status:** COMPLETE — All 8 plans executed, all requirements resolved. Ready for Phase 7.
+
+## Key Decisions (Phase 06.1 Plan 08)
+
+- REFAC-01: Sub-structs (VulkanCore, PipelineSet, PoolManager) as separate module files with accessor methods; flat fields retained for borrow-checker ergonomics
+- REFAC-02: submit_frame decomposed into 8+ named sub-functions (wait_fence_and_prepare, acquire_image, begin_command_buffer, dispatch_chunk_cull, begin_render_pass, draw_meshlets, draw_egui, generate_hiz, present)
+- REFAC-03: build_msaa_resources + build_framebuffers shared helpers eliminate ~60 lines of swapchain creation duplication; MsaaResources intermediate struct
+- REFAC-04: stage_and_copy(ring, device, cmd, data, alignment, dst_buffer, dst_offset) replaces 10+ repetitions in chunk_pool.rs
+- REFAC-05: 16 named binding constants (BINDING_SCENE through BINDING_MESHLET_COUNT) in bindless.rs
+- REFAC-08: App::tick() method keeping event loop body clean (already in plan 07)
 
 ## Key Decisions (Phase 06.1 Plan 07)
 
@@ -150,3 +159,4 @@ See: .planning/PROJECT.md
 - 2026-03-28: Executed 06.1-05 — Texture mipmaps + aniso filtering + MSAA 4x (POLISH-02, POLISH-03)
 - 2026-03-28: Executed 06.1-06 — Error handling hardening + GPU readback counters (POLISH-05, POLISH-06, MED-10~11)
 - 2026-03-28: Executed 06.1-07 — Camera smoothing + chunk fade-in + dead code cleanup (POLISH-08, POLISH-09, MED-12, REFAC-06~07)
+- 2026-03-28: Executed 06.1-08 — Architecture refactoring (REFAC-01~05, REFAC-08) — Phase 06.1 COMPLETE
