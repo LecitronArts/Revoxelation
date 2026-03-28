@@ -281,7 +281,7 @@ impl ChunkCullPipeline {
 // MeshletCullPipeline — per-meshlet GPU culling (MSHL-02, D-10)
 // ============================================================================
 
-/// Push constants for meshlet_cull.comp (32 bytes, D-02 extended D-12).
+/// Push constants for meshlet_cull.comp (40 bytes, D-02 extended D-12, MSHL-05).
 ///
 /// Layout matches the GLSL `PushConstants` struct in meshlet_cull.comp.
 #[repr(C)]
@@ -293,6 +293,8 @@ pub struct MeshletCullPushConstants {
     pub enable_hiz: u32,        // 0 or 1
     pub camera_pos: [f32; 3],   // world-space camera position
     pub _pad: u32,
+    pub sse_threshold: f32,     // SSE threshold in pixels (default 2.0)
+    pub screen_height: f32,     // screen height in pixels for SSE projection
 }
 
 /// Per-meshlet GPU culling compute pipeline (meshlet_cull.comp).

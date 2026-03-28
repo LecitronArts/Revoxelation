@@ -3,6 +3,7 @@ use ash::vk;
 
 use super::{Renderer, chunk_pool::ChunkPool, spirv::create_shader_module};
 use super::camera::CameraUniforms;
+use super::swapchain::MSAA_SAMPLES;
 use super::chunk_pool::MeshletPool;
 use super::cull_pipeline::MeshletCullPushConstants;
 
@@ -131,7 +132,7 @@ impl ComputeIndirectPath {
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::CLOCKWISE);
         let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+            .rasterization_samples(MSAA_SAMPLES);
         let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
             .blend_enable(false)
             .color_write_mask(vk::ColorComponentFlags::RGBA)];
@@ -400,7 +401,7 @@ impl MeshShaderPath {
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::CLOCKWISE);
         let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+            .rasterization_samples(MSAA_SAMPLES);
         let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
             .blend_enable(false)
             .color_write_mask(vk::ColorComponentFlags::RGBA)];
@@ -673,7 +674,7 @@ impl ChunkMeshPipeline {
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::CLOCKWISE);
         let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+            .rasterization_samples(MSAA_SAMPLES);
         let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
             .blend_enable(false)
             .color_write_mask(vk::ColorComponentFlags::RGBA)];

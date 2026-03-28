@@ -98,6 +98,8 @@ pub struct Renderer {
     pub use_mesh_shader_path: bool,
     /// Runtime toggle: use meshlet rendering (true, default) or legacy per-chunk path (false).
     pub use_meshlet_rendering: bool,
+    /// SSE threshold in pixels for LOD selection (MSHL-05). Default 2.0.
+    pub sse_threshold: f32,
 }
 
 impl Renderer {
@@ -203,6 +205,7 @@ impl Renderer {
             meshlet_pipeline: None,
             use_mesh_shader_path: false,
             use_meshlet_rendering: true,
+            sse_threshold: 2.0,
         })
     }
 }
@@ -306,6 +309,30 @@ impl Drop for Renderer {
             self.device_ctx
                 .device
                 .destroy_image(self.swapchain_ctx.depth_image, None);
+
+            // Destroy MSAA color image.
+            self.device_ctx
+                .device
+                .destroy_image_view(self.swapchain_ctx.msaa_color_view, None);
+            if let Some(alloc) = self.swapchain_ctx.msaa_color_allocation.take()
+                && let Err(e) = self.allocator.free(alloc) {
+                    log::warn!("failed to free MSAA color allocation: {e}");
+                }
+            self.device_ctx
+                .device
+                .destroy_image(self.swapchain_ctx.msaa_color_image, None);
+
+            // Destroy MSAA depth image.
+            self.device_ctx
+                .device
+                .destroy_image_view(self.swapchain_ctx.msaa_depth_view, None);
+            if let Some(alloc) = self.swapchain_ctx.msaa_depth_allocation.take()
+                && let Err(e) = self.allocator.free(alloc) {
+                    log::warn!("failed to free MSAA depth allocation: {e}");
+                }
+            self.device_ctx
+                .device
+                .destroy_image(self.swapchain_ctx.msaa_depth_image, None);
 
             if self.swapchain_ctx.render_pass != vk::RenderPass::null() {
                 self.device_ctx

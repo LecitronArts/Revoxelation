@@ -216,7 +216,7 @@ impl EguiAshBackend {
             .front_face(vk::FrontFace::CLOCKWISE);
 
         let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+            .rasterization_samples(super::swapchain::MSAA_SAMPLES);
 
         // Pre-multiplied alpha blending.
         let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()

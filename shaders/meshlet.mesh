@@ -1,49 +1,25 @@
 #version 460
 #extension GL_EXT_mesh_shader : require
+#extension GL_GOOGLE_include_directive : enable
+
+#include "common.glsl"
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
 // -----------------------------------------------------------------------
-// Per-vertex outputs — must match meshlet_draw.frag
+// Per-vertex outputs -- must match meshlet_draw.frag
 // -----------------------------------------------------------------------
 layout(location = 0) flat out uint v_block_id[];
 layout(location = 1) out vec3 v_face_normal[];
 layout(location = 2) out vec2 v_uv[];
-
-// -----------------------------------------------------------------------
-// GpuMeshlet (64 bytes)
-// -----------------------------------------------------------------------
-struct GpuMeshlet {
-    vec3 center;
-    float radius;
-    vec3 cone_axis;
-    float cone_cutoff;
-    uint vertex_offset;
-    uint triangle_offset;
-    uint vertex_count;
-    uint triangle_count;
-    uint chunk_slot;
-    uint lod_level;
-    uint pad0;
-    uint pad1;
-};
-
-// GpuChunkInstance (48 bytes, matches Rust #[repr(C)] layout)
-struct GpuChunkInstance {
-    vec3 aabb_min;
-    uint material_id;
-    vec3 aabb_max;
-    uint lod_level;
-    vec3 chunk_origin;
-    float chunk_scale;
-};
+layout(location = 3) flat out float v_lod_transition[];
 
 // -----------------------------------------------------------------------
 // SSBO bindings (shared bindless set 0)
 // -----------------------------------------------------------------------
 
-// binding 0: scene buffer — GpuChunkInstance[]
+// binding 0: scene buffer -- GpuChunkInstance[]
 layout(std430, set = 0, binding = 0) readonly buffer SceneBuffer {
     GpuChunkInstance instances[];
 } scene_data;
@@ -53,28 +29,28 @@ layout(std430, set = 0, binding = 10) readonly buffer MeshletMetaBuffer {
     uint data[];
 } meshlet_meta;
 
-// binding 11: meshlet vertex buffer — PackedVertex (uvec2)
+// binding 11: meshlet vertex buffer -- PackedVertex (uvec2)
 layout(std430, set = 0, binding = 11) readonly buffer MeshletVertexBuffer {
     uvec2 vertices[];
 } vertex_buf;
 
-// binding 12: meshlet triangle index buffer — u32 (widened from u8)
+// binding 12: meshlet triangle index buffer -- u32 (widened from u8)
 layout(std430, set = 0, binding = 12) readonly buffer MeshletTriBuffer {
     uint indices[];
 } tri_buf;
 
 // -----------------------------------------------------------------------
-// Push constants — camera uniforms at offset 32 (after task shader's 32-byte cull config)
-// Combined layout: [0..32) = MeshletCullPushConstants (task), [32..112) = CameraUniforms (mesh)
+// Push constants -- camera uniforms at offset 48 (after task shader's 40-byte cull config + 8B pad)
+// Combined layout: [0..40) = MeshletCullPushConstants (task), [40..48) = pad, [48..128) = CameraUniforms (mesh)
 // -----------------------------------------------------------------------
-layout(push_constant) uniform CameraUniforms {
-    layout(offset = 32) mat4 view_proj;
+layout(push_constant) uniform MeshCameraUniforms {
+    layout(offset = 48) mat4 view_proj;
     vec3 camera_pos;
     float _pad;
 } camera;
 
 // -----------------------------------------------------------------------
-// Task payload — received from task shader
+// Task payload -- received from task shader
 // -----------------------------------------------------------------------
 struct TaskPayload {
     uint meshlet_ids[32];
@@ -83,10 +59,8 @@ struct TaskPayload {
 taskPayloadSharedEXT TaskPayload payload;
 
 // -----------------------------------------------------------------------
-// GpuMeshlet loader — reads from raw uint array
+// GpuMeshlet loader -- reads from raw uint array
 // -----------------------------------------------------------------------
-const uint MESHLET_UINT32S = 16u; // 64 bytes / 4
-
 GpuMeshlet load_meshlet(uint meshlet_id) {
     uint base = meshlet_id * MESHLET_UINT32S;
     GpuMeshlet m;
@@ -108,28 +82,9 @@ GpuMeshlet load_meshlet(uint meshlet_id) {
     m.triangle_count   = meshlet_meta.data[base + 11];
     m.chunk_slot       = meshlet_meta.data[base + 12];
     m.lod_level        = meshlet_meta.data[base + 13];
-    m.pad0             = meshlet_meta.data[base + 14];
-    m.pad1             = meshlet_meta.data[base + 15];
+    m.parent_error     = uintBitsToFloat(meshlet_meta.data[base + 14]);
+    m.group_id         = meshlet_meta.data[base + 15];
     return m;
-}
-
-// -----------------------------------------------------------------------
-// Vertex decoding — identical to meshlet_draw.vert
-// -----------------------------------------------------------------------
-vec3 decode_position(uint word0) {
-    uint x = word0 & 0x7Fu;
-    uint y = (word0 >> 7) & 0x7Fu;
-    uint z = (word0 >> 14) & 0x7Fu;
-    return vec3(x, y, z);
-}
-
-vec3 face_normal_from_index(uint fi) {
-    if (fi == 0u) return vec3( 1.0, 0.0, 0.0);
-    if (fi == 1u) return vec3(-1.0, 0.0, 0.0);
-    if (fi == 2u) return vec3( 0.0, 1.0, 0.0);
-    if (fi == 3u) return vec3( 0.0,-1.0, 0.0);
-    if (fi == 4u) return vec3( 0.0, 0.0, 1.0);
-    return            vec3( 0.0, 0.0,-1.0);
 }
 
 // -----------------------------------------------------------------------
@@ -180,6 +135,12 @@ void main() {
         float u = float((word1 >> 16) & 0xFFu);
         float v = float((word1 >> 24) & 0xFFu);
         v_uv[tid] = vec2(u, v);
+
+        // LOD transition factor for alpha dither (MSHL-05).
+        // Mesh shader does not have screen_height/sse_threshold in its push constants —
+        // use the task shader's culling to determine visibility. Set 0.0 (fully opaque)
+        // for mesh shader path since the task shader already culls by SSE.
+        v_lod_transition[tid] = 0.0;
     }
 
     // Each thread also processes triangle indices.

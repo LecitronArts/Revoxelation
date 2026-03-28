@@ -287,11 +287,26 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         }
 
         let clear_values = [
+            // Attachment 0: MSAA color
             vk::ClearValue {
                 color: vk::ClearColorValue {
                     float32: [0.1, 0.1, 0.15, 1.0],
                 },
             },
+            // Attachment 1: MSAA depth
+            vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            },
+            // Attachment 2: Resolve color (swapchain) — cleared by resolve
+            vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.0, 0.0, 0.0, 1.0],
+                },
+            },
+            // Attachment 3: Resolve depth — cleared by resolve
             vk::ClearValue {
                 depth_stencil: vk::ClearDepthStencilValue {
                     depth: 1.0,

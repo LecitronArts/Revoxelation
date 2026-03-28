@@ -9,6 +9,10 @@ use crate::renderer::device::DeviceContext;
 
 pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 
+/// MSAA sample count for anti-aliasing (POLISH-03).
+/// TYPE_4 provides good visual quality with reasonable performance cost.
+pub const MSAA_SAMPLES: vk::SampleCountFlags = vk::SampleCountFlags::TYPE_4;
+
 pub struct SwapchainContext {
     pub swapchain_loader: khr::swapchain::Device,
     pub swapchain: vk::SwapchainKHR,
@@ -18,9 +22,18 @@ pub struct SwapchainContext {
     pub extent: vk::Extent2D,
     pub render_pass: vk::RenderPass,
     pub framebuffers: Vec<vk::Framebuffer>,
+    /// Resolved single-sample depth image (used by Hi-Z pyramid).
     pub depth_image: vk::Image,
     pub depth_image_view: vk::ImageView,
     pub depth_allocation: Option<Allocation>,
+    /// MSAA color image (TYPE_4) — resolves to swapchain image during render pass.
+    pub msaa_color_image: vk::Image,
+    pub msaa_color_view: vk::ImageView,
+    pub msaa_color_allocation: Option<Allocation>,
+    /// MSAA depth image (TYPE_4) — resolves to depth_image during render pass.
+    pub msaa_depth_image: vk::Image,
+    pub msaa_depth_view: vk::ImageView,
+    pub msaa_depth_allocation: Option<Allocation>,
 }
 
 pub fn create_swapchain_context(
@@ -91,9 +104,41 @@ pub fn create_swapchain_context(
         .iter()
         .map(|image| create_image_view(&device_ctx.device, *image, surface_format.format))
         .collect::<Result<Vec<_>>>()?;
-    let render_pass = create_render_pass(&device_ctx.device, surface_format.format, DEPTH_FORMAT)?;
+    let render_pass = create_render_pass_msaa(&device_ctx.device, surface_format.format, DEPTH_FORMAT)?;
 
-    // Create depth image and view (shared across all framebuffers).
+    // Create MSAA color image (TYPE_4, same format as swapchain).
+    let (msaa_color_image, msaa_color_allocation) = create_msaa_image(
+        &device_ctx.device,
+        allocator,
+        extent,
+        surface_format.format,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+        "msaa-color",
+    )?;
+    let msaa_color_view = create_image_view_simple(
+        &device_ctx.device,
+        msaa_color_image,
+        surface_format.format,
+        vk::ImageAspectFlags::COLOR,
+    )?;
+
+    // Create MSAA depth image (TYPE_4).
+    let (msaa_depth_image, msaa_depth_allocation) = create_msaa_image(
+        &device_ctx.device,
+        allocator,
+        extent,
+        DEPTH_FORMAT,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+        "msaa-depth",
+    )?;
+    let msaa_depth_view = create_image_view_simple(
+        &device_ctx.device,
+        msaa_depth_image,
+        DEPTH_FORMAT,
+        vk::ImageAspectFlags::DEPTH,
+    )?;
+
+    // Create resolved single-sample depth image (for Hi-Z pyramid).
     let depth_image = unsafe {
         device_ctx
             .device
@@ -153,10 +198,29 @@ pub fn create_swapchain_context(
             .context("failed to create depth image view")?
     };
 
+    // Framebuffers: 4 attachments per MSAA render pass.
+    // [0] = MSAA color, [1] = MSAA depth, [2] = resolve color (swapchain), [3] = resolve depth
     let framebuffers = image_views
         .iter()
-        .map(|image_view| create_framebuffer(&device_ctx.device, render_pass, *image_view, depth_image_view, extent))
+        .map(|swapchain_view| {
+            create_framebuffer_msaa(
+                &device_ctx.device,
+                render_pass,
+                msaa_color_view,
+                msaa_depth_view,
+                *swapchain_view,
+                depth_image_view,
+                extent,
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
+
+    log::info!(
+        "Swapchain created with MSAA {}x: {}x{}",
+        msaa_sample_count(),
+        extent.width,
+        extent.height,
+    );
 
     Ok(SwapchainContext {
         swapchain_loader,
@@ -170,14 +234,20 @@ pub fn create_swapchain_context(
         depth_image,
         depth_image_view,
         depth_allocation: Some(depth_allocation),
+        msaa_color_image,
+        msaa_color_view,
+        msaa_color_allocation: Some(msaa_color_allocation),
+        msaa_depth_image,
+        msaa_depth_view,
+        msaa_depth_allocation: Some(msaa_depth_allocation),
     })
 }
 
-/// Recreate swapchain and all dependent resources (depth image, image views, framebuffers)
-/// after a window resize or Vulkan OUT_OF_DATE/SUBOPTIMAL error.
+/// Recreate swapchain and all dependent resources (depth image, MSAA images,
+/// image views, framebuffers) after a window resize or Vulkan OUT_OF_DATE/SUBOPTIMAL error.
 ///
-/// Per D-01: device_wait_idle → destroy framebuffers → destroy depth → destroy old image views
-/// → create new swapchain (with old_swapchain param) → destroy old swapchain → create new resources.
+/// Per D-01: device_wait_idle -> destroy framebuffers -> destroy depth -> destroy old image views
+/// -> create new swapchain (with old_swapchain param) -> destroy old swapchain -> create new resources.
 ///
 /// Per D-02/D-03: render pass and pipelines are NOT recreated.
 pub fn recreate_swapchain_context(
@@ -200,7 +270,28 @@ pub fn recreate_swapchain_context(
         }
     }
 
-    // 2. Destroy old depth image/view.
+    // 2. Destroy old MSAA images.
+    unsafe {
+        device.destroy_image_view(renderer.swapchain_ctx.msaa_color_view, None);
+    }
+    if let Some(alloc) = renderer.swapchain_ctx.msaa_color_allocation.take() {
+        let _ = renderer.allocator.free(alloc);
+    }
+    unsafe {
+        device.destroy_image(renderer.swapchain_ctx.msaa_color_image, None);
+    }
+
+    unsafe {
+        device.destroy_image_view(renderer.swapchain_ctx.msaa_depth_view, None);
+    }
+    if let Some(alloc) = renderer.swapchain_ctx.msaa_depth_allocation.take() {
+        let _ = renderer.allocator.free(alloc);
+    }
+    unsafe {
+        device.destroy_image(renderer.swapchain_ctx.msaa_depth_image, None);
+    }
+
+    // 3. Destroy old resolved depth image/view.
     unsafe {
         device.destroy_image_view(renderer.swapchain_ctx.depth_image_view, None);
     }
@@ -211,14 +302,14 @@ pub fn recreate_swapchain_context(
         device.destroy_image(renderer.swapchain_ctx.depth_image, None);
     }
 
-    // 3. Destroy old color image views.
+    // 4. Destroy old color image views.
     for image_view in renderer.swapchain_ctx.image_views.drain(..).rev() {
         unsafe {
             device.destroy_image_view(image_view, None);
         }
     }
 
-    // 4. Query new surface capabilities to pick correct extent.
+    // 5. Query new surface capabilities to pick correct extent.
     let capabilities = unsafe {
         renderer
             .surface_loader
@@ -257,7 +348,7 @@ pub fn recreate_swapchain_context(
         renderer.device_ctx.present_family,
     ];
 
-    // 5. Create new swapchain with old_swapchain for driver optimization.
+    // 6. Create new swapchain with old_swapchain for driver optimization.
     let old_swapchain = renderer.swapchain_ctx.swapchain;
     let mut create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(renderer.surface)
@@ -289,7 +380,7 @@ pub fn recreate_swapchain_context(
             .context("failed to create new swapchain during recreation")?
     };
 
-    // 6. Destroy old swapchain after new one is created.
+    // 7. Destroy old swapchain after new one is created.
     unsafe {
         renderer
             .swapchain_ctx
@@ -299,7 +390,7 @@ pub fn recreate_swapchain_context(
 
     renderer.swapchain_ctx.swapchain = new_swapchain;
 
-    // 7. Get new swapchain images.
+    // 8. Get new swapchain images.
     let images = unsafe {
         renderer
             .swapchain_ctx
@@ -308,13 +399,44 @@ pub fn recreate_swapchain_context(
             .context("failed to enumerate swapchain images during recreation")?
     };
 
-    // 8. Create new image views.
+    // 9. Create new image views.
     let image_views = images
         .iter()
         .map(|image| create_image_view(device, *image, surface_format.format))
         .collect::<Result<Vec<_>>>()?;
 
-    // 9. Create new depth image + view (reuse render pass — D-02).
+    // 10. Create new MSAA images.
+    let (msaa_color_image, msaa_color_allocation) = create_msaa_image(
+        device,
+        &mut renderer.allocator,
+        extent,
+        surface_format.format,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+        "msaa-color",
+    )?;
+    let msaa_color_view = create_image_view_simple(
+        device,
+        msaa_color_image,
+        surface_format.format,
+        vk::ImageAspectFlags::COLOR,
+    )?;
+
+    let (msaa_depth_image, msaa_depth_allocation) = create_msaa_image(
+        device,
+        &mut renderer.allocator,
+        extent,
+        DEPTH_FORMAT,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+        "msaa-depth",
+    )?;
+    let msaa_depth_view = create_image_view_simple(
+        device,
+        msaa_depth_image,
+        DEPTH_FORMAT,
+        vk::ImageAspectFlags::DEPTH,
+    )?;
+
+    // 11. Create new resolved depth image + view (reuse render pass -- D-02).
     let depth_image = unsafe {
         device
             .create_image(
@@ -377,21 +499,23 @@ pub fn recreate_swapchain_context(
             .context("failed to create depth image view during recreation")?
     };
 
-    // 10. Create new framebuffers.
+    // 12. Create new framebuffers.
     let framebuffers = image_views
         .iter()
-        .map(|image_view| {
-            create_framebuffer(
+        .map(|swapchain_view| {
+            create_framebuffer_msaa(
                 device,
                 renderer.swapchain_ctx.render_pass,
-                *image_view,
+                msaa_color_view,
+                msaa_depth_view,
+                *swapchain_view,
                 depth_image_view,
                 extent,
             )
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // 11. Update swapchain context fields in place.
+    // 13. Update swapchain context fields in place.
     renderer.swapchain_ctx.images = images;
     renderer.swapchain_ctx.image_views = image_views;
     renderer.swapchain_ctx.format = surface_format.format;
@@ -400,9 +524,15 @@ pub fn recreate_swapchain_context(
     renderer.swapchain_ctx.depth_image = depth_image;
     renderer.swapchain_ctx.depth_image_view = depth_image_view;
     renderer.swapchain_ctx.depth_allocation = Some(depth_allocation);
+    renderer.swapchain_ctx.msaa_color_image = msaa_color_image;
+    renderer.swapchain_ctx.msaa_color_view = msaa_color_view;
+    renderer.swapchain_ctx.msaa_color_allocation = Some(msaa_color_allocation);
+    renderer.swapchain_ctx.msaa_depth_image = msaa_depth_image;
+    renderer.swapchain_ctx.msaa_depth_view = msaa_depth_view;
+    renderer.swapchain_ctx.msaa_depth_allocation = Some(msaa_depth_allocation);
 
-    // 12. Recreate Hi-Z pyramid for the new swapchain dimensions (FIX-01).
-    // Sequence per D-04: take → destroy old → create new → re-register bindless → store.
+    // 14. Recreate Hi-Z pyramid for the new swapchain dimensions (FIX-01).
+    // Sequence per D-04: take -> destroy old -> create new -> re-register bindless -> store.
     if let Some(old_hiz) = renderer.hiz_pyramid.take() {
         old_hiz.destroy(renderer);
         let new_hiz = super::hiz::HiZPyramid::new(renderer, extent.width, extent.height)?;
@@ -426,9 +556,10 @@ pub fn recreate_swapchain_context(
     }
 
     log::info!(
-        "Swapchain recreated: {}x{}",
+        "Swapchain recreated with MSAA {}x: {}x{}",
+        msaa_sample_count(),
         extent.width,
-        extent.height
+        extent.height,
     );
 
     Ok(())
@@ -504,36 +635,181 @@ fn create_image_view(
     }
 }
 
-fn create_render_pass(device: &ash::Device, color_format: vk::Format, depth_format: vk::Format) -> Result<vk::RenderPass> {
+/// Create a simple image view with the given aspect mask.
+fn create_image_view_simple(
+    device: &ash::Device,
+    image: vk::Image,
+    format: vk::Format,
+    aspect: vk::ImageAspectFlags,
+) -> Result<vk::ImageView> {
+    let subresource_range = vk::ImageSubresourceRange::default()
+        .aspect_mask(aspect)
+        .level_count(1)
+        .layer_count(1);
+    let create_info = vk::ImageViewCreateInfo::default()
+        .image(image)
+        .view_type(vk::ImageViewType::TYPE_2D)
+        .format(format)
+        .subresource_range(subresource_range);
+
+    unsafe {
+        device
+            .create_image_view(&create_info, None)
+            .context("failed to create image view")
+    }
+}
+
+/// Create an MSAA image (TYPE_4 samples) with the given format and usage.
+fn create_msaa_image(
+    device: &ash::Device,
+    allocator: &mut Allocator,
+    extent: vk::Extent2D,
+    format: vk::Format,
+    usage: vk::ImageUsageFlags,
+    name: &'static str,
+) -> Result<(vk::Image, Allocation)> {
+    let image = unsafe {
+        device
+            .create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(format)
+                    .extent(vk::Extent3D {
+                        width: extent.width,
+                        height: extent.height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(MSAA_SAMPLES)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(usage)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+            .context("failed to create MSAA image")?
+    };
+
+    let requirements = unsafe { device.get_image_memory_requirements(image) };
+    let allocation = allocator
+        .allocate(&AllocationCreateDesc {
+            name,
+            requirements,
+            location: MemoryLocation::GpuOnly,
+            linear: false,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+        })
+        .map_err(|error| anyhow!("failed to allocate MSAA image memory: {error}"))?;
+
+    unsafe {
+        device
+            .bind_image_memory(image, allocation.memory(), allocation.offset())
+            .context("failed to bind MSAA image memory")?;
+    }
+
+    Ok((image, allocation))
+}
+
+/// Return the numeric sample count from MSAA_SAMPLES for logging.
+fn msaa_sample_count() -> u32 {
+    MSAA_SAMPLES.as_raw() as u32
+}
+
+/// Create an MSAA render pass using VkRenderPassCreateInfo2 (Vulkan 1.2 core).
+///
+/// POLISH-03: 4 attachments:
+///   0: MSAA color (TYPE_4, CLEAR, DONT_CARE, UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL)
+///   1: MSAA depth (TYPE_4, CLEAR, DONT_CARE, UNDEFINED -> DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+///   2: Resolve color = swapchain image (TYPE_1, DONT_CARE, STORE, UNDEFINED -> PRESENT_SRC_KHR)
+///   3: Resolve depth = depth_image (TYPE_1, DONT_CARE, STORE, UNDEFINED -> DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+///
+/// The subpass automatically resolves MSAA color -> swapchain and MSAA depth -> resolved depth
+/// (via VkSubpassDescriptionDepthStencilResolve with SAMPLE_ZERO mode).
+fn create_render_pass_msaa(
+    device: &ash::Device,
+    color_format: vk::Format,
+    depth_format: vk::Format,
+) -> Result<vk::RenderPass> {
     let attachments = [
-        vk::AttachmentDescription::default()
+        // Attachment 0: MSAA color
+        vk::AttachmentDescription2::default()
+            .format(color_format)
+            .samples(MSAA_SAMPLES)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL),
+        // Attachment 1: MSAA depth
+        vk::AttachmentDescription2::default()
+            .format(depth_format)
+            .samples(MSAA_SAMPLES)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
+        // Attachment 2: Resolve color (swapchain image)
+        vk::AttachmentDescription2::default()
             .format(color_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR),
-        vk::AttachmentDescription::default()
+        // Attachment 3: Resolve depth (single-sample depth for Hi-Z)
+        vk::AttachmentDescription2::default()
             .format(depth_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
     ];
-    let color_attachment_refs = [vk::AttachmentReference::default()
+
+    let color_attachment_refs = [vk::AttachmentReference2::default()
         .attachment(0)
-        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
-    let depth_attachment_ref = vk::AttachmentReference::default()
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .aspect_mask(vk::ImageAspectFlags::COLOR)];
+
+    let color_resolve_refs = [vk::AttachmentReference2::default()
+        .attachment(2)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .aspect_mask(vk::ImageAspectFlags::COLOR)];
+
+    let depth_attachment_ref = vk::AttachmentReference2::default()
         .attachment(1)
-        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-    let subpasses = [vk::SubpassDescription::default()
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .aspect_mask(vk::ImageAspectFlags::DEPTH);
+
+    // Depth resolve via VkSubpassDescriptionDepthStencilResolve (Vulkan 1.2 core).
+    // SAMPLE_ZERO is universally supported; MAX would be more conservative for Hi-Z
+    // but is not guaranteed on all devices.
+    let depth_resolve_ref = vk::AttachmentReference2::default()
+        .attachment(3)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .aspect_mask(vk::ImageAspectFlags::DEPTH);
+
+    let mut depth_resolve = vk::SubpassDescriptionDepthStencilResolve::default()
+        .depth_resolve_mode(vk::ResolveModeFlags::SAMPLE_ZERO)
+        .stencil_resolve_mode(vk::ResolveModeFlags::NONE)
+        .depth_stencil_resolve_attachment(&depth_resolve_ref);
+
+    let subpasses = [vk::SubpassDescription2::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(&color_attachment_refs)
-        .depth_stencil_attachment(&depth_attachment_ref)];
-    let dependencies = [vk::SubpassDependency::default()
+        .resolve_attachments(&color_resolve_refs)
+        .depth_stencil_attachment(&depth_attachment_ref)
+        .push_next(&mut depth_resolve)];
+
+    let dependencies = [vk::SubpassDependency2::default()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
         .src_stage_mask(
@@ -548,26 +824,30 @@ fn create_render_pass(device: &ash::Device, color_format: vk::Format, depth_form
             vk::AccessFlags::COLOR_ATTACHMENT_WRITE
                 | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
         )];
-    let create_info = vk::RenderPassCreateInfo::default()
+
+    let create_info = vk::RenderPassCreateInfo2::default()
         .attachments(&attachments)
         .subpasses(&subpasses)
         .dependencies(&dependencies);
 
     unsafe {
         device
-            .create_render_pass(&create_info, None)
-            .context("failed to create Vulkan render pass")
+            .create_render_pass2(&create_info, None)
+            .context("failed to create MSAA render pass")
     }
 }
 
-fn create_framebuffer(
+/// Create a framebuffer for the MSAA render pass (4 attachments).
+fn create_framebuffer_msaa(
     device: &ash::Device,
     render_pass: vk::RenderPass,
-    color_view: vk::ImageView,
-    depth_view: vk::ImageView,
+    msaa_color_view: vk::ImageView,
+    msaa_depth_view: vk::ImageView,
+    resolve_color_view: vk::ImageView,
+    resolve_depth_view: vk::ImageView,
     extent: vk::Extent2D,
 ) -> Result<vk::Framebuffer> {
-    let attachments = [color_view, depth_view];
+    let attachments = [msaa_color_view, msaa_depth_view, resolve_color_view, resolve_depth_view];
     let create_info = vk::FramebufferCreateInfo::default()
         .render_pass(render_pass)
         .attachments(&attachments)
@@ -578,6 +858,6 @@ fn create_framebuffer(
     unsafe {
         device
             .create_framebuffer(&create_info, None)
-            .context("failed to create Vulkan framebuffer")
+            .context("failed to create MSAA framebuffer")
     }
 }

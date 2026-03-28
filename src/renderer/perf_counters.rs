@@ -25,4 +25,11 @@ pub struct GpuPerfCounters {
     pub meshlet_cull_rate: f32,
     /// Total bytes used by meshlet SSBOs (meta + vertex + tri).
     pub meshlet_ssbo_bytes: u64,
+    // -- LOD statistics (MSHL-05) --
+    /// Number of LOD0 (original) meshlets in the active set.
+    pub lod0_meshlets: u32,
+    /// Number of LOD1 (simplified) meshlets in the active set.
+    pub lod1_meshlets: u32,
+    /// Current SSE threshold for LOD selection (pixels).
+    pub sse_threshold: f32,
 }

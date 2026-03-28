@@ -1,27 +1,15 @@
 #version 450
 #extension GL_ARB_shader_draw_parameters : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "common.glsl"
 
 layout(location = 0) in uvec2 in_packed;
 
 layout(location = 0) flat out uint v_block_id;
 layout(location = 1) out vec3 v_face_normal;
 layout(location = 2) out vec2 v_uv;
-
-// GpuChunkInstance (48 bytes, matches Rust #[repr(C)] layout):
-//   aabb_min:     vec3  (12 bytes)
-//   material_id:  uint  ( 4 bytes)
-//   aabb_max:     vec3  (12 bytes)
-//   lod_level:    uint  ( 4 bytes)
-//   chunk_origin: vec3  (12 bytes)
-//   chunk_scale:  float ( 4 bytes)
-struct GpuChunkInstance {
-    vec3 aabb_min;
-    uint material_id;
-    vec3 aabb_max;
-    uint lod_level;
-    vec3 chunk_origin;
-    float chunk_scale;
-};
+layout(location = 3) flat out float v_lod_transition;
 
 // Unified scene_buffer (D-07). Region 0 = GpuChunkInstance[capacity].
 layout(std430, set = 0, binding = 0) readonly buffer SceneBuffer {
@@ -38,34 +26,29 @@ layout(std430, set = 0, binding = 13) readonly buffer VisibleMeshletBuffer {
     uint visible_meshlets[];
 } visible_buf;
 
-layout(push_constant) uniform CameraUniforms {
+layout(push_constant) uniform PushConstants {
     mat4 view_proj;
     vec3 camera_pos;
-} camera;
+    float screen_height;  // POLISH-01: from push constant, not hardcoded
+    float sse_threshold;  // POLISH-01: from push constant, not hardcoded
+} pc;
 
 // GpuMeshlet loader — reads chunk_slot from raw uint array.
-const uint MESHLET_UINT32S = 16u; // 64 bytes / 4
-
 uint load_meshlet_chunk_slot(uint meshlet_id) {
     uint base = meshlet_id * MESHLET_UINT32S;
     return meshlet_meta.data[base + 12]; // chunk_slot is at offset 12
 }
 
-vec3 decode_position(uint word0) {
-    uint x = word0 & 0x7Fu;
-    uint y = (word0 >> 7) & 0x7Fu;
-    uint z = (word0 >> 14) & 0x7Fu;
-    return vec3(x, y, z);
+// Load parent_error (float at offset 14) for LOD transition.
+float load_meshlet_parent_error(uint meshlet_id) {
+    uint base = meshlet_id * MESHLET_UINT32S;
+    return uintBitsToFloat(meshlet_meta.data[base + 14]);
 }
 
-// face_index: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
-vec3 face_normal_from_index(uint fi) {
-    if (fi == 0u) return vec3( 1.0, 0.0, 0.0);
-    if (fi == 1u) return vec3(-1.0, 0.0, 0.0);
-    if (fi == 2u) return vec3( 0.0, 1.0, 0.0);
-    if (fi == 3u) return vec3( 0.0,-1.0, 0.0);
-    if (fi == 4u) return vec3( 0.0, 0.0, 1.0);
-    return            vec3( 0.0, 0.0,-1.0);
+// Load lod_level (uint at offset 13).
+uint load_meshlet_lod_level(uint meshlet_id) {
+    uint base = meshlet_id * MESHLET_UINT32S;
+    return meshlet_meta.data[base + 13];
 }
 
 void main() {
@@ -93,7 +76,7 @@ void main() {
 
     vec3 local = (pos + face_offset) * inst.chunk_scale;
     vec3 world_position = inst.chunk_origin + local;
-    gl_Position = camera.view_proj * vec4(world_position, 1.0);
+    gl_Position = pc.view_proj * vec4(world_position, 1.0);
 
     // Extract block_id from word1 low 16 bits
     v_block_id = word1 & 0xFFFFu;
@@ -105,4 +88,12 @@ void main() {
     float u = float((word1 >> 16) & 0xFFu);
     float v = float((word1 >> 24) & 0xFFu);
     v_uv = vec2(u, v);
+
+    // LOD transition factor for alpha dither (MSHL-05).
+    // Uses parameterized screen_height and sse_threshold from push constants (POLISH-01).
+    float parent_error = load_meshlet_parent_error(meshlet_id);
+    v_lod_transition = compute_lod_transition(
+        parent_error, pc.camera_pos, world_position,
+        pc.screen_height, pc.sse_threshold
+    );
 }

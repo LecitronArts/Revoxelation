@@ -1,9 +1,13 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : enable
+
+#include "common.glsl"
 
 layout(location = 0) flat in uint v_block_id;
 layout(location = 1) in vec3 v_face_normal;
 layout(location = 2) in vec2 v_uv;
+layout(location = 3) flat in float v_lod_transition;
 
 layout(location = 0) out vec4 out_color;
 
@@ -24,6 +28,16 @@ layout(std430, set = 0, binding = 8) readonly buffer MaterialBuffer {
 layout(set = 0, binding = 9) uniform sampler2DArray tex_array;
 
 void main() {
+    // Alpha dither for LOD transitions (MSHL-05).
+    // v_lod_transition ranges from 0 (fully opaque) to 1 (fully transparent at boundary).
+    if (v_lod_transition > 0.001) {
+        float threshold = bayer_dither(ivec2(gl_FragCoord.xy));
+        float alpha = 1.0 - v_lod_transition;
+        if (alpha < threshold) {
+            discard;
+        }
+    }
+
     BlockMaterial mat = material_ssbo.materials[v_block_id];
 
     uint top_tex    = mat.tex_top_side & 0xFFFFu;

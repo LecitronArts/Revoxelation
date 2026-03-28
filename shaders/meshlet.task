@@ -1,25 +1,10 @@
 #version 460
 #extension GL_EXT_mesh_shader : require
+#extension GL_GOOGLE_include_directive : enable
+
+#include "common.glsl"
 
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
-
-// -----------------------------------------------------------------------
-// GpuMeshlet (64 bytes, matches Rust #[repr(C)] layout)
-// -----------------------------------------------------------------------
-struct GpuMeshlet {
-    vec3 center;           // bounding sphere center (local-space)
-    float radius;          // bounding sphere radius
-    vec3 cone_axis;        // orientation cone axis (normalized)
-    float cone_cutoff;     // cos(half-angle); < -1.0 means degenerate (never cull)
-    uint vertex_offset;    // into meshlet_vertex_buffer
-    uint triangle_offset;  // into meshlet_tri_buffer
-    uint vertex_count;     // max 64
-    uint triangle_count;   // max 124
-    uint chunk_slot;       // which chunk this meshlet belongs to
-    uint lod_level;        // LOD level
-    uint pad0;
-    uint pad1;
-};
 
 // -----------------------------------------------------------------------
 // SSBO bindings (shared bindless set 0)
@@ -47,7 +32,7 @@ layout(std430, set = 0, binding = 6) readonly buffer HiZConfigBuffer {
 layout(set = 0, binding = 7) uniform sampler2D hiz_pyramid;
 
 // -----------------------------------------------------------------------
-// Push constants — same as meshlet_cull.comp (32 bytes)
+// Push constants (extended to 40 bytes for LOD selection, MSHL-05)
 // -----------------------------------------------------------------------
 layout(push_constant) uniform PushConstants {
     uint total_meshlet_count;
@@ -56,10 +41,12 @@ layout(push_constant) uniform PushConstants {
     uint enable_hiz;        // 0 or 1
     vec3 camera_pos;        // world-space camera position for backface test
     uint _pad;
+    float sse_threshold;    // SSE threshold in pixels (POLISH-01: parameterized)
+    float screen_height;    // screen height in pixels (POLISH-01: parameterized)
 } pc;
 
 // -----------------------------------------------------------------------
-// Task payload — shared with mesh shader
+// Task payload -- shared with mesh shader
 // -----------------------------------------------------------------------
 struct TaskPayload {
     uint meshlet_ids[32];
@@ -68,10 +55,8 @@ struct TaskPayload {
 taskPayloadSharedEXT TaskPayload payload;
 
 // -----------------------------------------------------------------------
-// GpuMeshlet loader — reads from raw uint array
+// GpuMeshlet loader -- reads from raw uint array
 // -----------------------------------------------------------------------
-const uint MESHLET_UINT32S = 16u; // 64 bytes / 4
-
 GpuMeshlet load_meshlet(uint meshlet_id) {
     uint base = meshlet_id * MESHLET_UINT32S;
     GpuMeshlet m;
@@ -93,14 +78,37 @@ GpuMeshlet load_meshlet(uint meshlet_id) {
     m.triangle_count   = meshlet_meta.data[base + 11];
     m.chunk_slot       = meshlet_meta.data[base + 12];
     m.lod_level        = meshlet_meta.data[base + 13];
-    m.pad0             = meshlet_meta.data[base + 14];
-    m.pad1             = meshlet_meta.data[base + 15];
+    m.parent_error     = uintBitsToFloat(meshlet_meta.data[base + 14]);
+    m.group_id         = meshlet_meta.data[base + 15];
     return m;
 }
 
 // -----------------------------------------------------------------------
 // Culling tests (identical to meshlet_cull.comp)
 // -----------------------------------------------------------------------
+
+// LOD selection (MSHL-05).
+// Returns true if the meshlet should be CULLED based on LOD level.
+bool lod_cull(GpuMeshlet m) {
+    if (m.parent_error > 1e30) {
+        return false;
+    }
+
+    float distance = length(pc.camera_pos - m.center);
+    if (distance < MIN_LOD_DISTANCE) distance = MIN_LOD_DISTANCE;
+
+    float projected_error = m.parent_error * pc.screen_height / (2.0 * distance);
+    bool use_parent = projected_error < pc.sse_threshold;
+
+    if (m.lod_level == 0u) {
+        return use_parent;
+    }
+    if (m.lod_level == 1u) {
+        return !use_parent;
+    }
+
+    return false;
+}
 
 // Backface culling via orientation cone.
 // Returns true if the meshlet is CULLED (backfacing).
@@ -188,6 +196,9 @@ void main() {
 
         if (m.triangle_count > 0u) {
             bool culled = false;
+
+            // LOD selection always runs (no toggle).
+            culled = lod_cull(m);
 
             if (pc.enable_backface != 0u && !culled) {
                 culled = backface_cull(m);

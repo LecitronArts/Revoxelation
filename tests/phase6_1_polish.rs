@@ -6,33 +6,46 @@
 //!                state store remove, cancel flag cleanup, dirty map cleanup, eviction
 //!                comparison, real SSE enqueue, dirty HashSet dedup, mesh sync limit.
 
-/// CRIT-01: Depth attachment store_op must be STORE (not DONT_CARE)
+/// CRIT-01: Resolved depth attachment store_op must be STORE (not DONT_CARE)
 /// so the Hi-Z pyramid generator can read valid depth data.
+/// Note: MSAA intermediate attachments (attachments 0, 1) correctly use DONT_CARE
+/// because they resolve to single-sample targets.
 #[test]
 fn phase6_1_depth_store_op() {
     let src = std::fs::read_to_string("src/renderer/swapchain.rs")
         .expect("should read swapchain.rs");
 
-    // The depth attachment description must use AttachmentStoreOp::STORE.
+    // The resolved depth attachment description must use AttachmentStoreOp::STORE.
     assert!(
         src.contains("AttachmentStoreOp::STORE"),
-        "depth attachment store_op should be STORE, not DONT_CARE"
+        "resolved depth attachment store_op should be STORE, not DONT_CARE"
     );
 
-    // Verify no DONT_CARE remains on any depth-related store_op.
-    // The only DONT_CARE should be on stencil ops (stencil_load_op / stencil_store_op).
-    for (line_num, line) in src.lines().enumerate() {
+    // Verify that resolved (single-sample) attachments use STORE, not DONT_CARE.
+    // MSAA intermediate attachments (marked by nearby "MSAA" comments) can use DONT_CARE
+    // because their data is resolved to single-sample targets.
+    let lines: Vec<&str> = src.lines().collect();
+    for (line_num, line) in lines.iter().enumerate() {
         // Skip stencil-related lines — DONT_CARE is fine there.
         if line.contains("stencil_load_op") || line.contains("stencil_store_op") {
             continue;
         }
-        // If a line has .store_op and DONT_CARE, that's a bug.
+        // If a line has .store_op and DONT_CARE, check if it's an MSAA intermediate attachment.
         if line.contains(".store_op(") && line.contains("DONT_CARE") {
-            panic!(
-                "swapchain.rs line {}: depth store_op still uses DONT_CARE:\n  {}",
-                line_num + 1,
-                line.trim()
-            );
+            // Look back up to 10 lines for an "MSAA" or "Attachment 0" or "Attachment 1" comment.
+            let start = if line_num >= 10 { line_num - 10 } else { 0 };
+            let context = &lines[start..line_num];
+            let is_msaa_intermediate = context.iter().any(|l| {
+                l.contains("MSAA color") || l.contains("MSAA depth")
+                    || l.contains("Attachment 0:") || l.contains("Attachment 1:")
+            });
+            if !is_msaa_intermediate {
+                panic!(
+                    "swapchain.rs line {}: non-MSAA store_op still uses DONT_CARE:\n  {}",
+                    line_num + 1,
+                    line.trim()
+                );
+            }
         }
     }
 }
