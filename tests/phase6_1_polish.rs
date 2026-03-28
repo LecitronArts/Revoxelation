@@ -122,11 +122,10 @@ fn phase6_1_hiz_pass0() {
     );
 
     // Pass 0 must be handled separately (before the loop).
-    // It should reference mip 0 / pass 0 / descriptor_sets[0] before the loop.
     let loop_pos = gen_body.find("for mip in 1..").unwrap();
     let before_loop = &gen_body[..loop_pos];
 
-    // Before the loop, there should be a dispatch or copy for mip 0.
+    // Before the loop, there should be a dispatch for mip 0 (1:1 copy mode).
     let has_mip0_dispatch = before_loop.contains("cmd_dispatch")
         || before_loop.contains("cmd_copy_image")
         || before_loop.contains("cmd_blit_image");
@@ -135,11 +134,11 @@ fn phase6_1_hiz_pass0() {
         "Hi-Z pass 0 should have a dedicated dispatch/copy before the downsample loop"
     );
 
-    // Also check the shader for 1:1 copy mode support.
+    // Verify the shader supports 1:1 copy mode.
     let shader_src = std::fs::read_to_string("shaders/hiz_generate.comp")
         .expect("should read hiz_generate.comp");
     assert!(
-        shader_src.contains("mode") || shader_src.contains("copy"),
-        "hiz_generate.comp should support a 1:1 copy mode for pass 0"
+        shader_src.contains("copy_mode"),
+        "hiz_generate.comp should have a copy_mode push constant for 1:1 pass 0"
     );
 }

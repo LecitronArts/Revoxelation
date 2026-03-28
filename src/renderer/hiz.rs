@@ -287,11 +287,11 @@ impl HiZPyramid {
             }
         }
 
-        // Push constant: ivec2 dst_size (8 bytes).
+        // Push constant: ivec2 dst_size + int copy_mode (12 bytes).
         let push_constant_ranges = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::COMPUTE)
             .offset(0)
-            .size(8)]; // ivec2 = 2 * i32 = 8 bytes
+            .size(12)]; // ivec2 + int = 3 * i32 = 12 bytes
 
         let set_layouts = [descriptor_set_layout];
         let pipeline_layout = unsafe {
@@ -362,6 +362,9 @@ impl HiZPyramid {
     /// `cmd` must be a recording command buffer.
     /// The depth image must already be in `SHADER_READ_ONLY_OPTIMAL` layout.
     /// After this call, the Hi-Z image is in `SHADER_READ_ONLY_OPTIMAL` for cull shader sampling.
+    ///
+    /// Pass 0 (CRIT-07): depth→hiz_mip0 at 1:1 resolution via compute copy_mode=1.
+    /// Passes 1..N: 2×2 max downsample via compute copy_mode=0.
     pub fn generate(&self, device: &ash::Device, cmd: vk::CommandBuffer) {
         if self.mip_count == 0 {
             return;
@@ -395,40 +398,68 @@ impl HiZPyramid {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
         }
 
-        let mut mip_width = self.width;
-        let mut mip_height = self.height;
+        // ---- Pass 0 (CRIT-07): 1:1 copy from depth to hiz mip 0 ----
+        // Uses copy_mode=1 in the shader to do a direct 1:1 sample (no 2x2 downsample).
+        // This avoids sampling 2x2 texels from a source that is the same resolution as
+        // the destination, which would read out-of-bounds texels.
+        unsafe {
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                self.pipeline_layout,
+                0,
+                &[self.descriptor_sets[0]],
+                &[],
+            );
 
-        for mip in 0..self.mip_count as usize {
+            let pc_data = [self.width as i32, self.height as i32, 1_i32]; // copy_mode = 1
+            let pc_bytes: &[u8] = bytemuck::cast_slice(&pc_data);
+            device.cmd_push_constants(
+                cmd,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                pc_bytes,
+            );
+
+            let group_x = self.width.div_ceil(8);
+            let group_y = self.height.div_ceil(8);
+            device.cmd_dispatch(cmd, group_x, group_y, 1);
+        }
+
+        // ---- Passes 1..N: 2×2 max downsample ----
+        let mut mip_width = (self.width / 2).max(1);
+        let mut mip_height = (self.height / 2).max(1);
+
+        for mip in 1..self.mip_count as usize {
             // Destination mip dimensions.
-            let dst_w = (mip_width).max(1);
-            let dst_h = (mip_height).max(1);
+            let dst_w = mip_width.max(1);
+            let dst_h = mip_height.max(1);
 
-            // If this is not the first pass, transition the source mip (mip-1 of hiz) to SHADER_READ.
-            if mip > 0 {
-                let src_barrier = vk::ImageMemoryBarrier::default()
-                    .old_layout(vk::ImageLayout::GENERAL)
-                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .src_access_mask(vk::AccessFlags::SHADER_WRITE)
-                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                    .image(self.image)
-                    .subresource_range(
-                        vk::ImageSubresourceRange::default()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .base_mip_level((mip - 1) as u32)
-                            .level_count(1)
-                            .layer_count(1),
-                    );
-                unsafe {
-                    device.cmd_pipeline_barrier(
-                        cmd,
-                        vk::PipelineStageFlags::COMPUTE_SHADER,
-                        vk::PipelineStageFlags::COMPUTE_SHADER,
-                        vk::DependencyFlags::empty(),
-                        &[],
-                        &[],
-                        &[src_barrier],
-                    );
-                }
+            // Transition the source mip (mip-1 of hiz) to SHADER_READ.
+            let src_barrier = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::GENERAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .image(self.image)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level((mip - 1) as u32)
+                        .level_count(1)
+                        .layer_count(1),
+                );
+            unsafe {
+                device.cmd_pipeline_barrier(
+                    cmd,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[src_barrier],
+                );
             }
 
             unsafe {
@@ -441,7 +472,7 @@ impl HiZPyramid {
                     &[],
                 );
 
-                let pc_data = [dst_w as i32, dst_h as i32];
+                let pc_data = [dst_w as i32, dst_h as i32, 0_i32]; // copy_mode = 0 (2x2 downsample)
                 let pc_bytes: &[u8] = bytemuck::cast_slice(&pc_data);
                 device.cmd_push_constants(
                     cmd,

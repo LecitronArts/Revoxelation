@@ -1,8 +1,9 @@
 #version 450
 
-// Hi-Z depth pyramid generator — 2x2 max downsampling.
-// Each invocation reads a 2x2 block from the source mip and writes
-// the max value to one texel of the destination mip.
+// Hi-Z depth pyramid generator.
+// Two modes controlled by push constant:
+//   copy_mode == 1: 1:1 copy from source (depth) to destination mip (pass 0).
+//   copy_mode == 0: 2x2 max downsampling (passes 1..N).
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -12,9 +13,10 @@ layout(set = 0, binding = 0) uniform sampler2D src_mip;
 // Destination mip level (write).
 layout(set = 0, binding = 1, r32f) uniform writeonly image2D dst_mip;
 
-// Push constants: destination mip dimensions.
+// Push constants: destination mip dimensions + mode flag.
 layout(push_constant) uniform PushConstants {
-    ivec2 dst_size; // width, height of the destination mip level
+    ivec2 dst_size;  // width, height of the destination mip level
+    int copy_mode;   // 0 = 2x2 max downsample, 1 = 1:1 copy (pass 0)
 } pc;
 
 void main() {
@@ -25,9 +27,18 @@ void main() {
         return;
     }
 
-    // Compute UV coordinates for the center of each of the 4 source texels.
-    // The source mip is 2x the destination, so each dst texel maps to a 2x2 block.
     vec2 src_texel_size = 1.0 / vec2(textureSize(src_mip, 0));
+
+    if (pc.copy_mode == 1) {
+        // 1:1 copy mode for pass 0: sample at exact texel position.
+        // Source and destination have the same resolution.
+        vec2 uv = (vec2(dst_coord) + 0.5) * src_texel_size;
+        float depth = textureLod(src_mip, uv, 0.0).r;
+        imageStore(dst_mip, dst_coord, vec4(depth, 0.0, 0.0, 0.0));
+        return;
+    }
+
+    // 2x2 max downsample: each dst texel maps to a 2x2 block in the source.
     vec2 base_uv = (vec2(dst_coord) * 2.0 + 0.5) * src_texel_size;
 
     // Sample the 4 source texels.
