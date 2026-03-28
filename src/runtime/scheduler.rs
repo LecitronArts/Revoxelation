@@ -280,10 +280,17 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
 // MeshSync arm
 // ---------------------------------------------------------------------------
 
+/// Maximum number of job results processed per MeshSync frame (MED-08).
+const MAX_RESULTS_PER_FRAME: u32 = 16;
+
 fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_index: u64) {
     let mut recv_count = 0u32;
+    let max_results = MAX_RESULTS_PER_FRAME;
 
     loop {
+        if recv_count >= max_results {
+            break;
+        }
         match ss.result_receiver.try_recv() {
             Ok(result) => {
                 recv_count += 1;
@@ -337,7 +344,11 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
                         let meshlet_mesh = build_meshlets_from_packed(&packed);
                         Some((packed, meshlet_mesh, dirty_record))
                     }
-                    None => None,
+                    // HIGH-05: Payload absent for dirty key — remove from dirty map.
+                    None => {
+                        meshing.dirty.remove(&key);
+                        None
+                    }
                 },
                 None => None,
             }
@@ -470,6 +481,7 @@ fn handle_job_result(
             meshing.payloads.remove(&key);
             meshing.dirty.remove(&key);
             meshing.queued.retain(|queued| *queued != key);
+            meshing.queued_set.remove(&key);
             meshing.completed_meshes.retain(|mesh| mesh.key != key);
             if key.lod_level == 0 {
                 meshing.mark_coarse_lod_neighbors_dirty(

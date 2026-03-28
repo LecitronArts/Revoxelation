@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::streaming::types::ChunkKey;
 
@@ -42,12 +42,14 @@ pub struct MeshingState {
     pub payloads: HashMap<ChunkKey, ChunkVoxels>,
     pub dirty: HashMap<ChunkKey, MeshDirtyRecord>,
     pub queued: VecDeque<ChunkKey>,
+    /// O(1) membership check for queued keys (MED-07).
+    pub queued_set: HashSet<ChunkKey>,
     pub completed_meshes: Vec<MeshingJobResult>,
 }
 
 impl MeshingState {
     pub fn mark_dirty(&mut self, key: ChunkKey, cause: MeshDirtyCause, source_revision: u64) {
-        let should_queue = !self.queued.iter().any(|queued| *queued == key);
+        let should_queue = !self.queued_set.contains(&key); // MED-07: O(1) lookup
         let entry = self
             .dirty
             .entry(key)
@@ -63,6 +65,7 @@ impl MeshingState {
         entry.causes.push(cause);
         if should_queue {
             self.queued.push_back(key);
+            self.queued_set.insert(key);
         }
     }
 
@@ -90,7 +93,7 @@ impl MeshingState {
         active: bool,
         source_revision: u64,
     ) {
-        let should_queue = !self.queued.iter().any(|queued| *queued == coarse_key);
+        let should_queue = !self.queued_set.contains(&coarse_key); // MED-07: O(1) lookup
         let entry = self
             .dirty
             .entry(coarse_key)
@@ -118,6 +121,7 @@ impl MeshingState {
             .push(MeshDirtyCause::FinerNeighborMaskChanged { face_mask, active });
         if should_queue {
             self.queued.push_back(coarse_key);
+            self.queued_set.insert(coarse_key);
         }
     }
 
@@ -164,6 +168,7 @@ impl MeshingState {
             let Some(key) = self.queued.pop_front() else {
                 break;
             };
+            self.queued_set.remove(&key); // MED-07: keep set in sync
             if self.dirty.contains_key(&key) {
                 batch.push(key);
             }

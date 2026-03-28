@@ -70,17 +70,27 @@ impl ChunkJobQueue {
     }
 
     /// Enqueue a task. If the queue is at capacity, the task with the lowest
-    /// SSE is evicted and returned. Returns `None` if there was room.
+    /// SSE is evicted — but only if the new task has strictly higher SSE.
+    /// If the new task has equal or lower SSE than the lowest, it is rejected
+    /// and returned instead (HIGH-06).
     pub fn enqueue(&self, task: PrioritizedTask) -> Option<PrioritizedTask> {
         let mut heap = self.inner.lock().unwrap();
         if heap.len() < self.capacity {
             heap.push(task);
             None
         } else {
-            // Collect all items, sort ascending by sse_bits, evict the lowest.
+            // Collect all items, sort ascending by sse_bits, find the lowest.
             let mut all: Vec<PrioritizedTask> = heap.drain().collect();
             all.sort_by_key(|t| t.sse_bits);
-            let evicted = all.remove(0); // lowest SSE
+            // HIGH-06: Reject new task if its SSE is <= the lowest existing task's SSE.
+            if task.sse_bits <= all[0].sse_bits {
+                // Reject: new task has lower or equal priority — put everything back.
+                for t in all {
+                    heap.push(t);
+                }
+                return Some(task); // rejected task returned
+            }
+            let evicted = all.remove(0); // lowest SSE evicted
             // Re-push the remainder plus the new task.
             for t in all {
                 heap.push(t);
