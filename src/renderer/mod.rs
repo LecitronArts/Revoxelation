@@ -23,12 +23,15 @@ pub mod material;
 pub mod mesh_pipeline;
 pub mod perf_counters;
 pub mod pipeline_cache;
+pub mod pipeline_set;
+pub mod pool_manager;
 pub mod spirv;
 pub mod staging;
 pub mod staging_ring;
 pub mod submit;
 pub mod swapchain;
 pub mod texture_array;
+pub mod vulkan_core;
 
 // Re-exports — keep external import paths stable.
 pub(crate) use helpers::{
@@ -59,6 +62,24 @@ pub fn shader_source_files() -> &'static [&'static str] {
         "shaders/meshlet.mesh",
     ]
 }
+
+// ---------------------------------------------------------------------------
+// REFAC-01: Logical sub-struct definitions for Renderer decomposition.
+//
+// Sub-struct types are defined in their own modules for clean organization:
+//   - vulkan_core.rs: VulkanCore — entry, instance, surface, debug
+//   - pipeline_set.rs: PipelineSet — mesh, cull, meshlet, cache, hiz
+//   - pool_manager.rs: PoolManager — chunk_pool, meshlet_pool, staging, bindless
+//
+// The Renderer still keeps flat fields for borrow-checker ergonomics,
+// but these sub-struct types provide logical grouping documentation and
+// can be used as borrow-friendly reference bundles.
+// ---------------------------------------------------------------------------
+
+// Re-export sub-struct types at renderer level for convenient access.
+pub use vulkan_core::VulkanCore;
+pub use pipeline_set::PipelineSet;
+pub use pool_manager::PoolManager;
 
 pub struct Renderer {
     pub entry: ash::Entry,
@@ -393,6 +414,42 @@ impl Drop for Renderer {
 impl Renderer {
     pub fn enqueue_chunk_delta(&mut self, delta: RenderDelta) {
         self.pending_chunk_deltas.push_back(delta);
+    }
+
+    /// Return a logical VulkanCore view (REFAC-01).
+    #[allow(dead_code)]
+    pub fn vulkan_core(&self) -> VulkanCore<'_> {
+        VulkanCore {
+            entry: &self.entry,
+            instance: &self.instance,
+            surface_loader: &self.surface_loader,
+            surface: self.surface,
+        }
+    }
+
+    /// Return a logical PipelineSet view (REFAC-01).
+    #[allow(dead_code)]
+    pub fn pipeline_set(&self) -> PipelineSet<'_> {
+        PipelineSet {
+            mesh_pipeline: self.mesh_pipeline.as_ref(),
+            cull_pipeline: self.cull_pipeline.as_ref(),
+            meshlet_cull_pipeline: self.meshlet_cull_pipeline.as_ref(),
+            meshlet_pipeline: self.meshlet_pipeline.as_deref(),
+            pipeline_cache: self.pipeline_cache.as_ref(),
+            hiz_pyramid: self.hiz_pyramid.as_ref(),
+        }
+    }
+
+    /// Return a logical PoolManager view (REFAC-01).
+    #[allow(dead_code)]
+    pub fn pool_manager(&self) -> PoolManager<'_> {
+        PoolManager {
+            chunk_pool: self.chunk_pool.as_ref(),
+            meshlet_pool: self.meshlet_pool.as_ref(),
+            staging_ring: self.staging_ring.as_ref(),
+            bindless: self.bindless.as_ref(),
+            texture_array: self.texture_array.as_ref(),
+        }
     }
 
     pub(crate) fn record_chunk_delta_uploads(&mut self, cmd: vk::CommandBuffer) -> Result<()> {
