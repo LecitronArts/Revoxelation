@@ -55,6 +55,8 @@ pub fn shader_source_files() -> &'static [&'static str] {
         "shaders/meshlet_cull.comp",
         "shaders/meshlet_draw.vert",
         "shaders/meshlet_draw.frag",
+        "shaders/meshlet.task",
+        "shaders/meshlet.mesh",
     ]
 }
 
@@ -90,8 +92,10 @@ pub struct Renderer {
     pub texture_array: Option<texture_array::TextureArray>,
     pub material_buffer: Option<vk::Buffer>,
     pub material_allocation: Option<gpu_allocator::vulkan::Allocation>,
-    /// Meshlet draw pipeline (ComputeIndirectPath) — MSHL-03.
-    pub meshlet_pipeline: Option<mesh_pipeline::ComputeIndirectPath>,
+    /// Meshlet draw pipeline — either MeshShaderPath or ComputeIndirectPath (MSHL-03/04).
+    pub meshlet_pipeline: Option<Box<dyn mesh_pipeline::MeshletPipeline>>,
+    /// Whether the active meshlet_pipeline is a MeshShaderPath (skips meshlet_cull.comp).
+    pub use_mesh_shader_path: bool,
     /// Runtime toggle: use meshlet rendering (true, default) or legacy per-chunk path (false).
     pub use_meshlet_rendering: bool,
 }
@@ -197,6 +201,7 @@ impl Renderer {
             material_buffer: None,
             material_allocation: None,
             meshlet_pipeline: None,
+            use_mesh_shader_path: false,
             use_meshlet_rendering: true,
         })
     }
@@ -254,8 +259,8 @@ impl Drop for Renderer {
                 mesh_pipeline.destroy(self);
             }
 
-            if let Some(meshlet_pipeline) = self.meshlet_pipeline.take() {
-                meshlet_pipeline.destroy(self);
+            if let Some(mut meshlet_pipeline) = self.meshlet_pipeline.take() {
+                meshlet_pipeline.destroy_resources(&self.device_ctx.device);
             }
 
             if let Some(hiz_pyramid) = self.hiz_pyramid.take() {

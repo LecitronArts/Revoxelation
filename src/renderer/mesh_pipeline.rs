@@ -4,6 +4,7 @@ use ash::vk;
 use super::{Renderer, chunk_pool::ChunkPool, spirv::create_shader_module};
 use super::camera::CameraUniforms;
 use super::chunk_pool::MeshletPool;
+use super::cull_pipeline::MeshletCullPushConstants;
 
 // ============================================================================
 // MeshletPipeline trait — abstracts meshlet rendering backend (D-06)
@@ -11,8 +12,8 @@ use super::chunk_pool::MeshletPool;
 
 /// Abstracts the meshlet rendering backend.
 ///
-/// `ComputeIndirectPath` is the first (and currently only) implementation.
-/// A future `MeshShaderPath` (VK_EXT_mesh_shader) will be added in Plan 06-04.
+/// `ComputeIndirectPath` and `MeshShaderPath` both implement this trait.
+/// Selection occurs once at startup based on VK_EXT_mesh_shader support.
 pub trait MeshletPipeline {
     /// Record draw commands for visible meshlets into the command buffer.
     ///
@@ -33,6 +34,9 @@ pub trait MeshletPipeline {
         max_draw_count: u32,
         extent: vk::Extent2D,
     );
+
+    /// Destroy Vulkan resources owned by this pipeline.
+    fn destroy_resources(&mut self, device: &ash::Device);
 }
 
 // ============================================================================
@@ -266,6 +270,305 @@ impl MeshletPipeline for ComputeIndirectPath {
             );
         }
     }
+
+    fn destroy_resources(&mut self, device: &ash::Device) {
+        unsafe {
+            device.destroy_pipeline(self.pipeline, None);
+            device.destroy_pipeline_layout(self.pipeline_layout, None);
+        }
+    }
+}
+
+// ============================================================================
+// MeshShaderPath — VK_EXT_mesh_shader hardware path (MSHL-04)
+// ============================================================================
+
+/// Hardware mesh shader rendering via VK_EXT_mesh_shader (task + mesh + fragment).
+///
+/// The task shader performs per-meshlet culling (same as meshlet_cull.comp)
+/// and emits visible meshlets to the mesh shader. The mesh shader reads
+/// meshlet vertex/triangle data from SSBOs and outputs transformed geometry.
+///
+/// When this path is active, meshlet_cull.comp is NOT dispatched.
+/// The chunk-level cull (chunk_cull.comp) still runs.
+pub struct MeshShaderPath {
+    pub pipeline: vk::Pipeline,
+    pub pipeline_layout: vk::PipelineLayout,
+    /// ash mesh shader extension dispatch table (for cmd_draw_mesh_tasks_ext).
+    pub mesh_shader_fn: ash::ext::mesh_shader::Device,
+}
+
+/// Combined push constant layout for MeshShaderPath.
+///
+/// Bytes [0..32): MeshletCullPushConstants (used by task shader for culling).
+/// Bytes [32..112): CameraUniforms (used by mesh shader for vertex transform).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MeshShaderPushConstants {
+    /// Task shader push constants (culling config, 32 bytes).
+    pub cull: MeshletCullPushConstants,
+    /// Mesh shader push constants (camera uniforms, 80 bytes).
+    pub camera: CameraUniforms,
+}
+
+impl MeshShaderPath {
+    /// Create the mesh shader graphics pipeline (task + mesh + fragment stages).
+    ///
+    /// Pipeline layout: shared bindless set 0 + extended push constants (112 bytes:
+    /// 32 bytes MeshletCullPushConstants for task shader + 80 bytes CameraUniforms for mesh shader).
+    /// No vertex input — mesh shader generates vertices from SSBOs.
+    pub fn new(
+        renderer: &Renderer,
+        bindless_layout: vk::DescriptorSetLayout,
+        mesh_shader_fn: ash::ext::mesh_shader::Device,
+    ) -> Result<Self> {
+        let device = &renderer.device_ctx.device;
+
+        // Push constant range for combined task+mesh push constants (112 bytes).
+        // TASK_BIT_EXT for task shader (cull config at offset 0..32),
+        // MESH_BIT_EXT for mesh shader (camera uniforms at offset 32..112).
+        let push_constant_ranges = [
+            vk::PushConstantRange {
+                stage_flags: vk::ShaderStageFlags::TASK_EXT,
+                offset: 0,
+                size: std::mem::size_of::<MeshletCullPushConstants>() as u32,
+            },
+            vk::PushConstantRange {
+                stage_flags: vk::ShaderStageFlags::MESH_EXT,
+                offset: std::mem::size_of::<MeshletCullPushConstants>() as u32,
+                size: std::mem::size_of::<CameraUniforms>() as u32,
+            },
+        ];
+
+        let set_layouts = [bindless_layout];
+        let pipeline_layout = unsafe {
+            device
+                .create_pipeline_layout(
+                    &vk::PipelineLayoutCreateInfo::default()
+                        .set_layouts(&set_layouts)
+                        .push_constant_ranges(&push_constant_ranges),
+                    None,
+                )
+                .context("failed to create mesh shader pipeline layout")?
+        };
+
+        let task_module = create_shader_module(
+            device,
+            include_bytes!(concat!(env!("OUT_DIR"), "/meshlet.task.spv")),
+        )?;
+        let mesh_module = create_shader_module(
+            device,
+            include_bytes!(concat!(env!("OUT_DIR"), "/meshlet.mesh.spv")),
+        )?;
+        let frag_module = create_shader_module(
+            device,
+            include_bytes!(concat!(env!("OUT_DIR"), "/meshlet_draw.frag.spv")),
+        )?;
+
+        let entry_name = c"main";
+        let shader_stages = [
+            vk::PipelineShaderStageCreateInfo::default()
+                .module(task_module)
+                .name(entry_name)
+                .stage(vk::ShaderStageFlags::TASK_EXT),
+            vk::PipelineShaderStageCreateInfo::default()
+                .module(mesh_module)
+                .name(entry_name)
+                .stage(vk::ShaderStageFlags::MESH_EXT),
+            vk::PipelineShaderStageCreateInfo::default()
+                .module(frag_module)
+                .name(entry_name)
+                .stage(vk::ShaderStageFlags::FRAGMENT),
+        ];
+
+        // No vertex input — mesh shader generates vertices from SSBOs.
+        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default();
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+            .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+            .viewport_count(1)
+            .scissor_count(1);
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_state_info =
+            vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+        let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .line_width(1.0)
+            .cull_mode(vk::CullModeFlags::NONE)
+            .front_face(vk::FrontFace::CLOCKWISE);
+        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(false)
+            .color_write_mask(vk::ColorComponentFlags::RGBA)];
+        let color_blend = vk::PipelineColorBlendStateCreateInfo::default()
+            .attachments(&color_blend_attachment);
+        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(true)
+            .depth_write_enable(true)
+            .depth_compare_op(vk::CompareOp::LESS);
+
+        let pipeline_info = [vk::GraphicsPipelineCreateInfo::default()
+            .stages(&shader_stages)
+            .vertex_input_state(&vertex_input_state)
+            .input_assembly_state(&input_assembly)
+            .viewport_state(&viewport_state)
+            .rasterization_state(&rasterization)
+            .multisample_state(&multisample)
+            .color_blend_state(&color_blend)
+            .depth_stencil_state(&depth_stencil)
+            .dynamic_state(&dynamic_state_info)
+            .layout(pipeline_layout)
+            .render_pass(renderer.swapchain_ctx.render_pass)
+            .subpass(0)];
+
+        let cache_handle = renderer
+            .pipeline_cache
+            .as_ref()
+            .expect("pipeline cache must be initialized before mesh shader pipeline")
+            .handle();
+        let pipeline = unsafe {
+            device
+                .create_graphics_pipelines(cache_handle, &pipeline_info, None)
+                .map_err(|(_, err)| err)
+                .context("failed to create mesh shader graphics pipeline")?
+                .into_iter()
+                .next()
+                .context("mesh shader pipeline creation returned no pipeline")?
+        };
+
+        unsafe {
+            device.destroy_shader_module(task_module, None);
+            device.destroy_shader_module(mesh_module, None);
+            device.destroy_shader_module(frag_module, None);
+        }
+
+        Ok(Self {
+            pipeline,
+            pipeline_layout,
+            mesh_shader_fn,
+        })
+    }
+
+    pub fn destroy(self, renderer: &Renderer) {
+        unsafe {
+            renderer
+                .device_ctx
+                .device
+                .destroy_pipeline(self.pipeline, None);
+            renderer
+                .device_ctx
+                .device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+        }
+    }
+}
+
+impl MeshletPipeline for MeshShaderPath {
+    fn record_draw(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        bindless_set: vk::DescriptorSet,
+        camera: &CameraUniforms,
+        meshlet_pool: &MeshletPool,
+        max_draw_count: u32,
+        extent: vk::Extent2D,
+    ) {
+        let _ = max_draw_count; // mesh shader path does not use indirect count
+        let total_meshlets = meshlet_pool.active_meshlet_count();
+        if total_meshlets == 0 {
+            return;
+        }
+
+        // Negative-height viewport flips Vulkan's Y-down clip space to Y-up.
+        let viewport = vk::Viewport {
+            x: 0.0,
+            y: extent.height as f32,
+            width: extent.width as f32,
+            height: -(extent.height as f32),
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let scissor = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent,
+        };
+
+        // Build combined push constants: cull config (task) + camera (mesh).
+        // Cull toggles are all enabled by default. The caller can extend the
+        // MeshletPipeline trait in the future to pass per-frame cull config.
+        let cull_pc = MeshletCullPushConstants {
+            total_meshlet_count: total_meshlets,
+            enable_backface: 1,
+            enable_frustum: 1,
+            enable_hiz: 1,
+            camera_pos: camera.camera_pos,
+            _pad: 0,
+        };
+        let combined_pc = MeshShaderPushConstants {
+            cull: cull_pc,
+            camera: *camera,
+        };
+
+        unsafe {
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+            device.cmd_set_viewport(cmd, 0, &[viewport]);
+            device.cmd_set_scissor(cmd, 0, &[scissor]);
+
+            // Push combined constants (112 bytes).
+            device.cmd_push_constants(
+                cmd,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::TASK_EXT | vk::ShaderStageFlags::MESH_EXT,
+                0,
+                bytemuck::bytes_of(&combined_pc),
+            );
+
+            // Bind the shared bindless descriptor set 0.
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline_layout,
+                0,
+                &[bindless_set],
+                &[],
+            );
+
+            // Dispatch task+mesh shader: one workgroup per 32 meshlets.
+            let group_count_x = total_meshlets.div_ceil(32);
+            self.mesh_shader_fn.cmd_draw_mesh_tasks(cmd, group_count_x, 1, 1);
+        }
+    }
+
+    fn destroy_resources(&mut self, device: &ash::Device) {
+        unsafe {
+            device.destroy_pipeline(self.pipeline, None);
+            device.destroy_pipeline_layout(self.pipeline_layout, None);
+        }
+    }
+}
+
+/// Create the appropriate meshlet rendering pipeline based on mesh shader support.
+///
+/// If `mesh_shader_supported` is true and a mesh shader dispatch table is available,
+/// creates a `MeshShaderPath`. Otherwise falls back to `ComputeIndirectPath`.
+///
+/// Returns a boxed trait object for runtime polymorphism.
+pub fn create_meshlet_pipeline(
+    renderer: &Renderer,
+    bindless_layout: vk::DescriptorSetLayout,
+) -> Result<Box<dyn MeshletPipeline>> {
+    if renderer.device_ctx.mesh_shader_supported
+        && let Some(mesh_shader_fn) = renderer.device_ctx.mesh_shader_fn.clone()
+    {
+        log::info!("Creating MeshShaderPath (VK_EXT_mesh_shader hardware path)");
+        let path = MeshShaderPath::new(renderer, bindless_layout, mesh_shader_fn)?;
+        return Ok(Box::new(path));
+    }
+    log::info!("Creating ComputeIndirectPath (compute+indirect fallback)");
+    let path = ComputeIndirectPath::new(renderer, bindless_layout)?;
+    Ok(Box::new(path))
 }
 
 // ============================================================================

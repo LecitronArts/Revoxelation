@@ -6,7 +6,6 @@ use super::Renderer;
 use super::camera::{CameraUniforms, extract_frustum_planes};
 use super::chunk_pool::INITIAL_MESHLET_CAPACITY;
 use super::cull_pipeline::{HiZConfig, MeshletCullPushConstants};
-use super::mesh_pipeline::MeshletPipeline;
 
 pub fn submit_frame_sequence() -> &'static [&'static str] {
     &[
@@ -190,8 +189,10 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             );
 
             // ---- Level 2: Meshlet-level backface + frustum + Hi-Z culling ----
-            if let (Some(meshlet_cull), Some(meshlet_pool)) =
-                (&renderer.meshlet_cull_pipeline, &renderer.meshlet_pool)
+            // Skipped when mesh shader path is active (task shader does the culling).
+            if !renderer.use_mesh_shader_path
+                && let (Some(meshlet_cull), Some(meshlet_pool)) =
+                    (&renderer.meshlet_cull_pipeline, &renderer.meshlet_pool)
             {
                 let total_meshlets = meshlet_pool.active_meshlet_count();
                 if total_meshlets > 0 {

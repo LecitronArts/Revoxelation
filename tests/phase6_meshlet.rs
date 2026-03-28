@@ -318,3 +318,55 @@ fn phase6_mesh_shader_fallback() {
         "device.rs must store mesh_shader_supported in DeviceContext"
     );
 }
+
+// ============================================================================
+// Plan 06-04 Task 3 — MeshShaderPath + automatic path selection
+// ============================================================================
+
+#[test]
+fn phase6_mesh_shader_path_exists() {
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        source.contains("MeshShaderPath"),
+        "mesh_pipeline.rs must contain MeshShaderPath struct"
+    );
+    assert!(
+        source.contains("cmd_draw_mesh_tasks"),
+        "mesh_pipeline.rs must contain cmd_draw_mesh_tasks for mesh shader dispatch"
+    );
+}
+
+#[test]
+fn phase6_automatic_path_selection() {
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        source.contains("mesh_shader_supported"),
+        "mesh_pipeline.rs must contain mesh_shader_supported check for path selection"
+    );
+    assert!(
+        source.contains("MeshShaderPath") && source.contains("ComputeIndirectPath"),
+        "mesh_pipeline.rs must contain both MeshShaderPath and ComputeIndirectPath"
+    );
+}
+
+#[test]
+fn phase6_mesh_shader_path_impl_trait() {
+    let source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("src/renderer/mesh_pipeline.rs should exist");
+    assert!(
+        source.contains("impl MeshletPipeline for MeshShaderPath"),
+        "MeshShaderPath must implement MeshletPipeline trait"
+    );
+}
+
+#[test]
+fn phase6_submit_skips_meshlet_cull_for_mesh_shader() {
+    let source = std::fs::read_to_string("src/renderer/submit.rs")
+        .expect("src/renderer/submit.rs should exist");
+    assert!(
+        source.contains("mesh_shader") || source.contains("use_mesh_shader"),
+        "submit.rs must reference mesh shader path for conditional meshlet_cull dispatch"
+    );
+}
