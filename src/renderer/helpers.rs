@@ -65,12 +65,13 @@ pub(crate) fn destroy_allocated_buffer(
     buffer: vk::Buffer,
     allocation: Allocation,
 ) -> Result<()> {
-    allocator_mut(renderer)
-        .free(allocation)
-        .map_err(|error| anyhow!("failed to free Vulkan buffer allocation: {error}"))?;
+    // Correct Vulkan destruction order (HIGH-02): destroy resource BEFORE freeing memory.
     unsafe {
         renderer.device_ctx.device.destroy_buffer(buffer, None);
     }
+    allocator_mut(renderer)
+        .free(allocation)
+        .map_err(|error| anyhow!("failed to free Vulkan buffer allocation: {error}"))?;
     Ok(())
 }
 
@@ -139,12 +140,13 @@ pub(crate) fn destroy_allocated_image(
     image: vk::Image,
     allocation: Allocation,
 ) -> Result<()> {
-    allocator_mut(renderer)
-        .free(allocation)
-        .map_err(|error| anyhow!("failed to free Vulkan image allocation: {error}"))?;
+    // Correct Vulkan destruction order (HIGH-02): destroy resource BEFORE freeing memory.
     unsafe {
         renderer.device_ctx.device.destroy_image(image, None);
     }
+    allocator_mut(renderer)
+        .free(allocation)
+        .map_err(|error| anyhow!("failed to free Vulkan image allocation: {error}"))?;
     Ok(())
 }
 
@@ -231,12 +233,21 @@ pub(crate) fn transition_image_layout(
                 vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::FRAGMENT_SHADER,
             ),
-            _ => (
-                vk::AccessFlags::empty(),
-                vk::AccessFlags::empty(),
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-            ),
+            _ => {
+                // MED-03: Catch-all uses conservative access masks and emits a warning.
+                // This ensures no silent zero-synchronization for unhandled transitions.
+                log::warn!(
+                    "transition_image_layout: unhandled layout transition from {:?} to {:?}",
+                    old_layout,
+                    new_layout,
+                );
+                (
+                    vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+                    vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                )
+            }
         };
 
     let barriers = [vk::ImageMemoryBarrier::default()

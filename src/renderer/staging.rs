@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use ash::vk;
 use gpu_allocator::{MemoryLocation, vulkan::{Allocation, AllocationScheme}};
 
@@ -32,7 +32,11 @@ impl StagingBuffer {
         })
     }
 
-    pub fn write(&mut self, data: &[u8]) {
+    /// Write data into the staging buffer (MED-04).
+    ///
+    /// Returns `Err` if the allocation is not mapped (e.g. on non-UMA GPUs with
+    /// `GpuOnly` memory — should never happen for staging buffers, but fail-safe).
+    pub fn write(&mut self, data: &[u8]) -> Result<()> {
         assert!(
             data.len() as u64 <= self.size,
             "staging write exceeds allocation size"
@@ -40,6 +44,9 @@ impl StagingBuffer {
 
         if let Some(mapped) = self.allocation.mapped_slice_mut() {
             mapped[..data.len()].copy_from_slice(data);
+            Ok(())
+        } else {
+            Err(anyhow!("staging buffer memory is not mapped — cannot write {} bytes", data.len()))
         }
     }
 

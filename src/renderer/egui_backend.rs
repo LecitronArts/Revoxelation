@@ -495,7 +495,7 @@ impl EguiAshBackend {
 
         let rgba_bytes = image_to_rgba_bytes(&delta.image);
         let mut staging = StagingBuffer::new(renderer, rgba_bytes.len() as u64)?;
-        staging.write(&rgba_bytes);
+        staging.write(&rgba_bytes)?;
         staging.copy_to_image(
             renderer,
             self.font_image,
@@ -602,7 +602,7 @@ impl EguiAshBackend {
         )?;
         {
             let mut staging = StagingBuffer::new(renderer, vertex_bytes.len() as u64)?;
-            staging.write(vertex_bytes);
+            staging.write(vertex_bytes)?;
             staging.copy_to(renderer, vb, vertex_bytes.len() as u64)?;
             staging.destroy(renderer)?;
         }
@@ -617,7 +617,7 @@ impl EguiAshBackend {
         )?;
         {
             let mut staging = StagingBuffer::new(renderer, index_bytes.len() as u64)?;
-            staging.write(index_bytes);
+            staging.write(index_bytes)?;
             staging.copy_to(renderer, ib, index_bytes.len() as u64)?;
             staging.destroy(renderer)?;
         }
