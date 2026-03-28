@@ -532,16 +532,55 @@ impl ChunkPool {
         let old_scene = self.scene_buffer;
         let old_vertex_size = (vertex_slot_stride_bytes() * old_capacity) as u64;
         let old_index_size = (index_slot_stride_bytes() * old_capacity) as u64;
-        let (_, _, _, _, old_total_scene_size) = scene_buffer_region_offsets(old_capacity);
+
+        // Compute per-region offsets for both old and new capacities (CRIT-02).
+        // Regions have different offsets in old vs new buffers due to align_up,
+        // so a single flat copy would place data at wrong positions.
+        let (old_inst, old_indirect, old_slot, old_dense, _) =
+            scene_buffer_region_offsets(old_capacity);
+        let (new_inst, new_indirect, new_slot, new_dense, _) =
+            scene_buffer_region_offsets(new_capacity);
+
+        const INSTANCE_STRIDE: u64 = size_of::<GpuChunkInstance>() as u64; // 48
+        const INDIRECT_STRIDE: u64 = 20; // DrawIndexedIndirectCommand: 5 * u32
+        const SLOT_STRIDE: u64 = size_of::<u32>() as u64; // 4
+
+        let old_cap = old_capacity as u64;
+        let inst_copy_size = old_cap * INSTANCE_STRIDE;
+        let indirect_copy_size = old_cap * INDIRECT_STRIDE;
+        let slot_copy_size = old_cap * SLOT_STRIDE;
+        let dense_copy_size = old_cap * INDIRECT_STRIDE;
 
         super::helpers::submit_one_shot_commands(renderer, |device, cmd| {
             let vertex_copy = vk::BufferCopy::default().size(old_vertex_size);
             let index_copy = vk::BufferCopy::default().size(old_index_size);
-            let scene_copy = vk::BufferCopy::default().size(old_total_scene_size);
+            // Per-region scene_buffer copies with correct src/dst offsets (CRIT-02).
+            let scene_copies = [
+                // Region 0: GpuChunkInstance[]
+                vk::BufferCopy::default()
+                    .src_offset(old_inst)
+                    .dst_offset(new_inst)
+                    .size(inst_copy_size),
+                // Region 1: DrawIndexedIndirectCommand[] (indirect templates)
+                vk::BufferCopy::default()
+                    .src_offset(old_indirect)
+                    .dst_offset(new_indirect)
+                    .size(indirect_copy_size),
+                // Region 2: u32[] (draw slot mapping)
+                vk::BufferCopy::default()
+                    .src_offset(old_slot)
+                    .dst_offset(new_slot)
+                    .size(slot_copy_size),
+                // Region 3: DrawIndexedIndirectCommand[] (dense indirect output)
+                vk::BufferCopy::default()
+                    .src_offset(old_dense)
+                    .dst_offset(new_dense)
+                    .size(dense_copy_size),
+            ];
             unsafe {
                 device.cmd_copy_buffer(cmd, old_vertex, new_vertex_buffer, &[vertex_copy]);
                 device.cmd_copy_buffer(cmd, old_index, new_index_buffer, &[index_copy]);
-                device.cmd_copy_buffer(cmd, old_scene, new_scene_buffer, &[scene_copy]);
+                device.cmd_copy_buffer(cmd, old_scene, new_scene_buffer, &scene_copies);
             }
             Ok(())
         })?;
@@ -945,7 +984,7 @@ fn world_aabb(local: [f32; 3], origin: [f32; 3], chunk_scale: f32) -> [f32; 3] {
 
 /// Per-meshlet GPU metadata (64 bytes, #[repr(C)], Pod+Zeroable).
 ///
-/// Layout (D-04):
+/// Layout (D-04, MSHL-05):
 ///   center:          [f32; 3]  — bounding sphere center (local-space)   12B
 ///   radius:          f32       — bounding sphere radius                  4B
 ///   cone_axis:       [f32; 3]  — orientation cone axis (normalized)     12B
@@ -955,9 +994,9 @@ fn world_aabb(local: [f32; 3], origin: [f32; 3], chunk_scale: f32) -> [f32; 3] {
 ///   vertex_count:    u32       — max 64                                  4B
 ///   triangle_count:  u32       — max 124                                 4B
 ///   chunk_slot:      u32       — which chunk this meshlet belongs to     4B
-///   lod_level:       u32       — LOD level                               4B
-///   pad0:            u32       — padding                                 4B
-///   pad1:            u32       — padding                                 4B
+///   lod_level:       u32       — LOD level (0 = original, 1 = simplified) 4B
+///   parent_error:    f32       — simplification error for LOD selection   4B
+///   group_id:        u32       — LOD group ID                            4B
 ///   Total: 64 bytes
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -972,8 +1011,8 @@ pub struct GpuMeshlet {
     pub triangle_count: u32,
     pub chunk_slot: u32,
     pub lod_level: u32,
-    pub pad0: u32,
-    pub pad1: u32,
+    pub parent_error: f32,
+    pub group_id: u32,
 }
 
 impl GpuMeshlet {
@@ -1158,9 +1197,9 @@ impl MeshletPool {
                 vertex_count: desc.vertex_count,
                 triangle_count: desc.triangle_count,
                 chunk_slot,
-                lod_level: u32::from(key.lod_level),
-                pad0: 0,
-                pad1: 0,
+                lod_level: u32::from(desc.lod_level),
+                parent_error: desc.parent_error,
+                group_id: desc.group_id,
             })
             .collect();
 
