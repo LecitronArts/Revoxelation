@@ -888,3 +888,111 @@ fn phase6_1_no_seed_input_production() {
         );
     }
 }
+
+// ===========================================================================
+// Plan 08 tests — Architecture refactoring (REFAC-01~05, REFAC-08)
+// ===========================================================================
+
+/// REFAC-01: Renderer must be composed of sub-structs (VulkanCore, PipelineSet, PoolManager)
+/// instead of 38+ flat fields.
+#[test]
+fn phase6_1_renderer_split() {
+    let src = std::fs::read_to_string("src/renderer/mod.rs")
+        .expect("should read renderer/mod.rs");
+
+    let has_core = src.contains("VulkanCore") || src.contains("vulkan_core");
+    let has_pipelines = src.contains("PipelineSet") || src.contains("pipeline_set");
+    let has_pools = src.contains("PoolManager") || src.contains("pool_manager");
+
+    assert!(
+        has_core,
+        "renderer/mod.rs must contain VulkanCore sub-struct usage"
+    );
+    assert!(
+        has_pipelines,
+        "renderer/mod.rs must contain PipelineSet sub-struct usage"
+    );
+    assert!(
+        has_pools,
+        "renderer/mod.rs must contain PoolManager sub-struct usage"
+    );
+}
+
+/// REFAC-02: submit_frame must be decomposed into at least 6 named sub-functions
+/// (acquire_image, begin_render_pass, present, etc.).
+#[test]
+fn phase6_1_submit_decomposed() {
+    let src = std::fs::read_to_string("src/renderer/submit.rs")
+        .expect("should read submit.rs");
+
+    let named_fns = [
+        "fn acquire_image",
+        "fn begin_render_pass",
+        "fn present",
+        "fn dispatch_chunk_cull",
+        "fn draw_meshlets",
+        "fn draw_egui",
+    ];
+    let found = named_fns.iter().filter(|f| src.contains(**f)).count();
+    assert!(
+        found >= 6,
+        "submit.rs must contain at least 6 named sub-functions, found {found}: {:?}",
+        named_fns.iter().filter(|f| src.contains(**f)).collect::<Vec<_>>()
+    );
+}
+
+/// REFAC-03: Swapchain creation must share helper functions between create and recreate.
+#[test]
+fn phase6_1_swapchain_dedup() {
+    let src = std::fs::read_to_string("src/renderer/swapchain.rs")
+        .expect("should read swapchain.rs");
+
+    let has_helper = src.contains("fn build_depth_resources")
+        || src.contains("fn build_render_pass")
+        || src.contains("fn build_framebuffers")
+        || src.contains("fn build_depth_image");
+    assert!(
+        has_helper,
+        "swapchain.rs must contain shared helper functions (build_depth_resources, etc.)"
+    );
+}
+
+/// REFAC-04: Staging copy pattern must be extracted into a helper function.
+#[test]
+fn phase6_1_staging_helper() {
+    let src = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+        .expect("should read chunk_pool.rs");
+
+    assert!(
+        src.contains("stage_and_copy") || src.contains("staging_helper"),
+        "chunk_pool.rs must contain stage_and_copy or staging_helper function"
+    );
+}
+
+/// REFAC-05: Binding IDs must use named constants instead of magic number literals.
+#[test]
+fn phase6_1_binding_constants() {
+    let src = std::fs::read_to_string("src/renderer/bindless.rs")
+        .expect("should read bindless.rs");
+
+    assert!(
+        src.contains("BINDING_SCENE"),
+        "bindless.rs must define BINDING_SCENE constant"
+    );
+    assert!(
+        src.contains("BINDING_VERTEX") || src.contains("BINDING_MESHLET_VERTEX"),
+        "bindless.rs must define BINDING_VERTEX or BINDING_MESHLET_VERTEX constant"
+    );
+}
+
+/// REFAC-08: App must have a tick() method, keeping the event loop body short.
+#[test]
+fn phase6_1_app_tick() {
+    let src = std::fs::read_to_string("src/app.rs")
+        .expect("should read app.rs");
+
+    assert!(
+        src.contains("fn tick"),
+        "app.rs must contain App::tick() method"
+    );
+}
