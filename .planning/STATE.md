@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06.1-rendering-polish
 status: in_progress
-last_updated: "2026-03-28T05:51:07.000Z"
+last_updated: "2026-03-28T07:13:31.000Z"
 progress:
   total_phases: 14
   completed_phases: 8
   total_plans: 47
-  completed_plans: 42
+  completed_plans: 43
 ---
 
 # Session State
@@ -22,7 +22,15 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 06.1-rendering-polish
-**Status:** In progress — Plan 03 complete (HIGH-01~02, HIGH-07, MED-01~05, MED-09). 5 plans remaining.
+**Status:** In progress — Plan 05 complete (POLISH-02, POLISH-03). 3 plans remaining.
+
+## Key Decisions (Phase 06.1 Plan 05)
+
+- MSAA_SAMPLES=TYPE_4 as pub const in swapchain.rs, shared by all pipelines
+- 4-attachment MSAA render pass: MSAA color, MSAA depth, resolve color (swapchain), resolve depth (Hi-Z)
+- Depth resolve via VkSubpassDescriptionDepthStencilResolve SAMPLE_ZERO mode (universally supported)
+- MSAA intermediates use TRANSIENT_ATTACHMENT for potential lazily-allocated memory
+- depth_store_op test updated: DONT_CARE correct on MSAA intermediates, only resolved attachments need STORE
 
 ## Key Decisions (Phase 06.1 Plan 03)
 
@@ -113,3 +121,4 @@ See: .planning/PROJECT.md
 - 2026-03-28: Executed 06.1-01 — 4 CRIT Vulkan bugs fixed (depth store_op, scene_buffer grow, push constants, Hi-Z pass 0)
 - 2026-03-28: Executed 06.1-02 — MeshletPool reclamation + streaming state fixes (CRIT-04~06, HIGH-03~06, MED-06~08)
 - 2026-03-28: Executed 06.1-03 — Vulkan resource safety fixes (HIGH-01~02, HIGH-07, MED-01~05, MED-09)
+- 2026-03-28: Executed 06.1-05 — Texture mipmaps + aniso filtering + MSAA 4x (POLISH-02, POLISH-03)

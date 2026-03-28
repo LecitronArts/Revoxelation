@@ -99,8 +99,8 @@
 ### Rendering Polish and Optimization (Phase 06.1)
 
 - [ ] **POLISH-01**: All shader hardcoded constants (screen_height=1080, SSE threshold=2.0, distance clamp=0.001) are parameterized via push constants or UBO — no magic numbers in shader source.
-- [ ] **POLISH-02**: Texture array uses mipmap chain with anisotropic filtering sampler; block textures are sharp at distance without shimmer.
-- [ ] **POLISH-03**: MSAA (4× minimum) or equivalent post-process AA eliminates jagged block edges.
+- [x] **POLISH-02**: Texture array uses mipmap chain with anisotropic filtering sampler; block textures are sharp at distance without shimmer.
+- [x] **POLISH-03**: MSAA (4× minimum) or equivalent post-process AA eliminates jagged block edges.
 - [ ] **POLISH-04**: Shared shader include system eliminates duplicated code between chunk_mesh/meshlet_draw/meshlet.mesh shaders.
 - [ ] **POLISH-05**: All runtime unwrap()/panic!() in non-test code replaced with Result propagation or graceful error logging.
 - [ ] **POLISH-06**: GPU performance counters read actual culled meshlet/chunk counts from GPU (async readback, 1-2 frame latency) — HUD shows real numbers.
@@ -222,8 +222,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MSHL-04 | Phase 6 | Complete |
 | MSHL-05 | Phase 6 | Complete |
 | POLISH-01 | Phase 06.1 | Pending |
-| POLISH-02 | Phase 06.1 | Pending |
-| POLISH-03 | Phase 06.1 | Pending |
+| POLISH-02 | Phase 06.1 | Complete |
+| POLISH-03 | Phase 06.1 | Complete |
 | POLISH-04 | Phase 06.1 | Pending |
 | POLISH-05 | Phase 06.1 | Pending |
 | POLISH-06 | Phase 06.1 | Pending |
