@@ -23,13 +23,17 @@ use crate::streaming::{
 
 use super::{
     events::{
-        BlockEditCommand, BlockEditOperation, BlockPosition, ChunkCoordinate, ChunkLifecycleAction,
-        ChunkLifecycleCommand, EventBus, EventBusSnapshot, PlayerAction, PlayerActionCommand,
-        RuntimeCommand,
+        EventBus, EventBusSnapshot,
     },
     observability::RuntimeHudOverlay,
     stages::{STAGE_ORDER, Stage},
     trace::{TraceEntry, TransitionKind},
+};
+
+#[cfg(test)]
+use super::events::{
+    BlockEditCommand, BlockEditOperation, BlockPosition, ChunkCoordinate, ChunkLifecycleAction,
+    ChunkLifecycleCommand, PlayerAction, PlayerActionCommand, RuntimeCommand,
 };
 
 // ---------------------------------------------------------------------------
@@ -176,7 +180,7 @@ pub fn run_frame(
 
 fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32; 3]) {
     if frame_index < 10 || frame_index.is_multiple_of(60) {
-        eprintln!(
+        log::debug!(
             "[DIAG-WU] frame={} octree_nodes={} active_set_size={}",
             frame_index,
             ss.octree.nodes().len(),
@@ -207,7 +211,7 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
     );
 
     if frame_index < 10 || frame_index.is_multiple_of(60) {
-        eprintln!(
+        log::debug!(
             "[DIAG-WU] frame={} to_activate={} to_deactivate={}",
             frame_index, diff.to_activate.len(), diff.to_deactivate.len(),
         );
@@ -304,7 +308,7 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
     let dirty_batch = {
         let batch = meshing.take_dirty_batch(PER_FRAME_CAP);
         if frame_index < 10 || frame_index.is_multiple_of(60) {
-            eprintln!(
+            log::debug!(
                 "[DIAG-MS] frame={} results_received={} dirty_batch_size={} queued_remaining={} pending_render_deltas={}",
                 frame_index, recv_count, batch.len(),
                 meshing.queued.len(),
@@ -599,25 +603,29 @@ pub fn debug_deactivate_active_chunk_for_tests(key: ChunkKey, frame_index: u64) 
 // Input seeding
 // ---------------------------------------------------------------------------
 
-fn seed_input_commands(event_bus: &mut EventBus) {
-    let _ = event_bus.publish_command(RuntimeCommand::PlayerAction(PlayerActionCommand {
-        actor_entity_id: 1,
-        action: PlayerAction::Jump,
-    }));
+fn seed_input_commands(_event_bus: &mut EventBus) {
+    // MED-10: Production no-op — dummy events are only needed in tests.
+    #[cfg(test)]
+    {
+        let _ = _event_bus.publish_command(RuntimeCommand::PlayerAction(PlayerActionCommand {
+            actor_entity_id: 1,
+            action: PlayerAction::Jump,
+        }));
 
-    let _ = event_bus.publish_command(RuntimeCommand::ChunkLifecycle(ChunkLifecycleCommand {
-        chunk: ChunkCoordinate { x: 0, y: 0, z: 0 },
-        action: ChunkLifecycleAction::Activate,
-        lod_level: 0,
-    }));
+        let _ = _event_bus.publish_command(RuntimeCommand::ChunkLifecycle(ChunkLifecycleCommand {
+            chunk: ChunkCoordinate { x: 0, y: 0, z: 0 },
+            action: ChunkLifecycleAction::Activate,
+            lod_level: 0,
+        }));
 
-    let _ = event_bus.publish_command(RuntimeCommand::BlockEdit(BlockEditCommand {
-        actor_entity_id: 1,
-        position: BlockPosition { x: 0, y: 64, z: 0 },
-        edit: BlockEditOperation::Place {
-            block_id: "stone".to_string(),
-        },
-    }));
+        let _ = _event_bus.publish_command(RuntimeCommand::BlockEdit(BlockEditCommand {
+            actor_entity_id: 1,
+            position: BlockPosition { x: 0, y: 64, z: 0 },
+            edit: BlockEditOperation::Place {
+                block_id: "stone".to_string(),
+            },
+        }));
+    }
 }
 
 // ---------------------------------------------------------------------------
