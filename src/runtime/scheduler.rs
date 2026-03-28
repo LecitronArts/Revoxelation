@@ -370,11 +370,37 @@ fn handle_job_result(
     frame_index: u64,
 ) {
     let key = result.key;
-    // Remove cancel flag for this key.
+    // Check if this job was cancelled while in-flight (CRIT-06).
+    let was_cancelled = ss
+        .cancel_flags
+        .get(&key)
+        .map(|f| f.load(Ordering::Relaxed))
+        .unwrap_or(false);
+    // Remove cancel flag for this key (HIGH-04).
     ss.cancel_flags.remove(&key);
 
     match result.outcome {
         ChunkJobOutcome::Generated(voxels) => {
+            // If cancel flag was set during Loading, go to Inactive instead of Active (CRIT-06).
+            if was_cancelled {
+                let state = ss.state_store.get(&key).map(|e| e.state);
+                if state == Some(ChunkState::Loading) {
+                    if let Err(e) = ss.state_store.transition_to(
+                        key,
+                        ChunkState::Error {
+                            retry_count: MAX_RETRIES,
+                            next_retry_frame: frame_index,
+                        },
+                    ) {
+                        warn!("chunk {key:?} transition to Error (cancelled Generated) failed: {e}");
+                    }
+                    if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
+                        warn!("chunk {key:?} transition to Inactive (cancelled Generated) failed: {e}");
+                    }
+                    ss.state_store.remove(&key);
+                }
+                return;
+            }
             // Loading -> Active
             if let Err(e) = ss.state_store.transition_to(key, ChunkState::Active) {
                 warn!("chunk {key:?} transition to Active (Generated) failed: {e}");
@@ -393,17 +419,33 @@ fn handle_job_result(
             }
         }
         ChunkJobOutcome::Loaded => {
+            if was_cancelled {
+                let state = ss.state_store.get(&key).map(|e| e.state);
+                if state == Some(ChunkState::Loading) {
+                    if let Err(e) = ss.state_store.transition_to(
+                        key,
+                        ChunkState::Error {
+                            retry_count: MAX_RETRIES,
+                            next_retry_frame: frame_index,
+                        },
+                    ) {
+                        warn!("chunk {key:?} transition to Error (cancelled Loaded) failed: {e}");
+                    }
+                    if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
+                        warn!("chunk {key:?} transition to Inactive (cancelled Loaded) failed: {e}");
+                    }
+                    ss.state_store.remove(&key);
+                }
+                return;
+            }
             if let Err(e) = ss.state_store.transition_to(key, ChunkState::Active) {
                 warn!("chunk {key:?} transition to Active (Loaded) failed: {e}");
             }
         }
         ChunkJobOutcome::Cancelled => {
-            // Intentional cancel: transition Loading -> Inactive (or leave as-is).
-            // Guard: only transition if currently in Loading state.
+            // Intentional cancel: transition Loading -> Inactive.
             let state = ss.state_store.get(&key).map(|e| e.state);
             if state == Some(ChunkState::Loading) {
-                // Loading is not directly -> Inactive; go through Queued->Inactive path.
-                // Use Error path: Loading -> Error, then Error -> Inactive.
                 if let Err(e) = ss.state_store.transition_to(
                     key,
                     ChunkState::Error {
@@ -416,10 +458,11 @@ fn handle_job_result(
                 if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
                     warn!("chunk {key:?} transition to Inactive (Cancelled) failed: {e}");
                 }
+                ss.state_store.remove(&key);
             }
         }
         ChunkJobOutcome::Unloaded => {
-            // Loading/Unloading -> Inactive
+            // Unloading -> Inactive
             if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
                 warn!("chunk {key:?} transition to Inactive (Unloaded) failed: {e}");
             }
@@ -437,6 +480,7 @@ fn handle_job_result(
                 );
             }
             ss.pending_render_deltas.push_back(RenderDelta::Remove { key });
+            ss.state_store.remove(&key); // HIGH-03: no unbounded growth
         }
         ChunkJobOutcome::Failed(_msg) => {
             let current_retry = match ss.state_store.get(&key).map(|e| e.state) {
@@ -457,6 +501,7 @@ fn handle_job_result(
                 if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
                     warn!("chunk {key:?} transition to Inactive (Failed, max retries) failed: {e}");
                 }
+                ss.state_store.remove(&key); // HIGH-03: cleanup after max retries
             } else if let Err(e) = ss.state_store.transition_to(
                     key,
                     ChunkState::Error {
@@ -471,24 +516,43 @@ fn handle_job_result(
 }
 
 fn deactivate_chunk(ss: &mut StreamingState, key: ChunkKey) {
-    if let Some(flag) = ss.cancel_flags.get(&key) {
-        flag.store(true, Ordering::Relaxed);
-    }
-    ss.job_queue.cancel_queued(key);
-
     let state = ss.state_store.get(&key).map(|entry| entry.state);
-    if matches!(
-        state,
-        Some(ChunkState::Active | ChunkState::Upgrading | ChunkState::Downgrading)
-    ) {
-        if let Err(e) = ss.state_store.transition_to(key, ChunkState::Unloading) {
-            warn!("chunk {key:?} transition to Unloading (deactivate) failed: {e}");
+
+    match state {
+        // CRIT-06: Queued → Inactive directly.
+        Some(ChunkState::Queued) => {
+            ss.job_queue.cancel_queued(key);
+            ss.cancel_flags.remove(&key); // HIGH-04: cleanup cancel flag
+            if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
+                warn!("chunk {key:?} transition Queued→Inactive (deactivate) failed: {e}");
+            }
+            ss.state_store.remove(&key); // HIGH-03: no unbounded growth
         }
-        if let Err(e) = ss
-            .result_sender
-            .send(ChunkJobResult::new(key, ChunkJobOutcome::Unloaded))
-        {
-            warn!("chunk {key:?} failed to send Unloaded result: {e}");
+        // CRIT-06: Loading → set cancel flag for pending deactivation.
+        Some(ChunkState::Loading) => {
+            if let Some(flag) = ss.cancel_flags.get(&key) {
+                flag.store(true, Ordering::Relaxed);
+            }
+            // handle_job_result will check cancel flag and transition to Inactive.
+        }
+        // Active/Upgrading/Downgrading → Unloading → Inactive (via Unloaded result).
+        Some(ChunkState::Active | ChunkState::Upgrading | ChunkState::Downgrading) => {
+            if let Some(flag) = ss.cancel_flags.get(&key) {
+                flag.store(true, Ordering::Relaxed);
+            }
+            ss.job_queue.cancel_queued(key);
+            if let Err(e) = ss.state_store.transition_to(key, ChunkState::Unloading) {
+                warn!("chunk {key:?} transition to Unloading (deactivate) failed: {e}");
+            }
+            if let Err(e) = ss
+                .result_sender
+                .send(ChunkJobResult::new(key, ChunkJobOutcome::Unloaded))
+            {
+                warn!("chunk {key:?} failed to send Unloaded result: {e}");
+            }
+        }
+        _ => {
+            // Other states (Inactive, Error, Unloading): no-op or already handled.
         }
     }
 }

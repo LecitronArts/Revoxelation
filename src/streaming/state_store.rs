@@ -133,6 +133,14 @@ impl ChunkStateStore {
         self.entries.is_empty()
     }
 
+    /// Remove a chunk from the store entirely (HIGH-03).
+    ///
+    /// Called when a chunk transitions to Inactive and should no longer be tracked,
+    /// preventing unbounded HashMap growth.
+    pub fn remove(&mut self, key: &ChunkKey) -> Option<ChunkEntry> {
+        self.entries.remove(key)
+    }
+
     /// Return the set of keys whose current state is `Active`.
     pub fn active_set(&self) -> std::collections::HashSet<ChunkKey> {
         self.entries
