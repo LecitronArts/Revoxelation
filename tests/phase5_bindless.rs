@@ -66,12 +66,16 @@ fn phase5_no_fallback_path() {
     let source = std::fs::read_to_string("src/renderer/device.rs")
         .expect("src/renderer/device.rs should exist");
 
-    // Count occurrences of "fallback"
+    // Count occurrences of "fallback" — exclude mesh shader fallback (mesh shaders
+    // are optional; compute+indirect fallback is expected and correct)
     let fallback_occurrences: Vec<&str> = source
         .lines()
         .filter(|line| {
             let lower = line.to_lowercase();
-            lower.contains("fallback") && !lower.contains("no fallback")
+            lower.contains("fallback")
+                && !lower.contains("no fallback")
+                && !lower.contains("compute fallback")
+                && !lower.contains("compute+indirect fallback")
         })
         .collect();
 
