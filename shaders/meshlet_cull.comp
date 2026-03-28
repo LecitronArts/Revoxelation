@@ -173,7 +173,7 @@ bool lod_cull(GpuMeshlet m) {
     }
 
     float distance = length(pc.camera_pos - m.center);
-    if (distance < 0.001) distance = 0.001; // avoid division by zero
+    if (distance < MIN_LOD_DISTANCE) distance = MIN_LOD_DISTANCE; // avoid division by zero
 
     // Project parent_error to screen-space pixels (SSE).
     // projected_error = parent_error * screen_height / (2.0 * distance * tan(fov/2))

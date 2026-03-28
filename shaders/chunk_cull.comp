@@ -1,22 +1,9 @@
 #version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "common.glsl"
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-
-// GpuChunkInstance (48 bytes, matches Rust #[repr(C)] layout):
-//   aabb_min:     vec3  (12 bytes)
-//   material_id:  uint  ( 4 bytes)
-//   aabb_max:     vec3  (12 bytes)
-//   lod_level:    uint  ( 4 bytes)
-//   chunk_origin: vec3  (12 bytes)
-//   chunk_scale:  float ( 4 bytes)
-struct GpuChunkInstance {
-    vec3 aabb_min;
-    uint material_id;
-    vec3 aabb_max;
-    uint lod_level;
-    vec3 chunk_origin;
-    float chunk_scale;
-};
 
 struct DrawIndexedIndirectCommand {
     uint indexCount;

@@ -358,6 +358,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                         meshlet_pool,
                         max_draw_count,
                         extent,
+                        renderer.sse_threshold,
                     );
                 }
             }

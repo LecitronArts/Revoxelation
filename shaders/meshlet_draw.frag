@@ -30,7 +30,7 @@ layout(set = 0, binding = 9) uniform sampler2DArray tex_array;
 void main() {
     // Alpha dither for LOD transitions (MSHL-05).
     // v_lod_transition ranges from 0 (fully opaque) to 1 (fully transparent at boundary).
-    if (v_lod_transition > 0.001) {
+    if (v_lod_transition > MIN_LOD_DISTANCE) {
         float threshold = bayer_dither(ivec2(gl_FragCoord.xy));
         float alpha = 1.0 - v_lod_transition;
         if (alpha < threshold) {

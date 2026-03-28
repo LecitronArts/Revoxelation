@@ -24,6 +24,7 @@ pub trait MeshletPipeline {
     /// - `meshlet_pool`: GPU buffers for meshlet data (VB, IB, indirect, count).
     /// - `max_draw_count`: upper bound on indirect draw count (meshlet capacity).
     /// - `extent`: swapchain extent for viewport/scissor.
+    /// - `sse_threshold`: SSE threshold in pixels (POLISH-01: parameterized, not hardcoded).
     #[allow(clippy::too_many_arguments)]
     fn record_draw(
         &self,
@@ -34,10 +35,26 @@ pub trait MeshletPipeline {
         meshlet_pool: &MeshletPool,
         max_draw_count: u32,
         extent: vk::Extent2D,
+        sse_threshold: f32,
     );
 
     /// Destroy Vulkan resources owned by this pipeline.
     fn destroy_resources(&mut self, device: &ash::Device);
+}
+
+/// Extended push constant struct for ComputeIndirectPath's vertex shader.
+///
+/// Matches the GLSL `PushConstants` block in meshlet_draw.vert:
+///   mat4 view_proj (64 bytes) + vec3 camera_pos (12) + float screen_height (4) + float sse_threshold (4) = 84 bytes.
+///
+/// The extra fields parameterize LOD transition values that were previously hardcoded (POLISH-01).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MeshletDrawPushConstants {
+    pub view_proj: [[f32; 4]; 4],
+    pub camera_pos: [f32; 3],
+    pub screen_height: f32,
+    pub sse_threshold: f32,
 }
 
 // ============================================================================
@@ -64,11 +81,11 @@ impl ComputeIndirectPath {
     pub fn new(renderer: &Renderer, bindless_layout: vk::DescriptorSetLayout) -> Result<Self> {
         let device = &renderer.device_ctx.device;
 
-        // Push constant range for CameraUniforms (80 bytes, VERTEX stage)
+        // Push constant range for MeshletDrawPushConstants (84 bytes, VERTEX stage, POLISH-01)
         let push_constant_ranges = [vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX,
             offset: 0,
-            size: std::mem::size_of::<CameraUniforms>() as u32,
+            size: std::mem::size_of::<MeshletDrawPushConstants>() as u32,
         }];
 
         let set_layouts = [bindless_layout];
@@ -207,6 +224,7 @@ impl MeshletPipeline for ComputeIndirectPath {
         meshlet_pool: &MeshletPool,
         max_draw_count: u32,
         extent: vk::Extent2D,
+        sse_threshold: f32,
     ) {
         // Negative-height viewport flips Vulkan's Y-down clip space to Y-up,
         // matching glam's perspective_rh (OpenGL convention). Core since Vulkan 1.1.
@@ -226,6 +244,14 @@ impl MeshletPipeline for ComputeIndirectPath {
         let vertex_buffers = [meshlet_pool.meshlet_vertex_buffer];
         let vertex_offsets: [vk::DeviceSize; 1] = [0];
 
+        // Build extended push constants with screen_height and sse_threshold (POLISH-01).
+        let draw_pc = MeshletDrawPushConstants {
+            view_proj: camera.view_proj,
+            camera_pos: camera.camera_pos,
+            screen_height: extent.height as f32,
+            sse_threshold,
+        };
+
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
             device.cmd_set_viewport(cmd, 0, &[viewport]);
@@ -235,7 +261,7 @@ impl MeshletPipeline for ComputeIndirectPath {
                 self.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX,
                 0,
-                bytemuck::bytes_of(camera),
+                bytemuck::bytes_of(&draw_pc),
             );
             // Bind the shared bindless descriptor set 0
             device.cmd_bind_descriptor_sets(
@@ -478,6 +504,7 @@ impl MeshletPipeline for MeshShaderPath {
         meshlet_pool: &MeshletPool,
         max_draw_count: u32,
         extent: vk::Extent2D,
+        sse_threshold: f32,
     ) {
         let _ = max_draw_count; // mesh shader path does not use indirect count
         let total_meshlets = meshlet_pool.active_meshlet_count();
@@ -509,7 +536,7 @@ impl MeshletPipeline for MeshShaderPath {
             enable_hiz: 1,
             camera_pos: camera.camera_pos,
             _pad: 0,
-            sse_threshold: 2.0,
+            sse_threshold,
             screen_height: extent.height as f32,
         };
         let combined_pc = MeshShaderPushConstants {
