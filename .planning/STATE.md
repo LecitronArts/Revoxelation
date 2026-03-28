@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06.1-rendering-polish
 status: in_progress
-last_updated: "2026-03-28T07:13:31.000Z"
+last_updated: "2026-03-28T08:00:00.000Z"
 progress:
   total_phases: 14
   completed_phases: 8
   total_plans: 47
-  completed_plans: 43
+  completed_plans: 44
 ---
 
 # Session State
@@ -22,7 +22,25 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 06.1-rendering-polish
-**Status:** In progress — Plan 04 complete (POLISH-01, POLISH-04, POLISH-07). 3 plans remaining.
+**Status:** In progress — Plan 06 complete (POLISH-05, POLISH-06, MED-10, MED-11). Plans 07 done. 1 plan remaining (06.1-08).
+
+## Key Decisions (Phase 06.1 Plan 07)
+
+- Camera process_keyboard takes delta_time: f32; movement = direction * move_speed * delta_time (POLISH-09)
+- Camera process_mouse: 2-arg API with self.mouse_sensitivity (configurable, default 0.1)
+- GpuChunkInstance: spawn_time + _pad_fade for 48→64 byte alignment; GLSL struct updated
+- Fragment shader fade: alpha = clamp((current_time - spawn_time) / 0.5, 0.0, 1.0) with Bayer dither discard (POLISH-08)
+- current_time passed via MeshletDrawPushConstants (84→88 bytes)
+- Octree parent_of: skip (return None) for out-of-range parent coordinates instead of clamp (MED-12)
+- hecs crate removed from Cargo.toml (REFAC-06); ChunkDrawMetadata struct deleted (REFAC-07)
+- Skirt emission code removed from greedy.rs (REFAC-07/MSHL-05)
+
+## Key Decisions (Phase 06.1 Plan 06)
+
+- POLISH-05: All runtime unwrap()/panic!() replaced with anyhow Results and log framework
+- POLISH-06: GpuReadbackCounters double-buffered HOST_VISIBLE readback for meshlet count
+- MED-10: All eprintln! replaced with log::warn/error (diagnostics cleanup)
+- MED-11: seed_input_commands guarded by cfg(test)
 
 ## Key Decisions (Phase 06.1 Plan 04)
 
@@ -130,4 +148,5 @@ See: .planning/PROJECT.md
 - 2026-03-28: Executed 06.1-02 — MeshletPool reclamation + streaming state fixes (CRIT-04~06, HIGH-03~06, MED-06~08)
 - 2026-03-28: Executed 06.1-03 — Vulkan resource safety fixes (HIGH-01~02, HIGH-07, MED-01~05, MED-09)
 - 2026-03-28: Executed 06.1-05 — Texture mipmaps + aniso filtering + MSAA 4x (POLISH-02, POLISH-03)
-- 2026-03-28: Executed 06.1-04 — Shader parameterization + shared includes + SPIR-V optimization (POLISH-01, POLISH-04, POLISH-07)
+- 2026-03-28: Executed 06.1-06 — Error handling hardening + GPU readback counters (POLISH-05, POLISH-06, MED-10~11)
+- 2026-03-28: Executed 06.1-07 — Camera smoothing + chunk fade-in + dead code cleanup (POLISH-08, POLISH-09, MED-12, REFAC-06~07)

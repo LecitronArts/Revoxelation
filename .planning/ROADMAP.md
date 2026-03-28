@@ -207,8 +207,8 @@ Plans:
 - [x] 06.1-03: Vulkan resource safety (HIGH-01~02, HIGH-07, MED-01~05, MED-09).
 - [x] 06.1-04: Shader parameterization + shared includes + compilation optimization (POLISH-01, POLISH-04, POLISH-07).
 - [x] 06.1-05: Texture quality + anti-aliasing (POLISH-02, POLISH-03).
-- [ ] 06.1-06: Error handling hardening + GPU readback counters (POLISH-05, POLISH-06, MED-10~11).
-- [ ] 06.1-07: Camera smoothing + chunk fade-in + dead code cleanup (POLISH-08, POLISH-09, MED-12, REFAC-06~07).
+- [x] 06.1-06: Error handling hardening + GPU readback counters (POLISH-05, POLISH-06, MED-10~11).
+- [x] 06.1-07: Camera smoothing + chunk fade-in + dead code cleanup (POLISH-08, POLISH-09, MED-12, REFAC-06~07).
 - [ ] 06.1-08: Architecture refactoring (REFAC-01~05, REFAC-08).
 
 ### Phase 7: Lighting and Shadows
@@ -299,7 +299,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 06.1 ->
 | 5. Bindless Architecture and GPU Scene | 5/5 | Complete | 2026-03-26 |
 | 05.1. Critical Bug Fixes and Safety Hardening | 6/6 | Complete | 2026-03-27 |
 | 6. Meshlet Pipeline | 5/5 | Complete | 2026-03-28 |
-| 06.1. Rendering Polish, Bug Fixes, Refactoring | 5/8 | In Progress | - |
+| 06.1. Rendering Polish, Bug Fixes, Refactoring | 7/8 | In Progress | - |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |
 | 9. Authoritative Block Editing Feedback | 0/2 | Not started | - |

@@ -92,8 +92,8 @@
 - [x] **MED-07**: Dirty queue uses HashSet for O(1) dedup instead of O(n) VecDeque scan.
 - [x] **MED-08**: run_mesh_sync limits job results processed per frame — no frame stall on bulk completion.
 - [x] **MED-09**: cancel_flags use Acquire/Release ordering — correct cross-thread visibility on ARM.
-- [ ] **MED-10**: seed_input_commands placeholder removed or guarded by cfg(test) — no per-frame dummy events in production.
-- [ ] **MED-11**: eprintln! diagnostics replaced with log::debug! — respects log level configuration.
+- [x] **MED-10**: seed_input_commands placeholder removed or guarded by cfg(test) — no per-frame dummy events in production.
+- [x] **MED-11**: eprintln! diagnostics replaced with log::debug! — respects log level configuration.
 - [ ] **MED-12**: Octree parent clamp replaced with skip-link — no incorrect topology from coordinate saturation.
 
 ### Rendering Polish and Optimization (Phase 06.1)
@@ -102,8 +102,8 @@
 - [x] **POLISH-02**: Texture array uses mipmap chain with anisotropic filtering sampler; block textures are sharp at distance without shimmer.
 - [x] **POLISH-03**: MSAA (4× minimum) or equivalent post-process AA eliminates jagged block edges.
 - [ ] **POLISH-04**: Shared shader include system eliminates duplicated code between chunk_mesh/meshlet_draw/meshlet.mesh shaders.
-- [ ] **POLISH-05**: All runtime unwrap()/panic!() in non-test code replaced with Result propagation or graceful error logging.
-- [ ] **POLISH-06**: GPU performance counters read actual culled meshlet/chunk counts from GPU (async readback, 1-2 frame latency) — HUD shows real numbers.
+- [x] **POLISH-05**: All runtime unwrap()/panic!() in non-test code replaced with Result propagation or graceful error logging.
+- [x] **POLISH-06**: GPU performance counters read actual culled meshlet/chunk counts from GPU (async readback, 1-2 frame latency) — HUD shows real numbers.
 - [ ] **POLISH-07**: Shader compilation uses performance optimization level; SPIR-V output is optimized.
 - [ ] **POLISH-08**: Chunk streaming transitions use distance-based fade-in instead of instant pop-in.
 - [ ] **POLISH-09**: Camera movement uses delta-time smoothing and configurable sensitivity — no jitter or speed variance across frame rates.
@@ -225,8 +225,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | POLISH-02 | Phase 06.1 | Complete |
 | POLISH-03 | Phase 06.1 | Complete |
 | POLISH-04 | Phase 06.1 | Pending |
-| POLISH-05 | Phase 06.1 | Pending |
-| POLISH-06 | Phase 06.1 | Pending |
+| POLISH-05 | Phase 06.1 | Complete |
+| POLISH-06 | Phase 06.1 | Complete |
 | POLISH-07 | Phase 06.1 | Pending |
 | POLISH-08 | Phase 06.1 | Pending |
 | POLISH-09 | Phase 06.1 | Pending |
@@ -253,8 +253,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MED-07 | Phase 06.1 | Complete |
 | MED-08 | Phase 06.1 | Complete |
 | MED-09 | Phase 06.1 | Complete |
-| MED-10 | Phase 06.1 | Pending |
-| MED-11 | Phase 06.1 | Pending |
+| MED-10 | Phase 06.1 | Complete |
+| MED-11 | Phase 06.1 | Complete |
 | MED-12 | Phase 06.1 | Pending |
 | REFAC-01 | Phase 06.1 | Pending |
 | REFAC-02 | Phase 06.1 | Pending |
