@@ -22,7 +22,15 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 06.1-rendering-polish
-**Status:** In progress — Plan 05 complete (POLISH-02, POLISH-03). 3 plans remaining.
+**Status:** In progress — Plan 04 complete (POLISH-01, POLISH-04, POLISH-07). 3 plans remaining.
+
+## Key Decisions (Phase 06.1 Plan 04)
+
+- MeshletDrawPushConstants (84B) extends CameraUniforms with screen_height + sse_threshold for ComputeIndirectPath vertex shader
+- common.glsl shared include: GpuChunkInstance, GpuMeshlet, decode_position, face_normal_from_index, Bayer 8x8, compute_lod_transition, CameraUniforms, MIN_LOD_DISTANCE
+- chunk_cull.comp uses #include common.glsl for GpuChunkInstance (was duplicated inline)
+- MeshShaderPath receives sse_threshold from renderer (was hardcoded 2.0)
+- shaderc OptimizationLevel::Performance for SPIR-V compilation
 
 ## Key Decisions (Phase 06.1 Plan 05)
 
@@ -122,3 +130,4 @@ See: .planning/PROJECT.md
 - 2026-03-28: Executed 06.1-02 — MeshletPool reclamation + streaming state fixes (CRIT-04~06, HIGH-03~06, MED-06~08)
 - 2026-03-28: Executed 06.1-03 — Vulkan resource safety fixes (HIGH-01~02, HIGH-07, MED-01~05, MED-09)
 - 2026-03-28: Executed 06.1-05 — Texture mipmaps + aniso filtering + MSAA 4x (POLISH-02, POLISH-03)
+- 2026-03-28: Executed 06.1-04 — Shader parameterization + shared includes + SPIR-V optimization (POLISH-01, POLISH-04, POLISH-07)
