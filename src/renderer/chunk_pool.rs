@@ -1030,6 +1030,19 @@ pub const INITIAL_MESHLET_TRI_CAPACITY: usize = INITIAL_MESHLET_CAPACITY * 124 *
 /// Growth threshold for meshlet buffers.
 const MESHLET_GROW_THRESHOLD: f64 = 0.9;
 
+/// Tracks the GPU buffer ranges occupied by a single chunk's meshlets (CRIT-04).
+///
+/// Used both in `chunk_ranges` (active) and `free_ranges` (available for reuse).
+#[derive(Debug, Clone, Copy)]
+pub struct MeshletRange {
+    pub meshlet_start: u32,
+    pub meshlet_count: u32,
+    pub vertex_start: u32,
+    pub vertex_count: u32,
+    pub tri_start: u32,
+    pub tri_count: u32,
+}
+
 /// Meshlet-granular GPU storage with 6 SSBOs + retained scene_buffer (D-05).
 ///
 /// Buffers:
@@ -1053,8 +1066,11 @@ pub struct MeshletPool {
     pub meshlet_count_buffer: vk::Buffer,
     meshlet_count_allocation: Option<Allocation>,
 
-    /// Per-chunk meshlet range: (meshlet_start, meshlet_count) (D-09).
-    chunk_ranges: HashMap<ChunkKey, (u32, u32)>,
+    /// Per-chunk meshlet range tracking for removal + reclamation (D-09, CRIT-04).
+    chunk_ranges: HashMap<ChunkKey, MeshletRange>,
+
+    /// Freed ranges available for reuse on subsequent uploads (CRIT-04).
+    free_ranges: Vec<MeshletRange>,
 
     /// Current meshlet capacity.
     meshlet_capacity: usize,
@@ -1151,6 +1167,7 @@ impl MeshletPool {
             meshlet_count_buffer,
             meshlet_count_allocation: Some(meshlet_count_allocation),
             chunk_ranges: HashMap::new(),
+            free_ranges: Vec::new(),
             meshlet_capacity,
             vertex_capacity,
             tri_capacity,
@@ -1173,15 +1190,33 @@ impl MeshletPool {
     ) -> Result<()> {
         use crate::meshing::MeshletDescriptor;
 
-        // If this chunk already has meshlets, remove the old range first.
-        // (simple append-only with eventual compaction — acceptable for Plan 01)
-        // For now, we don't reclaim space; just overwrite tracking.
-        self.chunk_ranges.remove(&key);
-
-        let meshlet_start = self.active_meshlet_count;
+        // Pre-compute widened triangle indices to know the count before slot selection.
+        let widened_tris: Vec<u32> = mesh.triangles.iter().map(|&i| u32::from(i)).collect();
         let meshlet_count = mesh.meshlets.len() as u32;
-        let vertex_start = self.active_vertex_count;
-        let tri_start = self.active_tri_count;
+        let vertex_count = mesh.vertices.len() as u32;
+        let tri_count = widened_tris.len() as u32;
+
+        // If this chunk already has meshlets, remove the old range first (reclaim).
+        if let Some(old_range) = self.chunk_ranges.remove(&key) {
+            self.active_meshlet_count -= old_range.meshlet_count;
+            self.active_vertex_count -= old_range.vertex_count;
+            self.active_tri_count -= old_range.tri_count;
+            self.free_ranges.push(old_range);
+        }
+
+        // Try to reuse a freed range if one fits (CRIT-04).
+        let reuse_idx = self.free_ranges.iter().position(|r| {
+            r.meshlet_count >= meshlet_count
+                && r.vertex_count >= vertex_count
+                && r.tri_count >= tri_count
+        });
+
+        let (meshlet_start, vertex_start, tri_start) = if let Some(idx) = reuse_idx {
+            let free = self.free_ranges.swap_remove(idx);
+            (free.meshlet_start, free.vertex_start, free.tri_start)
+        } else {
+            (self.active_meshlet_count, self.active_vertex_count, self.active_tri_count)
+        };
 
         // Build GpuMeshlet array.
         let gpu_meshlets: Vec<GpuMeshlet> = mesh
@@ -1202,9 +1237,6 @@ impl MeshletPool {
                 group_id: desc.group_id,
             })
             .collect();
-
-        // Widen u8 triangle indices to u32.
-        let widened_tris: Vec<u32> = mesh.triangles.iter().map(|&i| u32::from(i)).collect();
 
         // Upload meshlet metadata via staging.
         {
@@ -1262,19 +1294,31 @@ impl MeshletPool {
             }
         }
 
-        // Track chunk meshlet range.
-        self.chunk_ranges.insert(key, (meshlet_start, meshlet_count));
+        // Track chunk meshlet range (CRIT-04).
+        self.chunk_ranges.insert(key, MeshletRange {
+            meshlet_start,
+            meshlet_count,
+            vertex_start,
+            vertex_count,
+            tri_start,
+            tri_count,
+        });
         self.active_meshlet_count += meshlet_count;
-        self.active_vertex_count += mesh.vertices.len() as u32;
-        self.active_tri_count += widened_tris.len() as u32;
+        self.active_vertex_count += vertex_count;
+        self.active_tri_count += tri_count;
 
         Ok(())
     }
 
-    /// Clear the meshlet range for a removed chunk (D-09).
+    /// Remove meshlet range for a chunk, decrementing active counts and
+    /// pushing the freed range for reuse (CRIT-04, D-09).
     pub fn record_remove(&mut self, key: ChunkKey) {
-        self.chunk_ranges.remove(&key);
-        // Note: actual GPU memory reclamation is deferred to compaction (future plan).
+        if let Some(range) = self.chunk_ranges.remove(&key) {
+            self.active_meshlet_count -= range.meshlet_count;
+            self.active_vertex_count -= range.vertex_count;
+            self.active_tri_count -= range.tri_count;
+            self.free_ranges.push(range);
+        }
     }
 
     /// Returns true when active meshlets exceed 90% of capacity (D-06).
@@ -1291,7 +1335,7 @@ impl MeshletPool {
 
     /// Meshlet range for a chunk.
     pub fn chunk_range(&self, key: ChunkKey) -> Option<(u32, u32)> {
-        self.chunk_ranges.get(&key).copied()
+        self.chunk_ranges.get(&key).map(|r| (r.meshlet_start, r.meshlet_count))
     }
 
     /// Destroy all GPU allocations.
