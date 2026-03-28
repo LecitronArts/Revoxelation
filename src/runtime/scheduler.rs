@@ -16,9 +16,9 @@ use crate::streaming::{
     job_queue::{ChunkJobQueue, PrioritizedTask},
     job_runner::spawn_chunk_job,
     octree::StreamingOctree,
-    sse::diff_active_set,
+    sse::{compute_sse, diff_active_set},
     state_store::ChunkStateStore,
-    types::{ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState, LodConfig, SseConfig},
+    types::{ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState, LodConfig, SseConfig, CHUNK_EDGE},
 };
 
 use super::{
@@ -35,6 +35,9 @@ use super::{
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+/// Block size in metres (1/16 m = 6.25 cm).
+const BLOCK_SIZE: f32 = 1.0 / 16.0;
 
 /// Maximum number of tasks drained from the job queue per WorldUpdate frame.
 const PER_FRAME_CAP: usize = 16;
@@ -189,9 +192,16 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
         &ss.sse_config,
         &current_active,
         |key: &ChunkKey| {
-            let dx = key.x as f32 - camera_pos[0];
-            let dy = key.y as f32 - camera_pos[1];
-            let dz = key.z as f32 - camera_pos[2];
+            // World-space conversion: CHUNK_EDGE * BLOCK_SIZE * lod_scale (CRIT-05).
+            let lod_scale = (1_u32 << key.lod_level) as f32;
+            let chunk_edge_world = CHUNK_EDGE as f32 * BLOCK_SIZE * lod_scale;
+            let half_edge = chunk_edge_world * 0.5;
+            let wx = key.x as f32 * chunk_edge_world + half_edge;
+            let wy = key.y as f32 * chunk_edge_world + half_edge;
+            let wz = key.z as f32 * chunk_edge_world + half_edge;
+            let dx = wx - camera_pos[0];
+            let dy = wy - camera_pos[1];
+            let dz = wz - camera_pos[2];
             (dx * dx + dy * dy + dz * dz).sqrt().max(0.01)
         },
     );
@@ -219,12 +229,22 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
             if let Err(e) = ss.state_store.transition_to(*key, ChunkState::Queued) {
                 warn!("chunk {:?} transition to Queued failed: {e}", key);
             }
-            let sse_bits = 1.0f32.to_bits(); // placeholder SSE; refined on drain
-            ss.job_queue.enqueue(PrioritizedTask {
-                key: *key,
-                lod_level: key.lod_level,
-                sse_bits,
-            });
+            // Compute real SSE at enqueue time (MED-06, CRIT-05).
+            let lod_scale = (1_u32 << key.lod_level) as f32;
+            let chunk_edge_world = CHUNK_EDGE as f32 * BLOCK_SIZE * lod_scale;
+            let half_edge = chunk_edge_world * 0.5;
+            let wx = key.x as f32 * chunk_edge_world + half_edge;
+            let wy = key.y as f32 * chunk_edge_world + half_edge;
+            let wz = key.z as f32 * chunk_edge_world + half_edge;
+            let dx = wx - camera_pos[0];
+            let dy = wy - camera_pos[1];
+            let dz = wz - camera_pos[2];
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(0.01);
+            let real_sse = ss.lod_configs
+                .get(key.lod_level as usize)
+                .map(|lod| compute_sse(lod, &ss.sse_config, dist))
+                .unwrap_or(1.0);
+            ss.job_queue.enqueue(PrioritizedTask::new(*key, key.lod_level, real_sse));
         }
     }
 
