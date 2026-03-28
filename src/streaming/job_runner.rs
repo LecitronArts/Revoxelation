@@ -33,7 +33,7 @@ pub fn spawn_chunk_job(
     let flag_clone = Arc::clone(&cancel_flag);
 
     pool.spawn(move || {
-        let outcome = if flag_clone.load(Ordering::Relaxed) {
+        let outcome = if flag_clone.load(Ordering::Acquire) {
             ChunkJobOutcome::Cancelled
         } else {
             let voxels = generate_chunk_voxels(task.key);
@@ -137,7 +137,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let flag = spawn_chunk_job(&pool, task(key(2)), tx);
         // Set cancel before the rayon task has a chance to run.
-        flag.store(true, Ordering::Relaxed);
+        flag.store(true, Ordering::Release);
         // Allow the task time to execute.
         let result = rx.recv_timeout(Duration::from_secs(2));
         assert!(

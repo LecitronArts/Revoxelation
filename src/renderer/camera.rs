@@ -144,7 +144,7 @@ pub fn extract_frustum_planes(view_proj: &Mat4) -> FrustumPlanes {
         row3 - row0, // right
         row3 + row1, // bottom
         row3 - row1, // top
-        row3 + row2, // near  (Vulkan clip-space z in [0,1] with RH projection)
+        row2,        // near — Vulkan z∈[0,w]: near plane = row2 only (MED-01)
         row3 - row2, // far
     ];
 

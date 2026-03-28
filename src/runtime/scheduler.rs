@@ -385,7 +385,7 @@ fn handle_job_result(
     let was_cancelled = ss
         .cancel_flags
         .get(&key)
-        .map(|f| f.load(Ordering::Relaxed))
+        .map(|f| f.load(Ordering::Acquire))
         .unwrap_or(false);
     // Remove cancel flag for this key (HIGH-04).
     ss.cancel_flags.remove(&key);
@@ -543,14 +543,14 @@ fn deactivate_chunk(ss: &mut StreamingState, key: ChunkKey) {
         // CRIT-06: Loading → set cancel flag for pending deactivation.
         Some(ChunkState::Loading) => {
             if let Some(flag) = ss.cancel_flags.get(&key) {
-                flag.store(true, Ordering::Relaxed);
+                flag.store(true, Ordering::Release);
             }
             // handle_job_result will check cancel flag and transition to Inactive.
         }
         // Active/Upgrading/Downgrading → Unloading → Inactive (via Unloaded result).
         Some(ChunkState::Active | ChunkState::Upgrading | ChunkState::Downgrading) => {
             if let Some(flag) = ss.cancel_flags.get(&key) {
-                flag.store(true, Ordering::Relaxed);
+                flag.store(true, Ordering::Release);
             }
             ss.job_queue.cancel_queued(key);
             if let Err(e) = ss.state_store.transition_to(key, ChunkState::Unloading) {
