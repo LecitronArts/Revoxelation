@@ -546,6 +546,77 @@ fn phase6_1_atomic_ordering() {
 }
 
 // ===========================================================================
+// Plan 04 tests — Shader parameterization, shared includes, SPIR-V optimization
+// ===========================================================================
+
+/// POLISH-01: No shader file should contain hardcoded `1080.0` as a magic
+/// screen height. All screen_height values must come from push constants or UBO.
+#[test]
+fn phase6_1_no_hardcoded_1080() {
+    let shader_dir = std::path::Path::new("shaders");
+    let extensions = ["vert", "frag", "comp", "mesh", "task"];
+    for ext in &extensions {
+        for entry in std::fs::read_dir(shader_dir).expect("should read shaders dir") {
+            let entry = entry.expect("should read dir entry");
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == *ext) {
+                let source = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|_| panic!("should read {}", path.display()));
+                assert!(
+                    !source.contains("1080.0"),
+                    "shader {} contains hardcoded 1080.0 — must use push constant or UBO",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+/// POLISH-04: Shared shader include file common.glsl must exist with
+/// key shared definitions: face_normal_from_index, GpuChunkInstance, Bayer matrix.
+#[test]
+fn phase6_1_shared_shader_include() {
+    let common = std::fs::read_to_string("shaders/common.glsl")
+        .expect("shaders/common.glsl must exist");
+    assert!(
+        common.contains("face_normal"),
+        "common.glsl must contain face_normal_from_index"
+    );
+    assert!(
+        common.contains("GpuChunkInstance"),
+        "common.glsl must contain GpuChunkInstance struct"
+    );
+    assert!(
+        common.contains("Bayer") || common.contains("bayer"),
+        "common.glsl must contain Bayer dither matrix"
+    );
+    assert!(
+        common.contains("CameraUniforms") || common.contains("compute_lod_transition"),
+        "common.glsl must contain CameraUniforms or LOD transition helper"
+    );
+}
+
+/// POLISH-07: build.rs must use OptimizationLevel::Performance for SPIR-V compilation.
+#[test]
+fn phase6_1_shader_optimization() {
+    let build = std::fs::read_to_string("build.rs").expect("should read build.rs");
+    assert!(
+        build.contains("OptimizationLevel::Performance"),
+        "build.rs must use OptimizationLevel::Performance for SPIR-V compilation"
+    );
+}
+
+/// POLISH-04: build.rs must use set_include_callback to resolve #include directives.
+#[test]
+fn phase6_1_include_callback() {
+    let build = std::fs::read_to_string("build.rs").expect("should read build.rs");
+    assert!(
+        build.contains("set_include_callback") || build.contains("include_callback"),
+        "build.rs must use set_include_callback for shader #include resolution"
+    );
+}
+
+// ===========================================================================
 // Plan 05 tests — Texture mipmaps, anisotropic filtering, and MSAA 4×
 // ===========================================================================
 
@@ -586,10 +657,10 @@ fn phase6_1_msaa_enabled() {
         "swapchain.rs render pass must use SampleCountFlags::TYPE_4 for MSAA"
     );
 
-    // All graphics pipelines must use TYPE_4 in multisample state.
+    // All graphics pipelines must use TYPE_4 (or MSAA_SAMPLES which resolves to TYPE_4).
     assert!(
-        pipe_src.contains("TYPE_4"),
-        "mesh_pipeline.rs must use SampleCountFlags::TYPE_4 in multisample state"
+        pipe_src.contains("TYPE_4") || pipe_src.contains("MSAA_SAMPLES"),
+        "mesh_pipeline.rs must use SampleCountFlags::TYPE_4 (or MSAA_SAMPLES) in multisample state"
     );
 }
 
