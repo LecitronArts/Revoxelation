@@ -694,3 +694,97 @@ fn phase6_1_aniso_sampler() {
         "texture_array.rs sampler must set max_anisotropy"
     );
 }
+
+// ===========================================================================
+// Plan 06 tests — Error handling hardening, GPU readback, diagnostics cleanup
+// ===========================================================================
+
+/// Helper: strip everything from `#[cfg(test)]` to EOF (test module at bottom of file).
+fn strip_test_module(src: &str) -> &str {
+    if let Some(pos) = src.find("#[cfg(test)]") {
+        &src[..pos]
+    } else {
+        src
+    }
+}
+
+/// POLISH-05: No unwrap() in non-test runtime code paths of
+/// scheduler.rs, chunk_pool.rs, staging_ring.rs.
+#[test]
+fn phase6_1_no_unwrap_in_runtime() {
+    for file in &[
+        "src/runtime/scheduler.rs",
+        "src/renderer/chunk_pool.rs",
+        "src/renderer/staging_ring.rs",
+    ] {
+        let src = std::fs::read_to_string(file)
+            .unwrap_or_else(|_| panic!("should read {}", file));
+        let non_test = strip_test_module(&src);
+
+        let unwrap_count = non_test.matches(".unwrap()").count();
+        assert_eq!(
+            unwrap_count, 0,
+            "{file} has {unwrap_count} .unwrap() calls in non-test code"
+        );
+    }
+}
+
+/// POLISH-06: submit.rs or perf_counters.rs must contain readback buffer usage
+/// for actual GPU-counted values (not placeholder estimates).
+#[test]
+fn phase6_1_gpu_readback() {
+    let submit_src = std::fs::read_to_string("src/renderer/submit.rs")
+        .expect("should read submit.rs");
+    let perf_src = std::fs::read_to_string("src/renderer/perf_counters.rs")
+        .expect("should read perf_counters.rs");
+
+    let has_readback = submit_src.contains("readback")
+        || perf_src.contains("readback")
+        || submit_src.contains("gpu_culled");
+    assert!(
+        has_readback,
+        "submit.rs or perf_counters.rs must contain readback buffer usage for real GPU counters"
+    );
+}
+
+/// MED-11: No eprintln! calls in scheduler.rs — must use log framework.
+#[test]
+fn phase6_1_no_eprintln() {
+    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("should read scheduler.rs");
+    let non_test = strip_test_module(&src);
+
+    let count = non_test.matches("eprintln!").count();
+    assert_eq!(
+        count, 0,
+        "scheduler.rs has {count} eprintln! calls in non-test code — should use log framework"
+    );
+}
+
+/// MED-10: seed_input_commands must be guarded by cfg(test) or removed
+/// so no dummy events fire in production.
+#[test]
+fn phase6_1_no_seed_input_production() {
+    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("should read scheduler.rs");
+
+    // Find seed_input_commands function body.
+    let fn_start = src
+        .find("fn seed_input_commands")
+        .expect("seed_input_commands function must exist");
+    let fn_body = &src[fn_start..];
+
+    // The function body should either be empty or wrapped in #[cfg(test)].
+    // If it publishes commands without cfg(test) guard, it's a production issue.
+    let search_window = &fn_body[..fn_body.len().min(500)];
+    let has_cfg_test = search_window.contains("cfg(test)");
+    let has_publish = search_window.contains("publish_command");
+
+    // If it publishes commands, cfg(test) must guard them.
+    if has_publish {
+        assert!(
+            has_cfg_test,
+            "seed_input_commands publishes commands but is not guarded by cfg(test)"
+        );
+    }
+}
