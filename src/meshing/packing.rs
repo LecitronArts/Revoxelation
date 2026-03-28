@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use super::GreedyQuad;
 
 #[repr(transparent)]
@@ -5,7 +7,7 @@ use super::GreedyQuad;
 pub struct PackedVertex(pub [u32; 2]);
 
 /// Per-meshlet metadata: offsets into the global vertex/triangle buffers,
-/// counts, bounding sphere, and orientation cone (D-03).
+/// counts, bounding sphere, orientation cone, and LOD info (D-03, MSHL-05).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeshletDescriptor {
     pub vertex_offset: u32,
@@ -20,6 +22,15 @@ pub struct MeshletDescriptor {
     pub cone_axis: [f32; 3],
     /// Orientation cone cutoff (cos(half-angle)).
     pub cone_cutoff: f32,
+    /// LOD level: 0 = original, 1 = simplified parent (MSHL-05).
+    pub lod_level: u8,
+    /// LOD group ID — links LOD0 children and LOD1 parent meshlets (MSHL-05).
+    pub group_id: u32,
+    /// Simplification error metric for LOD selection (MSHL-05).
+    /// For LOD0: error of the parent (LOD1) relative to this level.
+    /// For LOD1: same group error (used by GPU for LOD transition).
+    /// f32::MAX means no LOD parent exists (always render this level).
+    pub parent_error: f32,
 }
 
 /// Meshlet-split mesh output, replacing PackedMesh as the pipeline payload (D-02).
@@ -249,7 +260,25 @@ pub fn build_meshlets_from_packed(packed: &PackedMesh) -> MeshletMesh {
             radius: bounds.radius,
             cone_axis: bounds.cone_axis,
             cone_cutoff: bounds.cone_cutoff,
+            lod_level: 0,
+            group_id: 0,
+            parent_error: f32::MAX,
         });
+    }
+
+    // -----------------------------------------------------------------------
+    // LOD DAG: generate LOD1 simplified meshlets from groups of ~4 LOD0 meshlets
+    // (MSHL-05, D-01 through D-04).
+    // -----------------------------------------------------------------------
+    let lod0_count = out_meshlets.len();
+
+    // Small meshes (<4 meshlets) get LOD0 only — no simplification worthwhile.
+    if lod0_count >= 4 {
+        build_lod1(
+            &mut out_meshlets,
+            &mut out_vertices,
+            &mut out_triangles,
+        );
     }
 
     MeshletMesh {
@@ -258,5 +287,209 @@ pub fn build_meshlets_from_packed(packed: &PackedMesh) -> MeshletMesh {
         triangles: out_triangles,
         aabb_min: packed.aabb_min,
         aabb_max: packed.aabb_max,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LOD1 DAG generation helpers (MSHL-05)
+// ---------------------------------------------------------------------------
+
+/// Group LOD0 meshlets by spatial proximity. Returns vec of (group_id, member_indices).
+fn group_meshlets_spatially(meshlets: &[MeshletDescriptor], group_size: usize) -> Vec<(u32, Vec<usize>)> {
+    let mut indices: Vec<usize> = (0..meshlets.len()).collect();
+    indices.sort_by(|&a, &b| {
+        let ca = meshlets[a].center;
+        let cb = meshlets[b].center;
+        ca[0].partial_cmp(&cb[0]).unwrap_or(Ordering::Equal)
+            .then(ca[1].partial_cmp(&cb[1]).unwrap_or(Ordering::Equal))
+            .then(ca[2].partial_cmp(&cb[2]).unwrap_or(Ordering::Equal))
+    });
+
+    indices
+        .chunks(group_size)
+        .enumerate()
+        .map(|(gid, chunk)| (gid as u32, chunk.to_vec()))
+        .collect()
+}
+
+/// Build LOD1 meshlets from groups of LOD0 meshlets.
+///
+/// For each group of ~4 LOD0 meshlets:
+/// 1. Merge triangles into a unified index/vertex space.
+/// 2. Identify boundary vertices (shared with other groups) and lock them.
+/// 3. Simplify to ~4× fewer triangles via meshopt::simplify.
+/// 4. Re-split into LOD1 meshlets via build_meshlets.
+/// 5. Record parent_error on LOD0 meshlets.
+fn build_lod1(
+    meshlets: &mut Vec<MeshletDescriptor>,
+    out_vertices: &mut Vec<PackedVertex>,
+    out_triangles: &mut Vec<u8>,
+) {
+    let lod0_count = meshlets.len();
+    let groups = group_meshlets_spatially(&meshlets[..lod0_count], 4);
+
+    // Assign group_id to each LOD0 meshlet.
+    for (group_id, members) in &groups {
+        for &mi in members {
+            meshlets[mi].group_id = *group_id;
+        }
+    }
+
+    // Build a mapping of output-vertex-index → set of group_ids that use it,
+    // to detect boundary vertices (vertices shared between groups).
+    let mut vertex_to_groups: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    for (group_id, members) in &groups {
+        for &mi in members {
+            let m = &meshlets[mi];
+            let v_off = m.vertex_offset as usize;
+            let t_off = m.triangle_offset as usize;
+            let t_count = m.triangle_count as usize;
+            for &local_idx in &out_triangles[t_off..t_off + t_count * 3] {
+                let global_idx = v_off as u32 + u32::from(local_idx);
+                vertex_to_groups.entry(global_idx).or_default().push(*group_id);
+            }
+        }
+    }
+    for groups_list in vertex_to_groups.values_mut() {
+        groups_list.sort_unstable();
+        groups_list.dedup();
+    }
+
+    // Process each group: merge → simplify → re-split → append LOD1 meshlets.
+    for (group_id, members) in &groups {
+        if members.len() < 2 {
+            // Single-meshlet group: skip simplification.
+            continue;
+        }
+
+        // Merge: remap all group triangles into a shared local vertex space.
+        let mut merged_indices: Vec<u32> = Vec::new();
+        let mut global_to_local: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut merged_positions: Vec<f32> = Vec::new();
+        let mut merged_packed: Vec<PackedVertex> = Vec::new();
+
+        for &mi in members {
+            let m = &meshlets[mi];
+            let v_off = m.vertex_offset as usize;
+            let t_off = m.triangle_offset as usize;
+            let t_count = m.triangle_count as usize;
+
+            for &local_idx in &out_triangles[t_off..t_off + t_count * 3] {
+                let global_idx = v_off as u32 + u32::from(local_idx);
+                let local = *global_to_local.entry(global_idx).or_insert_with(|| {
+                    let idx = merged_packed.len() as u32;
+                    let pv = out_vertices[global_idx as usize];
+                    let [x, y, z] = unpack_position(&pv);
+                    merged_positions.push(x);
+                    merged_positions.push(y);
+                    merged_positions.push(z);
+                    merged_packed.push(pv);
+                    idx
+                });
+                merged_indices.push(local);
+            }
+        }
+
+        let merged_vertex_count = merged_packed.len();
+        // Target: ~4× reduction in index count.
+        let target_index_count = (merged_indices.len() / 4).max(3);
+
+        // Identify boundary vertices: those used by multiple groups.
+        let mut vertex_lock = vec![false; merged_vertex_count];
+        for (&global_idx, &local_idx) in &global_to_local {
+            if let Some(glist) = vertex_to_groups.get(&global_idx) {
+                if glist.len() > 1 {
+                    vertex_lock[local_idx as usize] = true;
+                }
+            }
+        }
+
+        // Build VertexDataAdapter for meshopt.
+        let pos_bytes: &[u8] = bytemuck::cast_slice(&merged_positions);
+        let vertex_stride = std::mem::size_of::<f32>() * 3;
+        let adapter = match meshopt::VertexDataAdapter::new(pos_bytes, vertex_stride, 0) {
+            Ok(a) => a,
+            Err(_) => continue,
+        };
+
+        // Simplify with locked boundary vertices.
+        let simplified_indices = meshopt::simplify_with_locks(
+            &merged_indices,
+            &adapter,
+            &vertex_lock,
+            target_index_count,
+            0.1,
+            meshopt::SimplifyOptions::None,
+        );
+
+        // Skip if simplification was not effective (< 10% reduction) or empty.
+        if simplified_indices.is_empty()
+            || simplified_indices.len() >= merged_indices.len() * 9 / 10
+        {
+            continue;
+        }
+
+        // Compute simplification error for LOD selection on the GPU.
+        let mut simplify_error: f32 = 0.0;
+        let _ = meshopt::simplify(
+            &merged_indices,
+            &adapter,
+            target_index_count,
+            0.1,
+            meshopt::SimplifyOptions::None,
+            Some(&mut simplify_error),
+        );
+        let scale = meshopt::simplify_scale(&adapter);
+        let world_error = simplify_error * scale;
+        let parent_error = if world_error.is_finite() && world_error >= 0.0 {
+            world_error
+        } else {
+            0.001
+        };
+
+        // Write parent_error back to all LOD0 meshlets in this group.
+        for &mi in members {
+            meshlets[mi].parent_error = parent_error;
+        }
+
+        // Re-split simplified geometry into LOD1 meshlets.
+        let simplified_meshlets = meshopt::build_meshlets(
+            &simplified_indices,
+            &adapter,
+            64,
+            124,
+            0.5,
+        );
+
+        // Append LOD1 meshlets' vertices and triangles to the output buffers.
+        for (idx, sm) in simplified_meshlets.iter().enumerate() {
+            let raw = &simplified_meshlets.meshlets[idx];
+            let bounds = meshopt::compute_meshlet_bounds(sm, &adapter);
+
+            let v_offset = out_vertices.len() as u32;
+            let t_offset = out_triangles.len() as u32;
+            let v_count = raw.vertex_count as u32;
+            let t_count = raw.triangle_count as u32;
+
+            // sm.vertices are indices into merged_packed.
+            for &vi in sm.vertices {
+                out_vertices.push(merged_packed[vi as usize]);
+            }
+            out_triangles.extend_from_slice(sm.triangles);
+
+            meshlets.push(MeshletDescriptor {
+                vertex_offset: v_offset,
+                triangle_offset: t_offset,
+                vertex_count: v_count,
+                triangle_count: t_count,
+                center: bounds.center,
+                radius: bounds.radius,
+                cone_axis: bounds.cone_axis,
+                cone_cutoff: bounds.cone_cutoff,
+                lod_level: 1,
+                group_id: *group_id,
+                parent_error,
+            });
+        }
     }
 }

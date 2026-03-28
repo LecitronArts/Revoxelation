@@ -17,11 +17,16 @@ fn phase6_meshlet_descriptor_fields() {
         radius: 1.0,
         cone_axis: [0.0, 1.0, 0.0],
         cone_cutoff: 0.5,
+        lod_level: 0,
+        group_id: 0,
+        parent_error: f32::MAX,
     };
     assert_eq!(desc.vertex_count, 4);
     assert_eq!(desc.triangle_count, 2);
     assert!(desc.radius > 0.0);
     assert!(desc.cone_cutoff >= -1.0 && desc.cone_cutoff <= 1.0);
+    assert_eq!(desc.lod_level, 0);
+    assert_eq!(desc.group_id, 0);
 }
 
 #[test]
@@ -38,6 +43,9 @@ fn phase6_meshlet_mesh_fields() {
             radius: 1.0,
             cone_axis: [0.0, 0.0, 1.0],
             cone_cutoff: 0.0,
+            lod_level: 0,
+            group_id: 0,
+            parent_error: f32::MAX,
         }],
         vertices: vec![PackedVertex([0; 2])],
         triangles: vec![0, 1, 2],
@@ -369,4 +377,126 @@ fn phase6_submit_skips_meshlet_cull_for_mesh_shader() {
         source.contains("mesh_shader") || source.contains("use_mesh_shader"),
         "submit.rs must reference mesh shader path for conditional meshlet_cull dispatch"
     );
+}
+
+// ============================================================================
+// Plan 06-05 Task 1 — DAG LOD generation (LOD0 + LOD1)
+// ============================================================================
+
+/// Helper: create a PackedMesh with many quads (>256 triangles) for LOD testing.
+fn make_large_packed_mesh() -> revoxelation::meshing::PackedMesh {
+    use revoxelation::meshing::{PackedMesh, pack_vertex};
+
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    // 8x8x8 grid of quads on each face → many triangles
+    for x in 0..8u8 {
+        for y in 0..8u8 {
+            for z in 0..8u8 {
+                let base = vertices.len() as u32;
+                // +X face quad
+                vertices.push(pack_vertex([x * 2 + 1, y * 2, z * 2], 0, 1, [0, 0]));
+                vertices.push(pack_vertex([x * 2 + 1, y * 2 + 1, z * 2], 0, 1, [1, 0]));
+                vertices.push(pack_vertex([x * 2 + 1, y * 2 + 1, z * 2 + 1], 0, 1, [1, 1]));
+                vertices.push(pack_vertex([x * 2 + 1, y * 2, z * 2 + 1], 0, 1, [0, 1]));
+                indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            }
+        }
+    }
+    assert!(indices.len() / 3 > 256, "need >256 triangles for LOD test");
+
+    let quad_count = (indices.len() / 6) as u32;
+    PackedMesh {
+        vertices: vertices.into_boxed_slice(),
+        indices: indices.into_boxed_slice(),
+        quad_count,
+        aabb_min: [0.0; 3],
+        aabb_max: [16.0, 16.0, 16.0],
+    }
+}
+
+#[test]
+fn phase6_lod_dag_two_levels() {
+    use revoxelation::meshing::build_meshlets_from_packed;
+
+    let packed = make_large_packed_mesh();
+    let mesh = build_meshlets_from_packed(&packed);
+
+    let has_lod0 = mesh.meshlets.iter().any(|m| m.lod_level == 0);
+    let has_lod1 = mesh.meshlets.iter().any(|m| m.lod_level == 1);
+
+    assert!(has_lod0, "must have LOD0 meshlets");
+    assert!(has_lod1, "must have LOD1 meshlets (simplified)");
+}
+
+#[test]
+fn phase6_lod1_fewer_triangles() {
+    use revoxelation::meshing::build_meshlets_from_packed;
+
+    let packed = make_large_packed_mesh();
+    let mesh = build_meshlets_from_packed(&packed);
+
+    let lod0_tris: u32 = mesh.meshlets.iter()
+        .filter(|m| m.lod_level == 0)
+        .map(|m| m.triangle_count)
+        .sum();
+    let lod1_tris: u32 = mesh.meshlets.iter()
+        .filter(|m| m.lod_level == 1)
+        .map(|m| m.triangle_count)
+        .sum();
+
+    assert!(
+        lod1_tris < lod0_tris,
+        "LOD1 total triangles ({lod1_tris}) must be less than LOD0 total triangles ({lod0_tris})"
+    );
+}
+
+#[test]
+fn phase6_lod_group_parent_error() {
+    use revoxelation::meshing::build_meshlets_from_packed;
+
+    let packed = make_large_packed_mesh();
+    let mesh = build_meshlets_from_packed(&packed);
+
+    for (i, m) in mesh.meshlets.iter().enumerate() {
+        assert!(
+            m.parent_error >= 0.0,
+            "meshlet {i} (lod_level={}) parent_error must be >= 0.0, got {}",
+            m.lod_level, m.parent_error
+        );
+    }
+}
+
+#[test]
+fn phase6_lod_small_mesh_lod0_only() {
+    use revoxelation::meshing::{PackedMesh, build_meshlets_from_packed, pack_vertex};
+
+    // Small mesh: only 2 quads = 4 triangles = at most 1-2 meshlets = below group threshold.
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for i in 0..2u8 {
+        let base = vertices.len() as u32;
+        let x = i * 2;
+        vertices.push(pack_vertex([x, 0, 0], 0, 1, [0, 0]));
+        vertices.push(pack_vertex([x + 1, 0, 0], 0, 1, [1, 0]));
+        vertices.push(pack_vertex([x + 1, 1, 0], 0, 1, [1, 1]));
+        vertices.push(pack_vertex([x, 1, 0], 0, 1, [0, 1]));
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    let packed = PackedMesh {
+        vertices: vertices.into_boxed_slice(),
+        indices: indices.into_boxed_slice(),
+        quad_count: 2,
+        aabb_min: [0.0; 3],
+        aabb_max: [4.0, 1.0, 0.0],
+    };
+
+    let mesh = build_meshlets_from_packed(&packed);
+    // Small mesh: all meshlets should be LOD0 only.
+    for m in &mesh.meshlets {
+        assert_eq!(m.lod_level, 0, "small mesh should only have LOD0 meshlets");
+    }
+    let has_lod1 = mesh.meshlets.iter().any(|m| m.lod_level == 1);
+    assert!(!has_lod1, "small mesh (<4 meshlets) should NOT have LOD1 meshlets");
 }
