@@ -218,7 +218,7 @@ fn rend_01_camera_pitch_clamped() {
     use revoxelation::renderer::camera::FpsCamera;
     let mut camera = FpsCamera::default();
     // Try to look straight down — pitch should be clamped
-    camera.process_mouse(0.0, 10000.0, 0.1);
+    camera.process_mouse(0.0, 10000.0);
     assert!(
         camera.pitch >= -89.0_f32.to_radians() - 0.01,
         "Pitch should be clamped to >= -89 degrees, got {}",
@@ -231,7 +231,7 @@ fn rend_01_camera_pitch_clamped() {
     );
     // Reset and look straight up
     camera.pitch = 0.0;
-    camera.process_mouse(0.0, -10000.0, 0.1);
+    camera.process_mouse(0.0, -10000.0);
     assert!(
         camera.pitch >= -89.0_f32.to_radians() - 0.01,
         "Pitch should be clamped to >= -89 degrees after looking up, got {}",

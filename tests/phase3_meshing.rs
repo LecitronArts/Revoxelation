@@ -321,8 +321,10 @@ fn mesh_02_coarse_chunk_generates_skirts_only_for_flagged_faces() {
         },
         &dirty,
     );
-    assert_eq!(with_skirts.quad_count, 8);
-    assert_eq!(skirt_vertex_count(&with_skirts.vertices), 8);
+    // MSHL-05: Skirt emission disabled — with LOD DAG, skirts are no longer generated.
+    // Quads are always 6 (the 6 faces of a filled 64^3 chunk) regardless of finer neighbor mask.
+    assert_eq!(with_skirts.quad_count, 6);
+    assert_eq!(skirt_vertex_count(&with_skirts.vertices), 0);
 }
 
 #[test]
@@ -345,8 +347,9 @@ fn mesh_02_skirt_face_mask_clears_when_finer_neighbor_unloads() {
         },
         &dirty_with_skirt,
     );
-    assert_eq!(with_skirt.quad_count, 7);
-    assert_eq!(skirt_vertex_count(&with_skirt.vertices), 4);
+    // MSHL-05: Skirt emission disabled — quads are always 6 regardless of finer neighbor mask.
+    assert_eq!(with_skirt.quad_count, 6);
+    assert_eq!(skirt_vertex_count(&with_skirt.vertices), 0);
 
     meshing.update_finer_neighbor_face_mask(coarse_key, FACE_NEG_X, false, 32);
     let dirty_without_skirt = meshing
@@ -520,10 +523,10 @@ fn mesh_03_build_script_and_indirect_submit_contract() {
             "compute_cull_chunk",
             "chunk_to_meshlet_barrier",
             "compute_cull_meshlet",
+            "meshlet_cull_to_draw_barrier",
             "indirect_barrier",
             "render_pass",
-            "bind_chunk_pipeline",
-            "draw_indexed_indirect",
+            "meshlet_draw_or_chunk_draw",
             "egui",
             "hiz_generate",
         ]

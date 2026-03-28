@@ -50,22 +50,6 @@ pub struct GpuChunkInstance {
     pub _pad_fade: [u32; 3],
 }
 
-/// Legacy metadata struct — retained during migration. Will be removed in a future plan.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ChunkDrawMetadata {
-    pub aabb_min: [f32; 3],
-    pub slot_id: u32,
-    pub aabb_max: [f32; 3],
-    pub first_index: u32,
-    pub vertex_offset: i32,
-    pub index_count: u32,
-    pub lod_level: u32,
-    pub _padding0: u32,
-    pub chunk_origin: [f32; 3],
-    pub chunk_scale: f32,
-}
-
 /// Calculate byte offsets for the 4 regions of the unified scene_buffer.
 ///
 /// Layout (D-01):

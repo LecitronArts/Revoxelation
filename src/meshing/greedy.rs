@@ -1,6 +1,5 @@
 use super::{
-    ChunkNeighborSet, ChunkVoxels, FACE_NEG_X, FACE_NEG_Y, FACE_NEG_Z, FACE_POS_X, FACE_POS_Y,
-    FACE_POS_Z, GreedyQuad, MeshDirtyRecord, PackedMesh, pack_quad,
+    ChunkNeighborSet, ChunkVoxels, GreedyQuad, MeshDirtyRecord, PackedMesh, pack_quad,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,19 +21,9 @@ pub fn build_greedy_mesh(
         emit_quads_for_axis(chunk, neighbors, axis, true, false, &mut quads);
     }
 
-    let skirt_mask = neighbors.finer_neighbor_face_mask | dirty.finer_neighbor_face_mask;
-    for (face_mask, axis, positive_face) in [
-        (FACE_POS_X, 0u8, true),
-        (FACE_NEG_X, 0u8, false),
-        (FACE_POS_Y, 1u8, true),
-        (FACE_NEG_Y, 1u8, false),
-        (FACE_POS_Z, 2u8, true),
-        (FACE_NEG_Z, 2u8, false),
-    ] {
-        if skirt_mask & face_mask != 0 {
-            emit_quads_for_axis(chunk, neighbors, axis, positive_face, true, &mut quads);
-        }
-    }
+    // Border skirt emission disabled (MSHL-05): meshlet LOD DAG handles LOD transitions
+    // via alpha dithering instead of geometry skirts. Commented skirt code removed (REFAC-07).
+    let _ = &dirty; // suppress unused warning
 
     let mut vertices = Vec::with_capacity(quads.len() * 4);
     let mut indices = Vec::with_capacity(quads.len() * 6);

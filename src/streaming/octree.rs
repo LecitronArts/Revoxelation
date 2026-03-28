@@ -96,11 +96,13 @@ impl StreamingOctree {
                             let px = div_floor(cx * scale, parent_scale);
                             let py = div_floor(cy * scale, parent_scale);
                             let pz = div_floor(cz * scale, parent_scale);
-                            // Clamp to parent radius
-                            let px = px.clamp(-pr, pr);
-                            let py = py.clamp(-pr, pr);
-                            let pz = pz.clamp(-pr, pr);
-                            level_index[parent_lod as usize].get(&(px, py, pz)).copied()
+                            // MED-12: Skip (don't create link) if parent coords
+                            // are out of range — prevents incorrect topology.
+                            if px < -pr || px > pr || py < -pr || py > pr || pz < -pr || pz > pr {
+                                None
+                            } else {
+                                level_index[parent_lod as usize].get(&(px, py, pz)).copied()
+                            }
                         } else {
                             None
                         };
