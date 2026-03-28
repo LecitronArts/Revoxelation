@@ -12,10 +12,12 @@ pub struct RuntimeConfig {
     pub hiz_enabled: bool,
     /// Show the debug HUD overlay (default: true).
     pub show_hud: bool,
-    /// Camera movement speed in units/sec (default: 20.0).
+    /// Camera movement speed in units/sec (default: 10.0, POLISH-09).
     pub camera_speed: f32,
     /// Camera vertical field-of-view in degrees (default: 60.0).
     pub camera_fov: f32,
+    /// Mouse look sensitivity (default: 0.1, POLISH-09).
+    pub mouse_sensitivity: f32,
 }
 
 impl Default for RuntimeConfig {
@@ -23,8 +25,9 @@ impl Default for RuntimeConfig {
         Self {
             hiz_enabled: true,
             show_hud: true,
-            camera_speed: 20.0,
+            camera_speed: 10.0,
             camera_fov: 60.0,
+            mouse_sensitivity: 0.1,
         }
     }
 }

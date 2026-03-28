@@ -140,19 +140,30 @@ pub fn run() -> Result<()> {
 
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);
 
+    // POLISH-06: Create GPU readback counters for real performance data.
+    renderer.readback_counters = Some(
+        crate::renderer::perf_counters::GpuReadbackCounters::new(&mut renderer)?
+    );
+
+    let config = RuntimeConfig::load();
+
     let mut app = App {
         renderer,
         streaming: StreamingState::new(),
         meshing: MeshingState::default(),
         egui_ctx: egui::Context::default(),
-        camera: FpsCamera::default(),
+        camera: {
+            let mut cam = FpsCamera::default();
+            cam.move_speed = config.camera_speed;
+            cam
+        },
         frame_index: 0,
         keys_pressed: KeysPressed::default(),
         last_frame_time: Instant::now(),
         needs_resize: false,
         window_extent: extent,
         perf_counters: GpuPerfCounters::default(),
-        config: RuntimeConfig::load(),
+        config,
         #[cfg(all(debug_assertions, feature = "hot-reload"))]
         hot_reload: crate::renderer::hot_reload::ShaderHotReload::new(),
     };
@@ -166,7 +177,7 @@ pub fn run() -> Result<()> {
                 event: DeviceEvent::MouseMotion { delta: (dx, dy) },
                 ..
             } => {
-                app.camera.process_mouse(dx as f32, dy as f32, 1.0);
+                app.camera.process_mouse(dx as f32, dy as f32);
             }
             Event::WindowEvent { window_id, event } if window_id == window.id() => match event {
                 WindowEvent::CloseRequested => elwt.exit(),

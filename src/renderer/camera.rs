@@ -35,8 +35,10 @@ pub struct FpsCamera {
     pub near: f32,
     /// Far clip plane distance.
     pub far: f32,
-    /// Movement speed in units per second.
-    pub speed: f32,
+    /// Movement speed in units per second (configurable, POLISH-09).
+    pub move_speed: f32,
+    /// Mouse look sensitivity (configurable, POLISH-09).
+    pub mouse_sensitivity: f32,
 }
 
 impl Default for FpsCamera {
@@ -48,7 +50,8 @@ impl Default for FpsCamera {
             fov_y: 60.0_f32.to_radians(),
             near: 0.1,
             far: 2000.0,
-            speed: 20.0,
+            move_speed: 10.0,
+            mouse_sensitivity: 0.1,
         }
     }
 }
@@ -84,12 +87,14 @@ impl FpsCamera {
         }
     }
 
-    /// Process a keyboard movement key.
-    pub fn process_keyboard(&mut self, key: CameraKey, pressed: bool, dt: f32) {
+    /// Process a keyboard movement key with delta_time for frame-rate-independent movement (POLISH-09).
+    ///
+    /// Movement = direction * move_speed * delta_time.
+    pub fn process_keyboard(&mut self, key: CameraKey, pressed: bool, delta_time: f32) {
         if !pressed {
             return;
         }
-        let velocity = self.speed * dt;
+        let velocity = self.move_speed * delta_time;
         let forward = self.forward();
         let right = self.right();
 
@@ -103,12 +108,12 @@ impl FpsCamera {
         }
     }
 
-    /// Process mouse delta for look rotation.
+    /// Process mouse delta for look rotation (POLISH-09).
     ///
-    /// `dx`/`dy` are raw pixel deltas. `sensitivity` scales the rotation.
-    pub fn process_mouse(&mut self, dx: f32, dy: f32, sensitivity: f32) {
-        self.yaw += dx * sensitivity * 0.01;
-        self.pitch -= dy * sensitivity * 0.01;
+    /// `dx`/`dy` are raw pixel deltas. Uses the camera's `mouse_sensitivity` field.
+    pub fn process_mouse(&mut self, dx: f32, dy: f32) {
+        self.yaw += dx * self.mouse_sensitivity * 0.01;
+        self.pitch -= dy * self.mouse_sensitivity * 0.01;
 
         // Clamp pitch to +/- 89 degrees.
         let max_pitch = 89.0_f32.to_radians();
