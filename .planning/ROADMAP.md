@@ -18,8 +18,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Greedy Meshing and Render Delta Sync** - Produce greedy chunk meshes and push only chunk deltas to the renderer.
 - [x] **Phase 4: Rendering Foundation Overhaul** - Fix critical renderer issues, establish real camera/projection, frustum+Hi-Z culling, GpuOnly memory, swapchain lifecycle.
 - [x] **Phase 5: Bindless Architecture and GPU Scene** - Vulkan 1.2 descriptor indexing (hard requirement, no fallback), unified GPU scene buffer, block material/texture system.
-- [ ] **Phase 05.1: Critical Bug Fixes and Safety Hardening** (INSERTED) - Fix critical GPU resource bugs (Hi-Z resize, egui UAF), harden safety (bounds checks, unsafe docs, safe casts), improve robustness (staging exhaustion, camera passthrough, clippy cleanup).
-- [ ] **Phase 6: Meshlet Pipeline** - Meshlet generation, per-meshlet GPU culling, software mesh shader emulation, optional VK_EXT_mesh_shader hardware path.
+- [x] **Phase 05.1: Critical Bug Fixes and Safety Hardening** (INSERTED) - Fix critical GPU resource bugs (Hi-Z resize, egui UAF), harden safety (bounds checks, unsafe docs, safe casts), improve robustness (staging exhaustion, camera passthrough, clippy cleanup).
+- [x] **Phase 6: Meshlet Pipeline** - Meshlet generation, per-meshlet GPU culling, software mesh shader emulation, optional VK_EXT_mesh_shader hardware path.
 - [ ] **Phase 7: Lighting and Shadows** - Directional PBR lighting, cascaded shadow maps, SSAO, voxel AO, sky/atmosphere with day-night cycle.
 - [ ] **Phase 8: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
 - [ ] **Phase 9: Authoritative Block Editing Feedback** - Apply block edits authoritatively and reflect them visually near-immediately.
@@ -157,7 +157,7 @@ Plans:
 - [x] 05.1-03: Camera position passthrough + bounds checks (MEDIUM — FIX-03, FIX-04).
 - [x] 05.1-04: Safety documentation + unsafe cleanup (MEDIUM — FIX-05, FIX-06, FIX-09).
 - [x] 05.1-05: Staging ring graceful degradation (MEDIUM — FIX-07).
-- [ ] 05.1-06: Clippy cleanup (LOW — FIX-08).
+- [x] 05.1-06: Clippy cleanup (LOW — FIX-08).
 
 ### Phase 6: Meshlet Pipeline
 **Goal**: Split greedy mesh output into meshlets (64 verts / 124 tris clusters), implement per-meshlet GPU culling (backface+frustum+Hi-Z), and optionally leverage VK_EXT_mesh_shader hardware path with compute+indirect fallback.
@@ -172,11 +172,11 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 06-01: Meshlet generation (split PackedMesh, bounding sphere, orientation cone, GpuMeshlet SSBO).
-- [ ] 06-02: Meshlet GPU culling (meshlet_cull.comp, backface+frustum+Hi-Z, atomicAdd compact list).
-- [ ] 06-03: Software task/mesh shader emulation (compute+indirect draw, gl_DrawID meshlet decode).
-- [ ] 06-04: VK_EXT_mesh_shader hardware path (task+mesh shaders, feature flag fallback).
-- [ ] 06-05: Cluster LOD transitions (meshlet LOD groups, SSE selection, skirt+alpha dither).
+- [x] 06-01: Meshlet generation (split PackedMesh, bounding sphere, orientation cone, GpuMeshlet SSBO).
+- [x] 06-02: Meshlet GPU culling (meshlet_cull.comp, backface+frustum+Hi-Z, atomicAdd compact list).
+- [x] 06-03: Software task/mesh shader emulation (compute+indirect draw, gl_DrawID meshlet decode).
+- [x] 06-04: VK_EXT_mesh_shader hardware path (task+mesh shaders, feature flag fallback).
+- [x] 06-05: Cluster LOD transitions (meshlet LOD groups, SSE selection, skirt+alpha dither).
 
 ### Phase 7: Lighting and Shadows
 **Goal**: Establish a complete real-time lighting system with directional PBR, cascaded shadow maps, SSAO, voxel AO, and sky/atmosphere rendering with day-night cycle. Transform the visual quality from flat-colored blocks to a scene with depth and atmosphere.
@@ -264,8 +264,8 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 7 -> 8 
 | 3. Greedy Meshing and Render Delta Sync | 7/7 | Complete | 2026-03-22 |
 | 4. Rendering Foundation Overhaul | 7/7 | Complete | 2026-03-25 |
 | 5. Bindless Architecture and GPU Scene | 5/5 | Complete | 2026-03-26 |
-| 05.1. Critical Bug Fixes and Safety Hardening | 5/6 | In Progress | - |
-| 6. Meshlet Pipeline | 0/5 | Not started | - |
+| 05.1. Critical Bug Fixes and Safety Hardening | 6/6 | Complete | 2026-03-27 |
+| 6. Meshlet Pipeline | 5/5 | Complete | 2026-03-28 |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |
 | 9. Authoritative Block Editing Feedback | 0/2 | Not started | - |

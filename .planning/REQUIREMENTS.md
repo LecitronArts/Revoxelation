@@ -49,17 +49,17 @@
 - [x] **FIX-04**: dense_indirect_shadow access is bounds-checked — no OOB panic on malformed draw_index.
 - [x] **FIX-05**: All unsafe impl Send have documented SAFETY invariants explaining raw pointer ownership and thread safety.
 - [x] **FIX-06**: draw_cmd_as_bytes replaced with safe bytemuck cast or field-by-field write — no manual from_raw_parts.
-- [ ] **FIX-07**: Staging ring exhaustion degrades gracefully — partial batch with deferred deltas instead of frame failure.
-- [ ] **FIX-08**: All clippy warnings resolved — zero warnings from cargo clippy --all-targets.
+- [x] **FIX-07**: Staging ring exhaustion degrades gracefully — partial batch with deferred deltas instead of frame failure.
+- [x] **FIX-08**: All clippy warnings resolved — zero warnings from cargo clippy --all-targets.
 - [x] **FIX-09**: Drop implementations log resource cleanup failures instead of silently discarding errors.
 
 ### Meshlet Pipeline
 
-- [ ] **MSHL-01**: Greedy mesh output is split into meshlets with precomputed bounding spheres and orientation cones.
-- [ ] **MSHL-02**: Per-meshlet GPU culling (backface, frustum, Hi-Z) runs in compute shader with toggleable modes.
-- [ ] **MSHL-03**: Software mesh shader emulation via compute+indirect produces correct rendering.
-- [ ] **MSHL-04**: VK_EXT_mesh_shader hardware path works on supported GPUs with automatic fallback.
-- [ ] **MSHL-05**: LOD transitions between meshlet groups are seamless with no visible seams.
+- [x] **MSHL-01**: Greedy mesh output is split into meshlets with precomputed bounding spheres and orientation cones.
+- [x] **MSHL-02**: Per-meshlet GPU culling (backface, frustum, Hi-Z) runs in compute shader with toggleable modes.
+- [x] **MSHL-03**: Software mesh shader emulation via compute+indirect produces correct rendering.
+- [x] **MSHL-04**: VK_EXT_mesh_shader hardware path works on supported GPUs with automatic fallback.
+- [x] **MSHL-05**: LOD transitions between meshlet groups are seamless with no visible seams.
 
 ### Lighting and Shadows
 
@@ -155,14 +155,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FIX-04 | Phase 05.1 | Complete |
 | FIX-05 | Phase 05.1 | Complete |
 | FIX-06 | Phase 05.1 | Complete |
-| FIX-07 | Phase 05.1 | Pending |
-| FIX-08 | Phase 05.1 | Pending |
+| FIX-07 | Phase 05.1 | Complete |
+| FIX-08 | Phase 05.1 | Complete |
 | FIX-09 | Phase 05.1 | Complete |
-| MSHL-01 | Phase 6 | Pending |
-| MSHL-02 | Phase 6 | Pending |
-| MSHL-03 | Phase 6 | Pending |
-| MSHL-04 | Phase 6 | Pending |
-| MSHL-05 | Phase 6 | Pending |
+| MSHL-01 | Phase 6 | Complete |
+| MSHL-02 | Phase 6 | Complete |
+| MSHL-03 | Phase 6 | Complete |
+| MSHL-04 | Phase 6 | Complete |
+| MSHL-05 | Phase 6 | Complete |
 | LGHT-01 | Phase 7 | Pending |
 | LGHT-02 | Phase 7 | Pending |
 | LGHT-03 | Phase 7 | Pending |

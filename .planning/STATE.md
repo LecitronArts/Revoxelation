@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 05.1-critical-bug-fixes-and-safety-hardening
-status: executing
-last_updated: "2026-03-27T10:30:51.000Z"
+current_phase: 06-meshlet-pipeline
+status: complete
+last_updated: "2026-03-28T08:00:00.000Z"
 progress:
   total_phases: 13
-  completed_phases: 6
-  total_plans: 34
-  completed_plans: 33
+  completed_phases: 8
+  total_plans: 39
+  completed_plans: 39
 ---
 
 # Session State
@@ -21,8 +21,27 @@ See: .planning/PROJECT.md
 ## Position
 
 **Milestone:** v1.0 milestone
-**Current phase:** 05.1-critical-bug-fixes-and-safety-hardening
-**Status:** Executing — Plan 05.1-05 done (5/6 plans), next: 05.1-06
+**Current phase:** 06-meshlet-pipeline
+**Status:** Complete — All 5/5 plans done. Phase 6 COMPLETE. Next: Phase 7 (Lighting and Shadows)
+
+## Key Decisions (Phase 6)
+
+- meshopt crate (0.2) for meshlet generation: 64v/124t clusters, cone_weight=0.5
+- MeshletPool manages 6 SSBOs (meta/vertex/tri/visible/indirect/count), BindlessTable bindings 10-15
+- GpuMeshlet 64 bytes #[repr(C)] Pod+Zeroable (center, radius, cone_axis, cone_cutoff, offsets, counts, parent_error, group_id)
+- Two-level cascade: chunk_cull.comp → meshlet_cull.comp (implicit cascade, no visibility mask SSBO)
+- Subgroup ballot compaction: one atomicAdd per subgroup (not per thread)
+- MeshletPipeline trait with ComputeIndirectPath (VB/IB + vkCmdDrawIndexedIndirectCount) and MeshShaderPath (task+mesh shaders + vkCmdDrawMeshTasksIndirectCountEXT)
+- Automatic path selection at startup: mesh_shader_supported → MeshShaderPath else ComputeIndirectPath
+- 2-level Nanite-style DAG LOD: LOD0 original + LOD1 simplified (meshopt::simplify with locked boundary vertices)
+- SSE-based GPU LOD selection + Bayer 8x8 alpha dither for smooth transitions
+- Border skirt removed — DAG shared boundary vertices replace skirt approach
+- Push constants: 40 bytes for meshlet cull (+ sse_threshold + screen_height)
+- Triangle indices: u8→u32 widening during MeshletPool::record_upload
+
+- SequenceClock::next renamed to next_seq to avoid Iterator::next method confusion
+- Boundary stubs kept with #[allow(dead_code)] — used in tests, needed later
+- App.window_extent dead writes removed; field retained for future use
 
 ## Key Decisions (Phase 05.1 Plan 05)
 
@@ -36,60 +55,9 @@ See: .planning/PROJECT.md
 - SAFETY comments on all 3 unsafe impl Send blocks (StagingAllocation, StagingRing, ChunkCullPipeline)
 - All 8 `let _ =` in Renderer::drop replaced with log::warn error logging
 
-## Key Decisions (Phase 05.1 Plan 03)
+## Key Decisions (Phase 5)
 
-- run_frame/run_world_update accept camera_pos: [f32; 3], screen_height: f32, fov_y: f32
-- Camera position extracted from FpsCamera.position.to_array() in app.rs
-- debug_assert! bounds check on dense_indirect_shadow draw_index (zero-cost in release)
-- SseConfig.screen_height/fov_y_radians updated inline before WorldUpdate each frame
-
-## Key Decisions (Phase 05.1 Plan 01)
-
-- Hi-Z recreation sequence: take Option -> destroy old -> create new -> register bindless binding 7 -> store
-- HiZPyramid::destroy called before ::new to free allocator memory before re-borrowing
-
-## Key Decisions (Phase 05.1 Plan 02)
-
-- scratch_buffers: [Vec<(vk::Buffer, Allocation)>; 2] — per-frame ring indexed by current_frame
-- free_stale_scratch(current_frame) drains current slot (safe after fence wait)
-- paint() accepts current_frame to select correct ring slot
-
-## Key Decisions (Phase 5 Plan 05)
-
-- INITIAL_CAPACITY=1024 replaces MAX_RENDER_CHUNKS=881; capacity is runtime-dynamic
-- Growth trigger: active > capacity * 0.9; growth factor: 2x doubling
-- Growth between frames via submit_one_shot_commands (after fence wait, before command recording)
-- vkCmdDrawIndexedIndirectCount uses draw_count_buffer from cull shader; max_draw_count = capacity
-- CPU active_draw_count only used for cull dispatch workgroup count
-
-## Key Decisions (Phase 5 Plan 03)
-
-- GpuChunkInstance (48 bytes) replaces ChunkDrawMetadata — material_id replaces draw-command fields
-- Unified scene_buffer: 4 regions (instances, indirect templates, draw slots, dense indirect) with 16-byte alignment
-- Cull shader uses raw uint array with capacity-derived offsets; push constant expanded to { active_draw_count, capacity }
-- Vertex shader reads scene_data.instances[gl_InstanceIndex]; BindlessTable binding 0 → scene_buffer (WHOLE_SIZE)
-- ChunkPool reduced from 6 GPU buffers to 3 (vertex, index, scene_buffer)
-
-## Key Decisions (Phase 5 Plan 04)
-
-- BlockMaterial: 4 x u16 (top/side/bottom texture + flags) = 8 bytes, #[repr(C)] with bytemuck
-- 10 procedural textures generated in Rust (no PNG loading yet): dirt, grass_top, grass_side, stone, sand, log_bark, log_end, planks, leaves, water
-- Material SSBO at binding 8, texture array at binding 9 — matching BindlessTable reserved slots
-- Fragment shader uses face normal threshold (y > 0.5 / y < -0.5) for top/bottom/side selection
-- Vertex shader outputs v_block_id (flat uint), v_face_normal (vec3), v_uv (vec2) — replaces v_color
-- nonuniformEXT used on texture array index for descriptor indexing safety
-
-## Key Decisions (Phase 5 Plan 02)
-
-- BindlessTable owns descriptor set 0 with 10 bindings (0-7 active, 8-9 reserved for Plan 04 materials)
-- PARTIALLY_BOUND + UPDATE_AFTER_BIND flags on all 10 bindings
-- register_buffer/register_image API for dynamic descriptor updates
-
-## Key Decisions (Phase 5 Plan 01)
-
-- Vulkan 1.2 hard requirement: 7 features (descriptor_indexing, etc.)
-- PhysicalDeviceVulkan12Features via pNext chain
-- No fallback: missing features produce descriptive error
+- Vulkan 1.2 hard requirement, BindlessTable set 0, unified scene_buffer, BlockMaterial textures, dynamic capacity + IndirectCount
 
 ## Key Decisions (Phase 4)
 
@@ -108,13 +76,6 @@ See: .planning/PROJECT.md
 - 2026-03-22: Executed 03-07 — gap closure complete
 - 2026-03-25: Roadmap restructured — 4 rendering phases inserted (4-7)
 - 2026-03-25: Executed 04-01 through 04-07 — Phase 4 COMPLETE
-- 2026-03-26: Executed 05-01 — Vulkan 1.2 hard requirement (BIND-01)
-- 2026-03-26: Executed 05-02 — BindlessTable + pipeline migration (BIND-02)
-- 2026-03-26: Executed 05-04 — BlockMaterial, texture array, shader sampling (BIND-04)
-- 2026-03-26: Executed 05-03 — Unified scene_buffer, GpuChunkInstance, 6→3 buffers (BIND-03)
-- 2026-03-26: Executed 05-05 — Dynamic capacity, IndirectCount draw (BIND-05) — Phase 5 COMPLETE
-- 2026-03-27: Executed 05.1-02 — egui scratch buffer per-frame ring (FIX-02)
-- 2026-03-27: Executed 05.1-01 — Hi-Z pyramid resize recreation (FIX-01)
-- 2026-03-27: Executed 05.1-03 — Camera passthrough + bounds check + live SseConfig (FIX-03, FIX-04)
-- 2026-03-27: Executed 05.1-04 — Safety docs, bytemuck cast, Drop logging (FIX-05, FIX-06, FIX-09)
-- 2026-03-27: Executed 05.1-05 — Staging ring graceful exhaustion (FIX-07)
+- 2026-03-26: Executed 05-01 through 05-05 — Phase 5 COMPLETE
+- 2026-03-27: Executed 05.1-01 through 05.1-06 — Phase 05.1 COMPLETE (all 9 FIX requirements resolved)
+- 2026-03-28: Executed 06-01 through 06-05 — Phase 6 COMPLETE (all 5 MSHL requirements resolved)
