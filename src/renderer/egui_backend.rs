@@ -49,7 +49,10 @@ pub struct EguiAshBackend {
     pub(crate) font_image_view: vk::ImageView,
     pub(crate) font_allocation: Option<Allocation>,
     pub(crate) font_sampler: vk::Sampler,
-    pub(crate) descriptor_set: vk::DescriptorSet,
+    /// Per-frame descriptor sets (HIGH-01): 2 sets for double-buffered frames.
+    /// Each frame binds and updates only its own set, preventing use-after-free
+    /// when font texture is updated while the other frame's command buffer is in-flight.
+    pub(crate) descriptor_sets: [vk::DescriptorSet; 2],
     font_extent: Option<vk::Extent3D>,
     /// Per-frame scratch buffer ring (2 = FRAMES_IN_FLIGHT).
     /// Buffers recorded into slot `current_frame` during paint() are only freed
@@ -75,33 +78,35 @@ impl EguiAshBackend {
                 .context("failed to create egui descriptor set layout")?
         };
 
+        // Per-frame descriptor sets: 2 sets for double-buffered frames (HIGH-01).
+        // This ensures the other frame's command buffer never references a descriptor
+        // set that was modified by a font texture update on the current frame.
         let pool_sizes = [vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(1)];
+            .descriptor_count(2)];
         let descriptor_pool = unsafe {
             device
                 .create_descriptor_pool(
                     &vk::DescriptorPoolCreateInfo::default()
                         .pool_sizes(&pool_sizes)
-                        .max_sets(1),
+                        .max_sets(2),
                     None,
                 )
                 .context("failed to create egui descriptor pool")?
         };
 
         let descriptor_set_layouts = [descriptor_set_layout];
-        let descriptor_set = unsafe {
+        let alloc_layouts = [descriptor_set_layout, descriptor_set_layout];
+        let allocated_sets = unsafe {
             device
                 .allocate_descriptor_sets(
                     &vk::DescriptorSetAllocateInfo::default()
                         .descriptor_pool(descriptor_pool)
-                        .set_layouts(&descriptor_set_layouts),
+                        .set_layouts(&alloc_layouts),
                 )
-                .context("failed to allocate egui descriptor set")?
-                .into_iter()
-                .next()
-                .context("egui descriptor allocation returned no descriptor sets")?
+                .context("failed to allocate egui descriptor sets")?
         };
+        let descriptor_sets: [vk::DescriptorSet; 2] = [allocated_sets[0], allocated_sets[1]];
 
         let push_constant_ranges = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX)
@@ -127,7 +132,7 @@ impl EguiAshBackend {
             font_image_view: vk::ImageView::null(),
             font_allocation: None,
             font_sampler: vk::Sampler::null(),
-            descriptor_set,
+            descriptor_sets,
             font_extent: None,
             scratch_buffers: [Vec::new(), Vec::new()],
         })
@@ -341,13 +346,13 @@ impl EguiAshBackend {
                 bytemuck::bytes_of(&screen_size_points),
             );
 
-            // 7. Bind font descriptor set.
+            // 7. Bind current frame's font descriptor set (HIGH-01).
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline_layout,
                 0,
-                &[self.descriptor_set],
+                &[self.descriptor_sets[current_frame]],
                 &[],
             );
         }
@@ -547,11 +552,19 @@ impl EguiAshBackend {
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
             .image_view(self.font_image_view)
             .sampler(self.font_sampler)];
-        let writes = [vk::WriteDescriptorSet::default()
-            .dst_set(self.descriptor_set)
-            .dst_binding(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(&image_infos)];
+        // Update both per-frame descriptor sets (HIGH-01).
+        let writes = [
+            vk::WriteDescriptorSet::default()
+                .dst_set(self.descriptor_sets[0])
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&image_infos),
+            vk::WriteDescriptorSet::default()
+                .dst_set(self.descriptor_sets[1])
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&image_infos),
+        ];
 
         unsafe {
             renderer
