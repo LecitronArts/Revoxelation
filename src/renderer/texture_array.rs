@@ -1,8 +1,10 @@
 //! 2D texture array for block textures.
 //!
-//! Creates a VkImage (2D array, 16×16 RGBA8, 256 max layers) and populates
-//! the first ~10 layers with procedurally generated pixel-art textures.
-//! Registered at bindless binding 9 as a COMBINED_IMAGE_SAMPLER.
+//! Creates a VkImage (2D array, 16x16 RGBA8, 256 max layers) with a full
+//! mipmap chain and anisotropic filtering. Populates the first ~10 layers
+//! with procedurally generated pixel-art textures. Mipmaps are generated
+//! via vkCmdBlitImage. Registered at bindless binding 9 as a
+//! COMBINED_IMAGE_SAMPLER.
 
 use anyhow::{Context, Result, anyhow};
 use ash::vk;
@@ -12,12 +14,18 @@ use gpu_allocator::MemoryLocation;
 use super::Renderer;
 use super::helpers::{allocator_mut, submit_one_shot_commands};
 
-/// Texture resolution per layer (16×16 pixels).
+/// Texture resolution per layer (16x16 pixels).
 const TEX_SIZE: u32 = 16;
 /// Maximum number of layers in the texture array.
 const MAX_LAYERS: u32 = 256;
 /// Number of initial procedural texture layers.
 const INITIAL_LAYERS: u32 = 11; // layer 0 placeholder + 10 block textures
+
+/// Calculate the number of mip levels for a given max dimension.
+/// mip_levels = floor(log2(max(w, h))) + 1
+fn calculate_mip_levels(width: u32, height: u32) -> u32 {
+    (width.max(height) as f32).log2().floor() as u32 + 1
+}
 
 /// A 2D texture array holding all block textures.
 pub struct TextureArray {
@@ -28,12 +36,16 @@ pub struct TextureArray {
 }
 
 impl TextureArray {
-    /// Create the texture array, generate procedural textures, upload, and register
-    /// at bindless binding 9.
+    /// Create the texture array, generate procedural textures, upload, generate
+    /// mipmaps via vkCmdBlitImage, and register at bindless binding 9.
     pub fn new(renderer: &mut Renderer) -> Result<Self> {
         let device = renderer.device_ctx.device.clone();
 
-        // --- Create VkImage (2D array, RGBA8, 256 layers) ---
+        // Calculate mip levels for the texture dimensions.
+        let mip_levels = calculate_mip_levels(TEX_SIZE, TEX_SIZE);
+
+        // --- Create VkImage (2D array, RGBA8, 256 layers, with mipmaps) ---
+        // TRANSFER_SRC is required because mipmap generation blits from mip N-1 (src) to mip N (dst).
         let image = unsafe {
             device
                 .create_image(
@@ -45,12 +57,14 @@ impl TextureArray {
                             height: TEX_SIZE,
                             depth: 1,
                         })
-                        .mip_levels(1)
+                        .mip_levels(mip_levels)
                         .array_layers(MAX_LAYERS)
                         .samples(vk::SampleCountFlags::TYPE_1)
                         .tiling(vk::ImageTiling::OPTIMAL)
                         .usage(
-                            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                            vk::ImageUsageFlags::TRANSFER_DST
+                                | vk::ImageUsageFlags::TRANSFER_SRC
+                                | vk::ImageUsageFlags::SAMPLED,
                         )
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .initial_layout(vk::ImageLayout::UNDEFINED),
@@ -105,10 +119,10 @@ impl TextureArray {
             }
         }
 
-        // --- Upload via one-shot commands ---
+        // --- Upload base mip + generate mipmap chain via one-shot commands ---
         let device_clone = device.clone();
         submit_one_shot_commands(renderer, |device, cmd| {
-            // Transition all layers to TRANSFER_DST
+            // Transition ALL mip levels of ALL layers to TRANSFER_DST_OPTIMAL.
             let barrier = vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::UNDEFINED)
                 .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
@@ -119,7 +133,7 @@ impl TextureArray {
                     vk::ImageSubresourceRange::default()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .base_mip_level(0)
-                        .level_count(1)
+                        .level_count(mip_levels)
                         .base_array_layer(0)
                         .layer_count(MAX_LAYERS),
                 );
@@ -135,7 +149,7 @@ impl TextureArray {
                 );
             }
 
-            // Copy each layer from staging buffer to image
+            // Copy each layer from staging buffer to mip level 0 of the image.
             let mut regions = Vec::with_capacity(INITIAL_LAYERS as usize);
             for layer in 0..INITIAL_LAYERS {
                 regions.push(
@@ -168,18 +182,134 @@ impl TextureArray {
                 );
             }
 
-            // Transition all layers to SHADER_READ_ONLY_OPTIMAL
-            let barrier2 = vk::ImageMemoryBarrier::default()
+            // --- Generate mipmap chain using vkCmdBlitImage ---
+            // For each mip level 1..mip_levels:
+            //   1. Transition mip N-1 from TRANSFER_DST to TRANSFER_SRC.
+            //   2. Blit from mip N-1 to mip N with LINEAR filter.
+            //   (mip N is already in TRANSFER_DST from the initial transition.)
+            let mut mip_width = TEX_SIZE as i32;
+            let mut mip_height = TEX_SIZE as i32;
+
+            for mip in 1..mip_levels {
+                // Transition mip N-1 → TRANSFER_SRC_OPTIMAL.
+                let src_barrier = vk::ImageMemoryBarrier::default()
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                    .image(image)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .base_mip_level(mip - 1)
+                            .level_count(1)
+                            .base_array_layer(0)
+                            .layer_count(MAX_LAYERS),
+                    );
+                unsafe {
+                    device.cmd_pipeline_barrier(
+                        cmd,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &[src_barrier],
+                    );
+                }
+
+                let next_width = (mip_width / 2).max(1);
+                let next_height = (mip_height / 2).max(1);
+
+                // Blit mip N-1 → mip N for all layers.
+                let blit_region = vk::ImageBlit::default()
+                    .src_subresource(
+                        vk::ImageSubresourceLayers::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .mip_level(mip - 1)
+                            .base_array_layer(0)
+                            .layer_count(MAX_LAYERS),
+                    )
+                    .src_offsets([
+                        vk::Offset3D { x: 0, y: 0, z: 0 },
+                        vk::Offset3D {
+                            x: mip_width,
+                            y: mip_height,
+                            z: 1,
+                        },
+                    ])
+                    .dst_subresource(
+                        vk::ImageSubresourceLayers::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .mip_level(mip)
+                            .base_array_layer(0)
+                            .layer_count(MAX_LAYERS),
+                    )
+                    .dst_offsets([
+                        vk::Offset3D { x: 0, y: 0, z: 0 },
+                        vk::Offset3D {
+                            x: next_width,
+                            y: next_height,
+                            z: 1,
+                        },
+                    ]);
+
+                unsafe {
+                    device.cmd_blit_image(
+                        cmd,
+                        image,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        image,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &[blit_region],
+                        vk::Filter::LINEAR,
+                    );
+                }
+
+                mip_width = next_width;
+                mip_height = next_height;
+            }
+
+            // Transition the last mip level from TRANSFER_DST to TRANSFER_SRC
+            // (so that the final blanket transition covers all mips uniformly).
+            let last_mip_barrier = vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                .image(image)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level(mip_levels - 1)
+                        .level_count(1)
+                        .base_array_layer(0)
+                        .layer_count(MAX_LAYERS),
+                );
+            unsafe {
+                device.cmd_pipeline_barrier(
+                    cmd,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[last_mip_barrier],
+                );
+            }
+
+            // Transition ALL mip levels to SHADER_READ_ONLY_OPTIMAL.
+            let final_barrier = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .src_access_mask(vk::AccessFlags::TRANSFER_READ)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ)
                 .image(image)
                 .subresource_range(
                     vk::ImageSubresourceRange::default()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .base_mip_level(0)
-                        .level_count(1)
+                        .level_count(mip_levels)
                         .base_array_layer(0)
                         .layer_count(MAX_LAYERS),
                 );
@@ -191,7 +321,7 @@ impl TextureArray {
                     vk::DependencyFlags::empty(),
                     &[],
                     &[],
-                    &[barrier2],
+                    &[final_barrier],
                 );
             }
 
@@ -201,7 +331,7 @@ impl TextureArray {
         // Clean up staging buffer
         super::helpers::destroy_allocated_buffer(renderer, staging_buffer, staging_alloc)?;
 
-        // --- Create VkImageView (2D_ARRAY) ---
+        // --- Create VkImageView (2D_ARRAY, all mip levels) ---
         let view = unsafe {
             device_clone
                 .create_image_view(
@@ -214,7 +344,7 @@ impl TextureArray {
                             vk::ImageSubresourceRange::default()
                                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                                 .base_mip_level(0)
-                                .level_count(1)
+                                .level_count(mip_levels)
                                 .base_array_layer(0)
                                 .layer_count(MAX_LAYERS),
                         ),
@@ -223,18 +353,23 @@ impl TextureArray {
                 .context("failed to create texture array image view")?
         };
 
-        // --- Create VkSampler (NEAREST filter — pixelated voxel look) ---
+        // --- Create VkSampler (LINEAR + anisotropic filtering for crisp distance rendering) ---
+        // POLISH-02: maxAnisotropy=16.0, anisotropyEnable=true, mipmapMode=LINEAR,
+        // minFilter=LINEAR, magFilter=LINEAR. This eliminates texture shimmer at distance.
         let sampler = unsafe {
             device_clone
                 .create_sampler(
                     &vk::SamplerCreateInfo::default()
-                        .mag_filter(vk::Filter::NEAREST)
-                        .min_filter(vk::Filter::NEAREST)
-                        .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+                        .mag_filter(vk::Filter::LINEAR)
+                        .min_filter(vk::Filter::LINEAR)
+                        .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
                         .address_mode_u(vk::SamplerAddressMode::REPEAT)
                         .address_mode_v(vk::SamplerAddressMode::REPEAT)
                         .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                        .max_lod(0.0),
+                        .anisotropy_enable(true)
+                        .max_anisotropy(16.0)
+                        .min_lod(0.0)
+                        .max_lod(mip_levels as f32),
                     None,
                 )
                 .context("failed to create texture array sampler")?
@@ -250,6 +385,14 @@ impl TextureArray {
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             );
         }
+
+        log::info!(
+            "Texture array created: {}x{}, {} layers, {} mip levels, anisotropic filtering enabled",
+            TEX_SIZE,
+            TEX_SIZE,
+            INITIAL_LAYERS,
+            mip_levels,
+        );
 
         Ok(Self {
             image,
@@ -274,7 +417,7 @@ impl TextureArray {
 }
 
 // ---------------------------------------------------------------------------
-// Procedural texture generation (16×16 RGBA8 per layer)
+// Procedural texture generation (16x16 RGBA8 per layer)
 // ---------------------------------------------------------------------------
 
 type TexPixels = Vec<u8>;
@@ -361,7 +504,7 @@ fn gen_grass_side() -> TexPixels {
     for y in 0..TEX_SIZE {
         for x in 0..TEX_SIZE {
             if y >= TEX_SIZE - 4 {
-                // High texture-y → high V → top of block face (high world-Y).
+                // High texture-y -> high V -> top of block face (high world-Y).
                 // Green strip where the grass top meets the side.
                 let n = noise(x, y, 3) as i16;
                 let r = (70 + (n - 128) / 10).clamp(0, 255) as u8;
@@ -369,7 +512,7 @@ fn gen_grass_side() -> TexPixels {
                 let b = (45 + (n - 128) / 12).clamp(0, 255) as u8;
                 set_pixel(&mut tex, x, y, r, g, b, 255);
             } else {
-                // Low texture-y → low V → bottom of block face. Dirt.
+                // Low texture-y -> low V -> bottom of block face. Dirt.
                 let n = noise(x, y, 1) as i16;
                 let r = (139 + (n - 128) / 8).clamp(0, 255) as u8;
                 let g = (90 + (n - 128) / 10).clamp(0, 255) as u8;
