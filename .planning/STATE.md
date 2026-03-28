@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 06-meshlet-pipeline
-status: complete
-last_updated: "2026-03-28T08:00:00.000Z"
+current_phase: 06.1-rendering-polish
+status: in_progress
+last_updated: "2026-03-28T05:04:49.000Z"
 progress:
-  total_phases: 13
+  total_phases: 14
   completed_phases: 8
-  total_plans: 39
-  completed_plans: 39
+  total_plans: 47
+  completed_plans: 40
 ---
 
 # Session State
@@ -21,8 +21,14 @@ See: .planning/PROJECT.md
 ## Position
 
 **Milestone:** v1.0 milestone
-**Current phase:** 06-meshlet-pipeline
-**Status:** Complete — All 5/5 plans done. Phase 6 COMPLETE. Next: Phase 7 (Lighting and Shadows)
+**Current phase:** 06.1-rendering-polish
+**Status:** In progress — Plan 01 complete (4 CRIT fixes). 7 plans remaining.
+
+## Key Decisions (Phase 06.1 Plan 01)
+
+- CRIT-07: Shader copy_mode push constant (1:1 vs 2x2) instead of vkCmdCopyImage — D32_SFLOAT→R32_SFLOAT cross-format copy not supported
+- CRIT-02: Per-region BufferCopy with explicit offsets — align_up(16) shifts region boundaries at different capacities
+- CRIT-03: Two separate cmd_push_constants calls — pipeline layout gap at [40..48) prohibits single combined push
 
 ## Key Decisions (Phase 6)
 
@@ -70,6 +76,7 @@ See: .planning/PROJECT.md
 
 ### Roadmap Evolution
 - Phase 05.1 inserted after Phase 5: Critical Bug Fixes and Safety Hardening (URGENT)
+- Phase 06.1 inserted after Phase 6: Rendering Polish and Optimization (user-requested quality pass)
 
 ## Session Log
 
@@ -79,3 +86,6 @@ See: .planning/PROJECT.md
 - 2026-03-26: Executed 05-01 through 05-05 — Phase 5 COMPLETE
 - 2026-03-27: Executed 05.1-01 through 05.1-06 — Phase 05.1 COMPLETE (all 9 FIX requirements resolved)
 - 2026-03-28: Executed 06-01 through 06-05 — Phase 6 COMPLETE (all 5 MSHL requirements resolved)
+- 2026-03-28: Phase 06.1 inserted — Rendering Polish and Optimization (9 POLISH requirements, 4 plans)
+- 2026-03-28: Phase 06.1 expanded after deep code review — added 7 CRIT + 7 HIGH + 12 MED bugs + 8 REFAC items, total 8 plans
+- 2026-03-28: Executed 06.1-01 — 4 CRIT Vulkan bugs fixed (depth store_op, scene_buffer grow, push constants, Hi-Z pass 0)

@@ -20,6 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Bindless Architecture and GPU Scene** - Vulkan 1.2 descriptor indexing (hard requirement, no fallback), unified GPU scene buffer, block material/texture system.
 - [x] **Phase 05.1: Critical Bug Fixes and Safety Hardening** (INSERTED) - Fix critical GPU resource bugs (Hi-Z resize, egui UAF), harden safety (bounds checks, unsafe docs, safe casts), improve robustness (staging exhaustion, camera passthrough, clippy cleanup).
 - [x] **Phase 6: Meshlet Pipeline** - Meshlet generation, per-meshlet GPU culling, software mesh shader emulation, optional VK_EXT_mesh_shader hardware path.
+- [ ] **Phase 06.1: Rendering Polish, Bug Fixes, and Architecture Refactoring** (INSERTED) - Fix all critical/high/medium bugs, refactor God Objects, harden error handling, improve visual quality, smooth runtime behavior.
 - [ ] **Phase 7: Lighting and Shadows** - Directional PBR lighting, cascaded shadow maps, SSAO, voxel AO, sky/atmosphere with day-night cycle.
 - [ ] **Phase 8: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
 - [ ] **Phase 9: Authoritative Block Editing Feedback** - Apply block edits authoritatively and reflect them visually near-immediately.
@@ -178,6 +179,38 @@ Plans:
 - [x] 06-04: VK_EXT_mesh_shader hardware path (task+mesh shaders, feature flag fallback).
 - [x] 06-05: Cluster LOD transitions (meshlet LOD groups, SSE selection, skirt+alpha dither).
 
+### Phase 06.1: Rendering Polish, Bug Fixes, and Architecture Refactoring (INSERTED)
+
+**Goal:** Comprehensive quality pass: fix all critical/high/medium bugs found in deep code review, refactor God Objects and duplicated code, harden error handling, improve visual quality (textures, AA, shader parameterization), and smooth runtime behavior (camera, streaming transitions). Transforms the engine from "technically working" to "production-quality."
+**Depends on:** Phase 6
+**Requirements**: CRIT-01~07, HIGH-01~07, MED-01~12, POLISH-01~09, REFAC-01~08
+**Success Criteria** (what must be TRUE):
+  1. Depth store_op is STORE; Hi-Z reads valid depth on all GPU vendors.
+  2. scene_buffer grow copies per-region with correct offsets; no corruption after capacity growth.
+  3. Push constants split correctly per Vulkan spec; no validation errors.
+  4. MeshletPool reclaims space on removal; active counts decrement; no unbounded GPU buffer growth.
+  5. SSE uses world-space coordinates; streaming loads correct chunks.
+  6. deactivate_chunk handles all lifecycle states; no stuck chunks.
+  7. Hi-Z pass 0 handles equal src/dst resolution correctly.
+  8. egui descriptors are safe across frames; destroy order correct; all memory leaks fixed.
+  9. All shader magic numbers parameterized; shared include system eliminates duplication.
+  10. Texture array has mipmaps + aniso; MSAA or post-process AA enabled.
+  11. Renderer struct split into sub-structs; submit_frame decomposed; swapchain code deduplicated.
+  12. Camera uses delta-time smoothing; chunk streaming uses fade-in.
+  13. All runtime unwrap()/panic!() replaced; eprintln diagnostics use log framework.
+  14. Dead code (hecs, ChunkDrawMetadata, skirt code) removed.
+**Plans**: 8 plans
+
+Plans:
+- [x] 06.1-01: Critical Vulkan bugs (CRIT-01~07) — depth store_op, scene_buffer grow, push constants, Hi-Z pass 0.
+- [ ] 06.1-02: MeshletPool reclamation + streaming state fixes (CRIT-04~06, HIGH-03~06, MED-06~08).
+- [ ] 06.1-03: Vulkan resource safety (HIGH-01~02, HIGH-07, MED-01~05, MED-09).
+- [ ] 06.1-04: Shader parameterization + shared includes + compilation optimization (POLISH-01, POLISH-04, POLISH-07).
+- [ ] 06.1-05: Texture quality + anti-aliasing (POLISH-02, POLISH-03).
+- [ ] 06.1-06: Error handling hardening + GPU readback counters (POLISH-05, POLISH-06, MED-10~11).
+- [ ] 06.1-07: Camera smoothing + chunk fade-in + dead code cleanup (POLISH-08, POLISH-09, MED-12, REFAC-06~07).
+- [ ] 06.1-08: Architecture refactoring (REFAC-01~05, REFAC-08).
+
 ### Phase 7: Lighting and Shadows
 **Goal**: Establish a complete real-time lighting system with directional PBR, cascaded shadow maps, SSAO, voxel AO, and sky/atmosphere rendering with day-night cycle. Transform the visual quality from flat-colored blocks to a scene with depth and atmosphere.
 **Depends on**: Phase 5 (materials/textures), Phase 6 (meshlet normals)
@@ -254,7 +287,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 7 -> 8 -> 9 -> 10 -> 11
+Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 06.1 -> 7 -> 8 -> 9 -> 10 -> 11
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -266,6 +299,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 7 -> 8 
 | 5. Bindless Architecture and GPU Scene | 5/5 | Complete | 2026-03-26 |
 | 05.1. Critical Bug Fixes and Safety Hardening | 6/6 | Complete | 2026-03-27 |
 | 6. Meshlet Pipeline | 5/5 | Complete | 2026-03-28 |
+| 06.1. Rendering Polish, Bug Fixes, Refactoring | 1/8 | In Progress | - |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |
 | 9. Authoritative Block Editing Feedback | 0/2 | Not started | - |

@@ -61,6 +61,64 @@
 - [x] **MSHL-04**: VK_EXT_mesh_shader hardware path works on supported GPUs with automatic fallback.
 - [x] **MSHL-05**: LOD transitions between meshlet groups are seamless with no visible seams.
 
+### Critical Bug Fixes (Phase 06.1)
+
+- [x] **CRIT-01**: Depth attachment store_op changed from DONT_CARE to STORE — Hi-Z pyramid reads valid depth data on all GPU vendors.
+- [x] **CRIT-02**: scene_buffer grow copies data per-region with correct src/dst offsets — no rendering corruption after capacity growth.
+- [x] **CRIT-03**: Mesh shader push constants split into two calls matching pipeline layout ranges — no Vulkan spec violation.
+- [ ] **CRIT-04**: MeshletPool tracks removals and reclaims GPU buffer space — active counts decrement on chunk unload, no unbounded growth.
+- [ ] **CRIT-05**: SSE distance calculation uses world-space chunk coordinates (key × chunk_edge × lod_scale) — streaming loads correct chunks.
+- [ ] **CRIT-06**: deactivate_chunk handles Queued/Loading states — chunks transition to Inactive and can be re-activated.
+- [x] **CRIT-07**: Hi-Z pass 0 correctly handles equal src/dst resolution — no incorrect 2×2 sampling of out-of-bounds texels.
+
+### High-Priority Bug Fixes (Phase 06.1)
+
+- [ ] **HIGH-01**: egui descriptor set uses UPDATE_AFTER_BIND or per-frame sets — no use-after-free on font texture update.
+- [ ] **HIGH-02**: destroy_allocated_buffer/image destroys resource before freeing allocation — correct Vulkan destruction order.
+- [ ] **HIGH-03**: ChunkStateStore removes entries on Inactive transition — no unbounded HashMap growth during exploration.
+- [ ] **HIGH-04**: cancel_flags entries cleaned up on Queued deactivation — no Arc<AtomicBool> leaks.
+- [ ] **HIGH-05**: Dirty mesh records removed when payload absent — no unbounded dirty HashMap growth.
+- [ ] **HIGH-06**: Job queue eviction compares new task SSE against evicted — no incorrect eviction of higher-priority tasks.
+- [ ] **HIGH-07**: Bindless descriptor stageFlags include TASK_SHADER_BIT_EXT and MESH_SHADER_BIT_EXT — mesh shader path has valid descriptor access.
+
+### Medium Bug Fixes and Hardening (Phase 06.1)
+
+- [ ] **MED-01**: Camera near-plane extraction uses Vulkan z∈[0,w] formula (row2 only) — correct frustum plane derivation.
+- [ ] **MED-02**: Pipeline barriers include TASK_SHADER_BIT_EXT/MESH_SHADER_BIT_EXT in dstStageMask — correct synchronization for mesh shader path.
+- [ ] **MED-03**: transition_image_layout catch-all uses conservative access masks and logs warning — no silent zero-synchronization.
+- [ ] **MED-04**: StagingBuffer::write returns Result and fails on unmapped memory — no silent data loss.
+- [ ] **MED-05**: max_draw_count uses meshlet_pool capacity instead of hardcoded constant — correct after future grow.
+- [ ] **MED-06**: PrioritizedTask computes real SSE at enqueue time — job queue priority sorting is effective.
+- [ ] **MED-07**: Dirty queue uses HashSet for O(1) dedup instead of O(n) VecDeque scan.
+- [ ] **MED-08**: run_mesh_sync limits job results processed per frame — no frame stall on bulk completion.
+- [ ] **MED-09**: cancel_flags use Acquire/Release ordering — correct cross-thread visibility on ARM.
+- [ ] **MED-10**: seed_input_commands placeholder removed or guarded by cfg(test) — no per-frame dummy events in production.
+- [ ] **MED-11**: eprintln! diagnostics replaced with log::debug! — respects log level configuration.
+- [ ] **MED-12**: Octree parent clamp replaced with skip-link — no incorrect topology from coordinate saturation.
+
+### Rendering Polish and Optimization (Phase 06.1)
+
+- [ ] **POLISH-01**: All shader hardcoded constants (screen_height=1080, SSE threshold=2.0, distance clamp=0.001) are parameterized via push constants or UBO — no magic numbers in shader source.
+- [ ] **POLISH-02**: Texture array uses mipmap chain with anisotropic filtering sampler; block textures are sharp at distance without shimmer.
+- [ ] **POLISH-03**: MSAA (4× minimum) or equivalent post-process AA eliminates jagged block edges.
+- [ ] **POLISH-04**: Shared shader include system eliminates duplicated code between chunk_mesh/meshlet_draw/meshlet.mesh shaders.
+- [ ] **POLISH-05**: All runtime unwrap()/panic!() in non-test code replaced with Result propagation or graceful error logging.
+- [ ] **POLISH-06**: GPU performance counters read actual culled meshlet/chunk counts from GPU (async readback, 1-2 frame latency) — HUD shows real numbers.
+- [ ] **POLISH-07**: Shader compilation uses performance optimization level; SPIR-V output is optimized.
+- [ ] **POLISH-08**: Chunk streaming transitions use distance-based fade-in instead of instant pop-in.
+- [ ] **POLISH-09**: Camera movement uses delta-time smoothing and configurable sensitivity — no jitter or speed variance across frame rates.
+
+### Architecture Refactoring (Phase 06.1)
+
+- [ ] **REFAC-01**: Renderer struct split into sub-structs (VulkanCore, PipelineSet, PoolManager) — no 38-field God Object.
+- [ ] **REFAC-02**: submit_frame decomposed into named sub-functions matching frame sequence steps — no 484-line monolith.
+- [ ] **REFAC-03**: create/recreate_swapchain_context merged into single parameterized function — no 60% code duplication.
+- [ ] **REFAC-04**: Staging copy pattern extracted into helper function — no 10× repetition in chunk_pool.rs.
+- [ ] **REFAC-05**: Binding IDs defined as named constants (BINDING_SCENE, BINDING_FRUSTUM, etc.) — no magic numbers.
+- [ ] **REFAC-06**: hecs dependency removed from Cargo.toml — unused ECS crate cleaned up.
+- [ ] **REFAC-07**: Dead code removed (ChunkDrawMetadata, commented skirt code, unused window_extent writes).
+- [ ] **REFAC-08**: app::run() frame logic extracted into App::tick() method — event loop body ≤50 lines.
+
 ### Lighting and Shadows
 
 - [ ] **LGHT-01**: Blocks display PBR lighting with diffuse and specular response under directional light.
@@ -163,6 +221,49 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MSHL-03 | Phase 6 | Complete |
 | MSHL-04 | Phase 6 | Complete |
 | MSHL-05 | Phase 6 | Complete |
+| POLISH-01 | Phase 06.1 | Pending |
+| POLISH-02 | Phase 06.1 | Pending |
+| POLISH-03 | Phase 06.1 | Pending |
+| POLISH-04 | Phase 06.1 | Pending |
+| POLISH-05 | Phase 06.1 | Pending |
+| POLISH-06 | Phase 06.1 | Pending |
+| POLISH-07 | Phase 06.1 | Pending |
+| POLISH-08 | Phase 06.1 | Pending |
+| POLISH-09 | Phase 06.1 | Pending |
+| CRIT-01 | Phase 06.1 | Complete |
+| CRIT-02 | Phase 06.1 | Complete |
+| CRIT-03 | Phase 06.1 | Complete |
+| CRIT-04 | Phase 06.1 | Pending |
+| CRIT-05 | Phase 06.1 | Pending |
+| CRIT-06 | Phase 06.1 | Pending |
+| CRIT-07 | Phase 06.1 | Complete |
+| HIGH-01 | Phase 06.1 | Pending |
+| HIGH-02 | Phase 06.1 | Pending |
+| HIGH-03 | Phase 06.1 | Pending |
+| HIGH-04 | Phase 06.1 | Pending |
+| HIGH-05 | Phase 06.1 | Pending |
+| HIGH-06 | Phase 06.1 | Pending |
+| HIGH-07 | Phase 06.1 | Pending |
+| MED-01 | Phase 06.1 | Pending |
+| MED-02 | Phase 06.1 | Pending |
+| MED-03 | Phase 06.1 | Pending |
+| MED-04 | Phase 06.1 | Pending |
+| MED-05 | Phase 06.1 | Pending |
+| MED-06 | Phase 06.1 | Pending |
+| MED-07 | Phase 06.1 | Pending |
+| MED-08 | Phase 06.1 | Pending |
+| MED-09 | Phase 06.1 | Pending |
+| MED-10 | Phase 06.1 | Pending |
+| MED-11 | Phase 06.1 | Pending |
+| MED-12 | Phase 06.1 | Pending |
+| REFAC-01 | Phase 06.1 | Pending |
+| REFAC-02 | Phase 06.1 | Pending |
+| REFAC-03 | Phase 06.1 | Pending |
+| REFAC-04 | Phase 06.1 | Pending |
+| REFAC-05 | Phase 06.1 | Pending |
+| REFAC-06 | Phase 06.1 | Pending |
+| REFAC-07 | Phase 06.1 | Pending |
+| REFAC-08 | Phase 06.1 | Pending |
 | LGHT-01 | Phase 7 | Pending |
 | LGHT-02 | Phase 7 | Pending |
 | LGHT-03 | Phase 7 | Pending |
@@ -182,10 +283,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUAL-01 | Phase 1 | Complete |
 
 **Coverage:**
-- v1 requirements: 52 total
-- Mapped to phases: 52
+- v1 requirements: 96 total
+- Mapped to phases: 96
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-15*
-*Last updated: 2026-03-27 — added FIX-01 through FIX-09 for Phase 05.1 bug fixes and safety hardening*
+*Last updated: 2026-03-28 — added CRIT-01~07, HIGH-01~07, MED-01~12, REFAC-01~08 for Phase 06.1 deep review fixes*
