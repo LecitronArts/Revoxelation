@@ -25,12 +25,14 @@ unsafe impl Send for StagingAllocation {}
 impl StagingAllocation {
     /// Write data into this staging allocation.
     pub fn write_bytes(&mut self, data: &[u8]) {
-        assert!(
-            (data.len() as u64) <= self.size,
-            "write exceeds staging allocation size: {} > {}",
-            data.len(),
-            self.size,
-        );
+        if (data.len() as u64) > self.size {
+            log::error!(
+                "write exceeds staging allocation size: {} > {}",
+                data.len(),
+                self.size,
+            );
+            return;
+        }
         if !self.mapped_ptr.is_null() {
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), self.mapped_ptr, data.len());

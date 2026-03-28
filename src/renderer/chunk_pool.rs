@@ -279,9 +279,12 @@ impl SlotAllocator {
 
     /// Grow the allocator to `new_capacity`, extending all internal vectors
     /// and adding new free slots from `old_capacity..new_capacity` (D-08).
-    pub fn grow(&mut self, new_capacity: usize) {
+    pub fn grow(&mut self, new_capacity: usize) -> Result<()> {
         let old_capacity = self.slot_to_chunk.len();
-        assert!(new_capacity > old_capacity, "grow: new_capacity must exceed old");
+        if new_capacity <= old_capacity {
+            log::error!("grow: new_capacity ({new_capacity}) must exceed old ({old_capacity})");
+            return Err(anyhow!("grow: new_capacity must exceed old"));
+        }
         self.slot_to_chunk.resize(new_capacity, None);
         self.slot_to_draw_index.resize(new_capacity, None);
         self.instance_shadow.resize(new_capacity, GpuChunkInstance::default());
@@ -290,6 +293,7 @@ impl SlotAllocator {
         for slot in (old_capacity as u32..new_capacity as u32).rev() {
             self.free_slots.push(slot);
         }
+        Ok(())
     }
 }
 
@@ -607,7 +611,7 @@ impl ChunkPool {
         self.dense_indirect_shadow.resize(new_capacity, vk::DrawIndexedIndirectCommand::default());
 
         // Grow slot allocator
-        self.slot_allocator.grow(new_capacity);
+        self.slot_allocator.grow(new_capacity)?;
 
         // Update BindlessTable binding 0 to point to the new scene_buffer (D-05)
         bindless.register_buffer(&renderer.device_ctx.device, 0, self.scene_buffer, vk::WHOLE_SIZE);

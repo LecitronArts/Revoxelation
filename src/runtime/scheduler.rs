@@ -92,7 +92,7 @@ impl StreamingState {
             rayon_pool: rayon::ThreadPoolBuilder::new()
                 .num_threads(4)
                 .build()
-                .unwrap(),
+                .expect("rayon thread pool creation is infallible with valid config"),
             pending_render_deltas: std::collections::VecDeque::new(),
         }
     }
@@ -585,9 +585,9 @@ pub fn debug_deactivate_active_chunk_for_tests(key: ChunkKey, frame_index: u64) 
     let mut meshing = MeshingState::default();
 
     ss.state_store.insert_inactive(key);
-    ss.state_store.transition_to(key, ChunkState::Queued).unwrap();
-    ss.state_store.transition_to(key, ChunkState::Loading).unwrap();
-    ss.state_store.transition_to(key, ChunkState::Active).unwrap();
+    ss.state_store.transition_to(key, ChunkState::Queued).expect("test: Inactive→Queued");
+    ss.state_store.transition_to(key, ChunkState::Loading).expect("test: Queued→Loading");
+    ss.state_store.transition_to(key, ChunkState::Active).expect("test: Loading→Active");
     deactivate_chunk(&mut ss, key);
 
     run_mesh_sync(&mut ss, &mut meshing, frame_index);
