@@ -106,114 +106,23 @@ pub fn create_swapchain_context(
         .collect::<Result<Vec<_>>>()?;
     let render_pass = create_render_pass_msaa(&device_ctx.device, surface_format.format, DEPTH_FORMAT)?;
 
-    // Create MSAA color image (TYPE_4, same format as swapchain).
-    let (msaa_color_image, msaa_color_allocation) = create_msaa_image(
+    // MSAA color + depth via shared helper (REFAC-03).
+    let msaa = build_msaa_resources(&device_ctx.device, allocator, extent, surface_format.format)?;
+
+    // Resolved single-sample depth image (for Hi-Z pyramid).
+    let (depth_image, depth_allocation, depth_image_view) =
+        build_depth_resources(&device_ctx.device, allocator, extent)?;
+
+    // Framebuffers via shared helper (REFAC-03).
+    let framebuffers = build_framebuffers(
         &device_ctx.device,
-        allocator,
+        render_pass,
+        &image_views,
+        msaa.color_view,
+        msaa.depth_view,
+        depth_image_view,
         extent,
-        surface_format.format,
-        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-        "msaa-color",
     )?;
-    let msaa_color_view = create_image_view_simple(
-        &device_ctx.device,
-        msaa_color_image,
-        surface_format.format,
-        vk::ImageAspectFlags::COLOR,
-    )?;
-
-    // Create MSAA depth image (TYPE_4).
-    let (msaa_depth_image, msaa_depth_allocation) = create_msaa_image(
-        &device_ctx.device,
-        allocator,
-        extent,
-        DEPTH_FORMAT,
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-        "msaa-depth",
-    )?;
-    let msaa_depth_view = create_image_view_simple(
-        &device_ctx.device,
-        msaa_depth_image,
-        DEPTH_FORMAT,
-        vk::ImageAspectFlags::DEPTH,
-    )?;
-
-    // Create resolved single-sample depth image (for Hi-Z pyramid).
-    let depth_image = unsafe {
-        device_ctx
-            .device
-            .create_image(
-                &vk::ImageCreateInfo::default()
-                    .image_type(vk::ImageType::TYPE_2D)
-                    .format(DEPTH_FORMAT)
-                    .extent(vk::Extent3D {
-                        width: extent.width,
-                        height: extent.height,
-                        depth: 1,
-                    })
-                    .mip_levels(1)
-                    .array_layers(1)
-                    .samples(vk::SampleCountFlags::TYPE_1)
-                    .tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .initial_layout(vk::ImageLayout::UNDEFINED),
-                None,
-            )
-            .context("failed to create depth image")?
-    };
-    let depth_requirements = unsafe {
-        device_ctx.device.get_image_memory_requirements(depth_image)
-    };
-    let depth_allocation = allocator
-        .allocate(&AllocationCreateDesc {
-            name: "swapchain-depth",
-            requirements: depth_requirements,
-            location: MemoryLocation::GpuOnly,
-            linear: false,
-            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-        })
-        .map_err(|error| anyhow!("failed to allocate depth image memory: {error}"))?;
-    unsafe {
-        device_ctx
-            .device
-            .bind_image_memory(depth_image, depth_allocation.memory(), depth_allocation.offset())
-            .context("failed to bind depth image memory")?;
-    }
-    let depth_subresource_range = vk::ImageSubresourceRange::default()
-        .aspect_mask(vk::ImageAspectFlags::DEPTH)
-        .level_count(1)
-        .layer_count(1);
-    let depth_image_view = unsafe {
-        device_ctx
-            .device
-            .create_image_view(
-                &vk::ImageViewCreateInfo::default()
-                    .image(depth_image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(DEPTH_FORMAT)
-                    .subresource_range(depth_subresource_range),
-                None,
-            )
-            .context("failed to create depth image view")?
-    };
-
-    // Framebuffers: 4 attachments per MSAA render pass.
-    // [0] = MSAA color, [1] = MSAA depth, [2] = resolve color (swapchain), [3] = resolve depth
-    let framebuffers = image_views
-        .iter()
-        .map(|swapchain_view| {
-            create_framebuffer_msaa(
-                &device_ctx.device,
-                render_pass,
-                msaa_color_view,
-                msaa_depth_view,
-                *swapchain_view,
-                depth_image_view,
-                extent,
-            )
-        })
-        .collect::<Result<Vec<_>>>()?;
 
     log::info!(
         "Swapchain created with MSAA {}x: {}x{}",
@@ -234,12 +143,12 @@ pub fn create_swapchain_context(
         depth_image,
         depth_image_view,
         depth_allocation: Some(depth_allocation),
-        msaa_color_image,
-        msaa_color_view,
-        msaa_color_allocation: Some(msaa_color_allocation),
-        msaa_depth_image,
-        msaa_depth_view,
-        msaa_depth_allocation: Some(msaa_depth_allocation),
+        msaa_color_image: msaa.color_image,
+        msaa_color_view: msaa.color_view,
+        msaa_color_allocation: Some(msaa.color_allocation),
+        msaa_depth_image: msaa.depth_image,
+        msaa_depth_view: msaa.depth_view,
+        msaa_depth_allocation: Some(msaa.depth_allocation),
     })
 }
 
@@ -405,115 +314,19 @@ pub fn recreate_swapchain_context(
         .map(|image| create_image_view(device, *image, surface_format.format))
         .collect::<Result<Vec<_>>>()?;
 
-    // 10. Create new MSAA images.
-    let (msaa_color_image, msaa_color_allocation) = create_msaa_image(
+    // 10. Create new MSAA images + depth + framebuffers via shared helpers (REFAC-03).
+    let msaa = build_msaa_resources(device, &mut renderer.allocator, extent, surface_format.format)?;
+    let (depth_image, depth_allocation, depth_image_view) =
+        build_depth_resources(device, &mut renderer.allocator, extent)?;
+    let framebuffers = build_framebuffers(
         device,
-        &mut renderer.allocator,
+        renderer.swapchain_ctx.render_pass,
+        &image_views,
+        msaa.color_view,
+        msaa.depth_view,
+        depth_image_view,
         extent,
-        surface_format.format,
-        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-        "msaa-color",
     )?;
-    let msaa_color_view = create_image_view_simple(
-        device,
-        msaa_color_image,
-        surface_format.format,
-        vk::ImageAspectFlags::COLOR,
-    )?;
-
-    let (msaa_depth_image, msaa_depth_allocation) = create_msaa_image(
-        device,
-        &mut renderer.allocator,
-        extent,
-        DEPTH_FORMAT,
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-        "msaa-depth",
-    )?;
-    let msaa_depth_view = create_image_view_simple(
-        device,
-        msaa_depth_image,
-        DEPTH_FORMAT,
-        vk::ImageAspectFlags::DEPTH,
-    )?;
-
-    // 11. Create new resolved depth image + view (reuse render pass -- D-02).
-    let depth_image = unsafe {
-        device
-            .create_image(
-                &vk::ImageCreateInfo::default()
-                    .image_type(vk::ImageType::TYPE_2D)
-                    .format(DEPTH_FORMAT)
-                    .extent(vk::Extent3D {
-                        width: extent.width,
-                        height: extent.height,
-                        depth: 1,
-                    })
-                    .mip_levels(1)
-                    .array_layers(1)
-                    .samples(vk::SampleCountFlags::TYPE_1)
-                    .tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(
-                        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
-                            | vk::ImageUsageFlags::SAMPLED,
-                    )
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .initial_layout(vk::ImageLayout::UNDEFINED),
-                None,
-            )
-            .context("failed to create depth image during swapchain recreation")?
-    };
-    let depth_requirements = unsafe { device.get_image_memory_requirements(depth_image) };
-    let depth_allocation = renderer
-        .allocator
-        .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-            name: "swapchain-depth",
-            requirements: depth_requirements,
-            location: MemoryLocation::GpuOnly,
-            linear: false,
-            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-        })
-        .map_err(|error| anyhow!("failed to allocate depth image memory during recreation: {error}"))?;
-    unsafe {
-        device
-            .bind_image_memory(
-                depth_image,
-                depth_allocation.memory(),
-                depth_allocation.offset(),
-            )
-            .context("failed to bind depth image memory during recreation")?;
-    }
-    let depth_subresource_range = vk::ImageSubresourceRange::default()
-        .aspect_mask(vk::ImageAspectFlags::DEPTH)
-        .level_count(1)
-        .layer_count(1);
-    let depth_image_view = unsafe {
-        device
-            .create_image_view(
-                &vk::ImageViewCreateInfo::default()
-                    .image(depth_image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(DEPTH_FORMAT)
-                    .subresource_range(depth_subresource_range),
-                None,
-            )
-            .context("failed to create depth image view during recreation")?
-    };
-
-    // 12. Create new framebuffers.
-    let framebuffers = image_views
-        .iter()
-        .map(|swapchain_view| {
-            create_framebuffer_msaa(
-                device,
-                renderer.swapchain_ctx.render_pass,
-                msaa_color_view,
-                msaa_depth_view,
-                *swapchain_view,
-                depth_image_view,
-                extent,
-            )
-        })
-        .collect::<Result<Vec<_>>>()?;
 
     // 13. Update swapchain context fields in place.
     renderer.swapchain_ctx.images = images;
@@ -524,12 +337,12 @@ pub fn recreate_swapchain_context(
     renderer.swapchain_ctx.depth_image = depth_image;
     renderer.swapchain_ctx.depth_image_view = depth_image_view;
     renderer.swapchain_ctx.depth_allocation = Some(depth_allocation);
-    renderer.swapchain_ctx.msaa_color_image = msaa_color_image;
-    renderer.swapchain_ctx.msaa_color_view = msaa_color_view;
-    renderer.swapchain_ctx.msaa_color_allocation = Some(msaa_color_allocation);
-    renderer.swapchain_ctx.msaa_depth_image = msaa_depth_image;
-    renderer.swapchain_ctx.msaa_depth_view = msaa_depth_view;
-    renderer.swapchain_ctx.msaa_depth_allocation = Some(msaa_depth_allocation);
+    renderer.swapchain_ctx.msaa_color_image = msaa.color_image;
+    renderer.swapchain_ctx.msaa_color_view = msaa.color_view;
+    renderer.swapchain_ctx.msaa_color_allocation = Some(msaa.color_allocation);
+    renderer.swapchain_ctx.msaa_depth_image = msaa.depth_image;
+    renderer.swapchain_ctx.msaa_depth_view = msaa.depth_view;
+    renderer.swapchain_ctx.msaa_depth_allocation = Some(msaa.depth_allocation);
 
     // 14. Recreate Hi-Z pyramid for the new swapchain dimensions (FIX-01).
     // Sequence per D-04: take -> destroy old -> create new -> re-register bindless -> store.
@@ -657,6 +470,78 @@ fn create_image_view_simple(
             .create_image_view(&create_info, None)
             .context("failed to create image view")
     }
+}
+
+/// Build resolved single-sample depth resources: image, allocation, and image view.
+///
+/// Shared helper used by both `create_swapchain_context` and `recreate_swapchain_context`
+/// (REFAC-03) to eliminate ~30 lines of duplicated depth creation code.
+fn build_depth_resources(
+    device: &ash::Device,
+    allocator: &mut Allocator,
+    extent: vk::Extent2D,
+) -> Result<(vk::Image, Allocation, vk::ImageView)> {
+    let depth_image = unsafe {
+        device
+            .create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(DEPTH_FORMAT)
+                    .extent(vk::Extent3D {
+                        width: extent.width,
+                        height: extent.height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(
+                        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                            | vk::ImageUsageFlags::SAMPLED,
+                    )
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+            .context("failed to create depth image")?
+    };
+    let depth_requirements = unsafe { device.get_image_memory_requirements(depth_image) };
+    let depth_allocation = allocator
+        .allocate(&AllocationCreateDesc {
+            name: "swapchain-depth",
+            requirements: depth_requirements,
+            location: MemoryLocation::GpuOnly,
+            linear: false,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+        })
+        .map_err(|error| anyhow!("failed to allocate depth image memory: {error}"))?;
+    unsafe {
+        device
+            .bind_image_memory(
+                depth_image,
+                depth_allocation.memory(),
+                depth_allocation.offset(),
+            )
+            .context("failed to bind depth image memory")?;
+    }
+    let depth_subresource_range = vk::ImageSubresourceRange::default()
+        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+        .level_count(1)
+        .layer_count(1);
+    let depth_image_view = unsafe {
+        device
+            .create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(depth_image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(DEPTH_FORMAT)
+                    .subresource_range(depth_subresource_range),
+                None,
+            )
+            .context("failed to create depth image view")?
+    };
+    Ok((depth_image, depth_allocation, depth_image_view))
 }
 
 /// Create an MSAA image (TYPE_4 samples) with the given format and usage.
@@ -835,6 +720,100 @@ fn create_render_pass_msaa(
             .create_render_pass2(&create_info, None)
             .context("failed to create MSAA render pass")
     }
+}
+
+/// MSAA intermediate image resources for one swapchain configuration (REFAC-03).
+///
+/// Returned by `build_msaa_resources` so both `create_swapchain_context` and
+/// `recreate_swapchain_context` avoid duplicating the create-image + create-view sequence.
+struct MsaaResources {
+    color_image: vk::Image,
+    color_view: vk::ImageView,
+    color_allocation: Allocation,
+    depth_image: vk::Image,
+    depth_view: vk::ImageView,
+    depth_allocation: Allocation,
+}
+
+/// Build both MSAA color and MSAA depth images + image views (REFAC-03).
+///
+/// Shared helper that eliminates ~30 lines of duplicated MSAA resource creation
+/// between `create_swapchain_context` and `recreate_swapchain_context`.
+fn build_msaa_resources(
+    device: &ash::Device,
+    allocator: &mut Allocator,
+    extent: vk::Extent2D,
+    color_format: vk::Format,
+) -> Result<MsaaResources> {
+    // MSAA color (TYPE_4, same format as swapchain).
+    let (color_image, color_allocation) = create_msaa_image(
+        device,
+        allocator,
+        extent,
+        color_format,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+        "msaa-color",
+    )?;
+    let color_view = create_image_view_simple(
+        device,
+        color_image,
+        color_format,
+        vk::ImageAspectFlags::COLOR,
+    )?;
+
+    // MSAA depth (TYPE_4).
+    let (depth_image, depth_allocation) = create_msaa_image(
+        device,
+        allocator,
+        extent,
+        DEPTH_FORMAT,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+        "msaa-depth",
+    )?;
+    let depth_view = create_image_view_simple(
+        device,
+        depth_image,
+        DEPTH_FORMAT,
+        vk::ImageAspectFlags::DEPTH,
+    )?;
+
+    Ok(MsaaResources {
+        color_image,
+        color_view,
+        color_allocation,
+        depth_image,
+        depth_view,
+        depth_allocation,
+    })
+}
+
+/// Build framebuffers for all swapchain image views (REFAC-03).
+///
+/// Shared helper that eliminates duplicated framebuffer creation loop between
+/// `create_swapchain_context` and `recreate_swapchain_context`.
+fn build_framebuffers(
+    device: &ash::Device,
+    render_pass: vk::RenderPass,
+    image_views: &[vk::ImageView],
+    msaa_color_view: vk::ImageView,
+    msaa_depth_view: vk::ImageView,
+    depth_image_view: vk::ImageView,
+    extent: vk::Extent2D,
+) -> Result<Vec<vk::Framebuffer>> {
+    image_views
+        .iter()
+        .map(|swapchain_view| {
+            create_framebuffer_msaa(
+                device,
+                render_pass,
+                msaa_color_view,
+                msaa_depth_view,
+                *swapchain_view,
+                depth_image_view,
+                extent,
+            )
+        })
+        .collect()
 }
 
 /// Create a framebuffer for the MSAA render pass (4 attachments).
