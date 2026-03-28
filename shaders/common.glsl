@@ -1,0 +1,124 @@
+// common.glsl — Shared shader definitions for Revoxelation (POLISH-04).
+//
+// Included by all shaders via #include "common.glsl".
+// Contains shared struct definitions, utility functions, and constants
+// to eliminate code duplication across the shader codebase.
+
+// -----------------------------------------------------------------------
+// GpuChunkInstance (48 bytes, matches Rust #[repr(C)] layout)
+// -----------------------------------------------------------------------
+//   aabb_min:     vec3  (12 bytes)
+//   material_id:  uint  ( 4 bytes)
+//   aabb_max:     vec3  (12 bytes)
+//   lod_level:    uint  ( 4 bytes)
+//   chunk_origin: vec3  (12 bytes)
+//   chunk_scale:  float ( 4 bytes)
+#ifndef COMMON_GLSL
+#define COMMON_GLSL
+
+struct GpuChunkInstance {
+    vec3 aabb_min;
+    uint material_id;
+    vec3 aabb_max;
+    uint lod_level;
+    vec3 chunk_origin;
+    float chunk_scale;
+};
+
+// -----------------------------------------------------------------------
+// GpuMeshlet (64 bytes, matches Rust #[repr(C)] layout)
+// -----------------------------------------------------------------------
+struct GpuMeshlet {
+    vec3 center;           // bounding sphere center (local-space)
+    float radius;          // bounding sphere radius
+    vec3 cone_axis;        // orientation cone axis (normalized)
+    float cone_cutoff;     // cos(half-angle); < -1.0 means degenerate (never cull)
+    uint vertex_offset;    // into meshlet_vertex_buffer
+    uint triangle_offset;  // into meshlet_tri_buffer
+    uint vertex_count;     // max 64
+    uint triangle_count;   // max 124
+    uint chunk_slot;       // which chunk this meshlet belongs to
+    uint lod_level;        // LOD level (0 = original, 1 = simplified)
+    float parent_error;    // simplification error metric (MSHL-05)
+    uint group_id;         // LOD group ID (MSHL-05)
+};
+
+// -----------------------------------------------------------------------
+// Meshlet metadata constants
+// -----------------------------------------------------------------------
+const uint MESHLET_UINT32S = 16u; // 64 bytes / 4
+
+// -----------------------------------------------------------------------
+// Vertex decoding
+// -----------------------------------------------------------------------
+
+vec3 decode_position(uint word0) {
+    uint x = word0 & 0x7Fu;
+    uint y = (word0 >> 7) & 0x7Fu;
+    uint z = (word0 >> 14) & 0x7Fu;
+    return vec3(x, y, z);
+}
+
+// face_index: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
+vec3 face_normal_from_index(uint fi) {
+    if (fi == 0u) return vec3( 1.0, 0.0, 0.0);
+    if (fi == 1u) return vec3(-1.0, 0.0, 0.0);
+    if (fi == 2u) return vec3( 0.0, 1.0, 0.0);
+    if (fi == 3u) return vec3( 0.0,-1.0, 0.0);
+    if (fi == 4u) return vec3( 0.0, 0.0, 1.0);
+    return            vec3( 0.0, 0.0,-1.0);
+}
+
+// -----------------------------------------------------------------------
+// Bayer 8x8 dither matrix for smooth LOD transitions (MSHL-05)
+// -----------------------------------------------------------------------
+const float bayer8x8[64] = float[64](
+     0.0/64.0, 32.0/64.0,  8.0/64.0, 40.0/64.0,  2.0/64.0, 34.0/64.0, 10.0/64.0, 42.0/64.0,
+    48.0/64.0, 16.0/64.0, 56.0/64.0, 24.0/64.0, 50.0/64.0, 18.0/64.0, 58.0/64.0, 26.0/64.0,
+    12.0/64.0, 44.0/64.0,  4.0/64.0, 36.0/64.0, 14.0/64.0, 46.0/64.0,  6.0/64.0, 38.0/64.0,
+    60.0/64.0, 28.0/64.0, 52.0/64.0, 20.0/64.0, 62.0/64.0, 30.0/64.0, 54.0/64.0, 22.0/64.0,
+     3.0/64.0, 35.0/64.0, 11.0/64.0, 43.0/64.0,  1.0/64.0, 33.0/64.0,  9.0/64.0, 41.0/64.0,
+    51.0/64.0, 19.0/64.0, 59.0/64.0, 27.0/64.0, 49.0/64.0, 17.0/64.0, 57.0/64.0, 25.0/64.0,
+    15.0/64.0, 47.0/64.0,  7.0/64.0, 39.0/64.0, 13.0/64.0, 45.0/64.0,  5.0/64.0, 37.0/64.0,
+    63.0/64.0, 31.0/64.0, 55.0/64.0, 23.0/64.0, 61.0/64.0, 29.0/64.0, 53.0/64.0, 21.0/64.0
+);
+
+float bayer_dither(ivec2 coord) {
+    int x = coord.x & 7;
+    int y = coord.y & 7;
+    return bayer8x8[y * 8 + x];
+}
+
+// -----------------------------------------------------------------------
+// LOD transition alpha computation (MSHL-05, POLISH-01)
+//
+// Computes a transition factor [0..1] for alpha dither at LOD boundaries.
+// 0.0 = fully opaque, 1.0 = fully transparent at boundary.
+//
+// Requires screen_height and sse_threshold from push constants (not hardcoded).
+// -----------------------------------------------------------------------
+const float MIN_LOD_DISTANCE = 0.001;
+
+float compute_lod_transition(float parent_error, vec3 camera_pos, vec3 world_position,
+                             float screen_height, float sse_threshold) {
+    if (parent_error >= 1e30) {
+        return 0.0;
+    }
+    float dist = length(camera_pos - world_position);
+    if (dist < MIN_LOD_DISTANCE) dist = MIN_LOD_DISTANCE;
+    float projected = parent_error * screen_height / (2.0 * dist);
+    return clamp(1.0 - abs(projected - sse_threshold) / max(sse_threshold, MIN_LOD_DISTANCE), 0.0, 1.0);
+}
+
+// -----------------------------------------------------------------------
+// CameraUniforms push constant layout (80 bytes)
+// Declared as a struct but NOT as a layout — each shader declares its own
+// layout(push_constant) with the appropriate offset.
+// -----------------------------------------------------------------------
+struct CameraUniforms {
+    mat4 view_proj;
+    vec3 camera_pos;
+    float _pad;
+};
+
+#endif // COMMON_GLSL

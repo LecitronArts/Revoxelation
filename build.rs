@@ -4,6 +4,8 @@ fn main() {
     for shader in shader_sources() {
         println!("cargo:rerun-if-changed={shader}");
     }
+    // Also rerun if the shared include changes.
+    println!("cargo:rerun-if-changed=shaders/common.glsl");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must exist"));
     let compiler = shaderc::Compiler::new().expect("shader compiler should initialize");
@@ -38,6 +40,25 @@ fn compile_shader(compiler: &shaderc::Compiler, shader: &str, out_dir: &Path) {
     // Target SPIR-V 1.5 (Vulkan 1.2) to enable subgroup operations.
     options.set_target_spirv(shaderc::SpirvVersion::V1_5);
     options.set_target_env(shaderc::TargetEnv::Vulkan, shaderc::EnvVersion::Vulkan1_2 as u32);
+    // POLISH-07: Enable SPIR-V performance optimization.
+    options.set_optimization_level(shaderc::OptimizationLevel::Performance);
+    // POLISH-04: Include callback for #include "common.glsl" (relative to shaders/).
+    let shader_dir = Path::new("shaders")
+        .canonicalize()
+        .expect("shaders/ directory must exist");
+    options.set_include_callback(move |name, _include_type, _source_file, _depth| {
+        let include_path = shader_dir.join(name);
+        match fs::read_to_string(&include_path) {
+            Ok(content) => Ok(shaderc::ResolvedInclude {
+                resolved_name: include_path.to_string_lossy().into_owned(),
+                content,
+            }),
+            Err(err) => Err(format!(
+                "failed to read include file {}: {err}",
+                include_path.display()
+            )),
+        }
+    });
     let artifact = compiler
         .compile_into_spirv(&source, kind, shader, "main", Some(&options))
         .unwrap_or_else(|err| panic!("failed to compile shader {shader}: {err}"));
