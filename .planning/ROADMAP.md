@@ -299,7 +299,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 06.1 ->
 | 5. Bindless Architecture and GPU Scene | 5/5 | Complete | 2026-03-26 |
 | 05.1. Critical Bug Fixes and Safety Hardening | 6/6 | Complete | 2026-03-27 |
 | 6. Meshlet Pipeline | 5/5 | Complete | 2026-03-28 |
-| 06.1. Rendering Polish, Bug Fixes, Refactoring | 8/8 | Complete | 2026-03-28 |
+| 06.1. Rendering Polish, Bug Fixes, Refactoring | 8/8 | Complete    | 2026-03-28 |
 | 7. Lighting and Shadows | 0/5 | Not started | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |
 | 9. Authoritative Block Editing Feedback | 0/2 | Not started | - |
