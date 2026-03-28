@@ -73,25 +73,25 @@
 
 ### High-Priority Bug Fixes (Phase 06.1)
 
-- [ ] **HIGH-01**: egui descriptor set uses UPDATE_AFTER_BIND or per-frame sets — no use-after-free on font texture update.
-- [ ] **HIGH-02**: destroy_allocated_buffer/image destroys resource before freeing allocation — correct Vulkan destruction order.
+- [x] **HIGH-01**: egui descriptor set uses UPDATE_AFTER_BIND or per-frame sets — no use-after-free on font texture update.
+- [x] **HIGH-02**: destroy_allocated_buffer/image destroys resource before freeing allocation — correct Vulkan destruction order.
 - [x] **HIGH-03**: ChunkStateStore removes entries on Inactive transition — no unbounded HashMap growth during exploration.
 - [x] **HIGH-04**: cancel_flags entries cleaned up on Queued deactivation — no Arc<AtomicBool> leaks.
 - [x] **HIGH-05**: Dirty mesh records removed when payload absent — no unbounded dirty HashMap growth.
 - [x] **HIGH-06**: Job queue eviction compares new task SSE against evicted — no incorrect eviction of higher-priority tasks.
-- [ ] **HIGH-07**: Bindless descriptor stageFlags include TASK_SHADER_BIT_EXT and MESH_SHADER_BIT_EXT — mesh shader path has valid descriptor access.
+- [x] **HIGH-07**: Bindless descriptor stageFlags include TASK_SHADER_BIT_EXT and MESH_SHADER_BIT_EXT — mesh shader path has valid descriptor access.
 
 ### Medium Bug Fixes and Hardening (Phase 06.1)
 
-- [ ] **MED-01**: Camera near-plane extraction uses Vulkan z∈[0,w] formula (row2 only) — correct frustum plane derivation.
-- [ ] **MED-02**: Pipeline barriers include TASK_SHADER_BIT_EXT/MESH_SHADER_BIT_EXT in dstStageMask — correct synchronization for mesh shader path.
-- [ ] **MED-03**: transition_image_layout catch-all uses conservative access masks and logs warning — no silent zero-synchronization.
-- [ ] **MED-04**: StagingBuffer::write returns Result and fails on unmapped memory — no silent data loss.
-- [ ] **MED-05**: max_draw_count uses meshlet_pool capacity instead of hardcoded constant — correct after future grow.
+- [x] **MED-01**: Camera near-plane extraction uses Vulkan z∈[0,w] formula (row2 only) — correct frustum plane derivation.
+- [x] **MED-02**: Pipeline barriers include TASK_SHADER_BIT_EXT/MESH_SHADER_BIT_EXT in dstStageMask — correct synchronization for mesh shader path.
+- [x] **MED-03**: transition_image_layout catch-all uses conservative access masks and logs warning — no silent zero-synchronization.
+- [x] **MED-04**: StagingBuffer::write returns Result and fails on unmapped memory — no silent data loss.
+- [x] **MED-05**: max_draw_count uses meshlet_pool capacity instead of hardcoded constant — correct after future grow.
 - [x] **MED-06**: PrioritizedTask computes real SSE at enqueue time — job queue priority sorting is effective.
 - [x] **MED-07**: Dirty queue uses HashSet for O(1) dedup instead of O(n) VecDeque scan.
 - [x] **MED-08**: run_mesh_sync limits job results processed per frame — no frame stall on bulk completion.
-- [ ] **MED-09**: cancel_flags use Acquire/Release ordering — correct cross-thread visibility on ARM.
+- [x] **MED-09**: cancel_flags use Acquire/Release ordering — correct cross-thread visibility on ARM.
 - [ ] **MED-10**: seed_input_commands placeholder removed or guarded by cfg(test) — no per-frame dummy events in production.
 - [ ] **MED-11**: eprintln! diagnostics replaced with log::debug! — respects log level configuration.
 - [ ] **MED-12**: Octree parent clamp replaced with skip-link — no incorrect topology from coordinate saturation.
@@ -237,22 +237,22 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CRIT-05 | Phase 06.1 | Complete |
 | CRIT-06 | Phase 06.1 | Complete |
 | CRIT-07 | Phase 06.1 | Complete |
-| HIGH-01 | Phase 06.1 | Pending |
-| HIGH-02 | Phase 06.1 | Pending |
+| HIGH-01 | Phase 06.1 | Complete |
+| HIGH-02 | Phase 06.1 | Complete |
 | HIGH-03 | Phase 06.1 | Complete |
 | HIGH-04 | Phase 06.1 | Complete |
 | HIGH-05 | Phase 06.1 | Complete |
 | HIGH-06 | Phase 06.1 | Complete |
-| HIGH-07 | Phase 06.1 | Pending |
-| MED-01 | Phase 06.1 | Pending |
-| MED-02 | Phase 06.1 | Pending |
-| MED-03 | Phase 06.1 | Pending |
-| MED-04 | Phase 06.1 | Pending |
-| MED-05 | Phase 06.1 | Pending |
+| HIGH-07 | Phase 06.1 | Complete |
+| MED-01 | Phase 06.1 | Complete |
+| MED-02 | Phase 06.1 | Complete |
+| MED-03 | Phase 06.1 | Complete |
+| MED-04 | Phase 06.1 | Complete |
+| MED-05 | Phase 06.1 | Complete |
 | MED-06 | Phase 06.1 | Complete |
 | MED-07 | Phase 06.1 | Complete |
 | MED-08 | Phase 06.1 | Complete |
-| MED-09 | Phase 06.1 | Pending |
+| MED-09 | Phase 06.1 | Complete |
 | MED-10 | Phase 06.1 | Pending |
 | MED-11 | Phase 06.1 | Pending |
 | MED-12 | Phase 06.1 | Pending |

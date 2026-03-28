@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06.1-rendering-polish
 status: in_progress
-last_updated: "2026-03-28T05:20:43.000Z"
+last_updated: "2026-03-28T05:51:07.000Z"
 progress:
   total_phases: 14
   completed_phases: 8
   total_plans: 47
-  completed_plans: 41
+  completed_plans: 42
 ---
 
 # Session State
@@ -22,7 +22,19 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 06.1-rendering-polish
-**Status:** In progress — Plan 02 complete (CRIT-04~06, HIGH-03~06, MED-06~08). 6 plans remaining.
+**Status:** In progress — Plan 03 complete (HIGH-01~02, HIGH-07, MED-01~05, MED-09). 5 plans remaining.
+
+## Key Decisions (Phase 06.1 Plan 03)
+
+- HIGH-01: Per-frame descriptor sets [vk::DescriptorSet; 2] for egui — simpler than UPDATE_AFTER_BIND
+- HIGH-02: destroy_buffer/image BEFORE allocator.free — correct Vulkan destruction order
+- HIGH-07: TASK_EXT|MESH_EXT added to bindless stageFlags conditional on mesh_shader_supported
+- MED-01: Near plane = row2 only (Vulkan z in [0,w]) — not row3+row2 (OpenGL)
+- MED-02: TASK_SHADER_EXT|MESH_SHADER_EXT in barrier dstStageMask when mesh shaders active
+- MED-03: Catch-all: ALL_COMMANDS + MEMORY_READ|WRITE + log::warn
+- MED-04: StagingBuffer::write returns Result<()>; checks mapped memory
+- MED-05: meshlet_pool.meshlet_capacity() for dynamic max_draw_count
+- MED-09: Acquire for load, Release for store on cancel_flags AtomicBool
 
 ## Key Decisions (Phase 06.1 Plan 02)
 
@@ -100,3 +112,4 @@ See: .planning/PROJECT.md
 - 2026-03-28: Phase 06.1 expanded after deep code review — added 7 CRIT + 7 HIGH + 12 MED bugs + 8 REFAC items, total 8 plans
 - 2026-03-28: Executed 06.1-01 — 4 CRIT Vulkan bugs fixed (depth store_op, scene_buffer grow, push constants, Hi-Z pass 0)
 - 2026-03-28: Executed 06.1-02 — MeshletPool reclamation + streaming state fixes (CRIT-04~06, HIGH-03~06, MED-06~08)
+- 2026-03-28: Executed 06.1-03 — Vulkan resource safety fixes (HIGH-01~02, HIGH-07, MED-01~05, MED-09)
