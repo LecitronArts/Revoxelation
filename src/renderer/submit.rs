@@ -54,6 +54,11 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             staging_ring.reset_current_frame();
         }
 
+        // POLISH-06: Read previous frame's GPU readback data (after fence wait, safe to read).
+        if let Some(readback) = &renderer.readback_counters {
+            renderer.last_gpu_visible_meshlets = readback.read_previous_frame(current_frame);
+        }
+
         // D-05: Check if ChunkPool needs capacity growth (after fence wait, before recording).
         // Growth is rare (2× doubling) and uses a one-shot command buffer with fence wait.
         {

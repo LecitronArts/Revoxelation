@@ -100,6 +100,11 @@ pub struct Renderer {
     pub use_meshlet_rendering: bool,
     /// SSE threshold in pixels for LOD selection (MSHL-05). Default 2.0.
     pub sse_threshold: f32,
+    /// GPU readback counters for real performance data (POLISH-06).
+    pub readback_counters: Option<perf_counters::GpuReadbackCounters>,
+    /// Latest GPU-counted visible meshlet count from readback (POLISH-06).
+    /// Updated each frame after fence wait (reads previous frame's data).
+    pub last_gpu_visible_meshlets: u32,
 }
 
 impl Renderer {
@@ -206,6 +211,8 @@ impl Renderer {
             use_mesh_shader_path: false,
             use_meshlet_rendering: true,
             sse_threshold: 2.0,
+            readback_counters: None,
+            last_gpu_visible_meshlets: 0,
         })
     }
 }
@@ -220,6 +227,12 @@ impl Drop for Renderer {
             if let Some(egui_backend) = self.egui_backend.take()
                 && let Err(e) = egui_backend.destroy(self) {
                     log::warn!("failed to cleanup egui backend: {e}");
+                }
+
+            // Clean up readback counters before other GPU resources.
+            if let Some(readback) = self.readback_counters.take()
+                && let Err(e) = readback.destroy(self) {
+                    log::warn!("failed to cleanup readback counters: {e}");
                 }
 
             // Clean up texture array before bindless table.

@@ -381,6 +381,15 @@ pub fn run() -> Result<()> {
                     if let Some(meshlet_pool) = &app.renderer.meshlet_pool {
                         app.perf_counters.total_meshlets = meshlet_pool.active_meshlet_count();
                     }
+                    // POLISH-06: Use real GPU readback data for visible meshlet count.
+                    app.perf_counters.visible_meshlets = app.renderer.last_gpu_visible_meshlets;
+                    if app.perf_counters.total_meshlets > 0 {
+                        app.perf_counters.meshlet_cull_rate = 1.0
+                            - (app.perf_counters.visible_meshlets as f32
+                                / app.perf_counters.total_meshlets as f32);
+                    } else {
+                        app.perf_counters.meshlet_cull_rate = 0.0;
+                    }
                     app.perf_counters.sse_threshold = app.renderer.sse_threshold;
 
                     // Shader hot-reload (debug builds with hot-reload feature only).
