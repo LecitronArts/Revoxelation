@@ -24,7 +24,7 @@ fn staging_buffer_api_compiles() {
         revoxelation::renderer::StagingBuffer,
     > = revoxelation::renderer::StagingBuffer::new;
 
-    let _: fn(&mut revoxelation::renderer::StagingBuffer, &[u8]) =
+    let _: fn(&mut revoxelation::renderer::StagingBuffer, &[u8]) -> anyhow::Result<()> =
         revoxelation::renderer::StagingBuffer::write;
 
     let _: fn(
