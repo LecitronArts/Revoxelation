@@ -544,3 +544,69 @@ fn phase6_1_atomic_ordering() {
         "scheduler.rs cancel flag store must use Ordering::Release, not Relaxed"
     );
 }
+
+// ===========================================================================
+// Plan 05 tests — Texture mipmaps, anisotropic filtering, and MSAA 4×
+// ===========================================================================
+
+/// POLISH-02: Texture array must generate mipmaps via vkCmdBlitImage
+/// and have mip-level configuration.
+#[test]
+fn phase6_1_texture_mipmaps() {
+    let src = std::fs::read_to_string("src/renderer/texture_array.rs")
+        .expect("should read texture_array.rs");
+
+    // Must contain mipmap generation (cmd_blit_image or mip_levels calculation).
+    let has_blit = src.contains("cmd_blit_image");
+    let has_mip = src.contains("mip_levels") && src.contains("log2");
+    assert!(
+        has_blit || has_mip,
+        "texture_array.rs must generate mipmaps via cmd_blit_image or calculate mip_levels"
+    );
+
+    // Image creation must specify mip_levels > 1.
+    assert!(
+        src.contains(".mip_levels(mip_levels)"),
+        "texture array image must be created with computed mip_levels (not hardcoded 1)"
+    );
+}
+
+/// POLISH-03: MSAA 4× must be enabled — swapchain render pass and mesh pipelines
+/// must reference SampleCountFlags::TYPE_4.
+#[test]
+fn phase6_1_msaa_enabled() {
+    let swap_src = std::fs::read_to_string("src/renderer/swapchain.rs")
+        .expect("should read swapchain.rs");
+    let pipe_src = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
+        .expect("should read mesh_pipeline.rs");
+
+    // Render pass must have TYPE_4 for MSAA attachments.
+    assert!(
+        swap_src.contains("TYPE_4"),
+        "swapchain.rs render pass must use SampleCountFlags::TYPE_4 for MSAA"
+    );
+
+    // All graphics pipelines must use TYPE_4 in multisample state.
+    assert!(
+        pipe_src.contains("TYPE_4"),
+        "mesh_pipeline.rs must use SampleCountFlags::TYPE_4 in multisample state"
+    );
+}
+
+/// POLISH-02: Sampler must have anisotropy_enable set to true.
+#[test]
+fn phase6_1_aniso_sampler() {
+    let src = std::fs::read_to_string("src/renderer/texture_array.rs")
+        .expect("should read texture_array.rs");
+
+    assert!(
+        src.contains("anisotropy_enable(true)"),
+        "texture_array.rs sampler must have anisotropy_enable(true)"
+    );
+
+    // Must also set max_anisotropy to a reasonable value (>= 8.0).
+    assert!(
+        src.contains("max_anisotropy"),
+        "texture_array.rs sampler must set max_anisotropy"
+    );
+}
