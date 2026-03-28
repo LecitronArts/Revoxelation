@@ -16,6 +16,33 @@ use super::staging_ring::StagingRing;
 
 pub const INITIAL_CAPACITY: usize = 1024;
 
+/// Helper: allocate from the staging ring, write data, and record a vkCmdCopyBuffer (REFAC-04).
+///
+/// Eliminates the repeated allocate→write→copy pattern across upload/remove functions.
+fn stage_and_copy(
+    staging_ring: &mut StagingRing,
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    data: &[u8],
+    alignment: u64,
+    dst_buffer: vk::Buffer,
+    dst_offset: u64,
+) -> Result<()> {
+    if data.is_empty() {
+        return Ok(());
+    }
+    let mut alloc = staging_ring.allocate(data.len() as u64, alignment)?;
+    alloc.write_bytes(data);
+    let region = vk::BufferCopy::default()
+        .src_offset(alloc.offset)
+        .dst_offset(dst_offset)
+        .size(data.len() as u64);
+    unsafe {
+        device.cmd_copy_buffer(cmd, alloc.buffer, dst_buffer, &[region]);
+    }
+    Ok(())
+}
+
 /// Growth threshold factor: grow when active > capacity * GROW_THRESHOLD.
 const GROW_THRESHOLD: f64 = 0.9;
 pub const MAX_QUADS_PER_CHUNK: usize = 4096;
@@ -606,7 +633,7 @@ impl ChunkPool {
         self.slot_allocator.grow(new_capacity)?;
 
         // Update BindlessTable binding 0 to point to the new scene_buffer (D-05)
-        bindless.register_buffer(&renderer.device_ctx.device, 0, self.scene_buffer, vk::WHOLE_SIZE);
+        bindless.register_buffer(&renderer.device_ctx.device, super::bindless::BINDING_SCENE, self.scene_buffer, vk::WHOLE_SIZE);
 
         log::info!("ChunkPool: growth complete, new capacity = {new_capacity}");
         Ok(())
@@ -638,62 +665,26 @@ impl ChunkPool {
             scene_buffer_region_offsets(self.capacity);
 
         // Copy vertex data via staging
-        if !vertex_bytes.is_empty() {
-            let mut alloc = staging_ring.allocate(vertex_bytes.len() as u64, 16)?;
-            alloc.write_bytes(&vertex_bytes);
-            let region = vk::BufferCopy::default()
-                .src_offset(alloc.offset)
-                .dst_offset(vertex_offset_bytes)
-                .size(vertex_bytes.len() as u64);
-            unsafe {
-                device.cmd_copy_buffer(cmd, alloc.buffer, self.vertex_buffer, &[region]);
-            }
-        }
+        stage_and_copy(staging_ring, device, cmd, &vertex_bytes, 16, self.vertex_buffer, vertex_offset_bytes)?;
 
         // Copy index data via staging
-        if !index_bytes.is_empty() {
-            let mut alloc = staging_ring.allocate(index_bytes.len() as u64, 4)?;
-            alloc.write_bytes(&index_bytes);
-            let region = vk::BufferCopy::default()
-                .src_offset(alloc.offset)
-                .dst_offset(index_offset_bytes)
-                .size(index_bytes.len() as u64);
-            unsafe {
-                device.cmd_copy_buffer(cmd, alloc.buffer, self.index_buffer, &[region]);
-            }
-        }
+        stage_and_copy(staging_ring, device, cmd, &index_bytes, 4, self.index_buffer, index_offset_bytes)?;
 
         // Copy GpuChunkInstance to scene_buffer instance region (region 0)
         {
             let instance_arr = [instance];
             let instance_bytes = cast_slice(&instance_arr);
-            let mut alloc = staging_ring.allocate(instance_bytes.len() as u64, 16)?;
-            alloc.write_bytes(instance_bytes);
             let dst_offset = inst_off + slot_id as u64 * size_of::<GpuChunkInstance>() as u64;
-            let region = vk::BufferCopy::default()
-                .src_offset(alloc.offset)
-                .dst_offset(dst_offset)
-                .size(instance_bytes.len() as u64);
-            unsafe {
-                device.cmd_copy_buffer(cmd, alloc.buffer, self.scene_buffer, &[region]);
-            }
+            stage_and_copy(staging_ring, device, cmd, instance_bytes, 16, self.scene_buffer, dst_offset)?;
         }
 
         // Copy indirect template to scene_buffer indirect template region (region 1)
         {
             let pod = DrawCmdPod::from_vk(&indirect);
             let indirect_bytes = bytemuck::bytes_of(&pod);
-            let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;
-            alloc.write_bytes(indirect_bytes);
             let dst_offset =
                 indirect_off + slot_id as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64;
-            let region = vk::BufferCopy::default()
-                .src_offset(alloc.offset)
-                .dst_offset(dst_offset)
-                .size(indirect_bytes.len() as u64);
-            unsafe {
-                device.cmd_copy_buffer(cmd, alloc.buffer, self.scene_buffer, &[region]);
-            }
+            stage_and_copy(staging_ring, device, cmd, indirect_bytes, 4, self.scene_buffer, dst_offset)?;
         }
 
         // Copy draw slot mapping via staging (region 2)
@@ -723,48 +714,24 @@ impl ChunkPool {
         // Zero out the slot's vertex data
         {
             let zero_bytes = vec![0_u8; vertex_slot_stride_bytes()];
-            let mut alloc = staging_ring.allocate(zero_bytes.len() as u64, 16)?;
-            alloc.write_bytes(&zero_bytes);
             let dst_offset = remove.slot_id as u64 * vertex_slot_stride_bytes() as u64;
-            let region = vk::BufferCopy::default()
-                .src_offset(alloc.offset)
-                .dst_offset(dst_offset)
-                .size(zero_bytes.len() as u64);
-            unsafe {
-                device.cmd_copy_buffer(cmd, alloc.buffer, self.vertex_buffer, &[region]);
-            }
+            stage_and_copy(staging_ring, device, cmd, &zero_bytes, 16, self.vertex_buffer, dst_offset)?;
         }
 
         // Zero out the slot's index data
         {
             let zero_bytes = vec![0_u8; index_slot_stride_bytes()];
-            let mut alloc = staging_ring.allocate(zero_bytes.len() as u64, 4)?;
-            alloc.write_bytes(&zero_bytes);
             let dst_offset = remove.slot_id as u64 * index_slot_stride_bytes() as u64;
-            let region = vk::BufferCopy::default()
-                .src_offset(alloc.offset)
-                .dst_offset(dst_offset)
-                .size(zero_bytes.len() as u64);
-            unsafe {
-                device.cmd_copy_buffer(cmd, alloc.buffer, self.index_buffer, &[region]);
-            }
+            stage_and_copy(staging_ring, device, cmd, &zero_bytes, 4, self.index_buffer, dst_offset)?;
         }
 
         // Zero out GpuChunkInstance in scene_buffer (region 0)
         {
             let zero_instance = [GpuChunkInstance::default()];
             let instance_bytes = cast_slice(&zero_instance);
-            let mut alloc = staging_ring.allocate(instance_bytes.len() as u64, 16)?;
-            alloc.write_bytes(instance_bytes);
             let dst_offset =
                 inst_off + remove.slot_id as u64 * size_of::<GpuChunkInstance>() as u64;
-            let region = vk::BufferCopy::default()
-                .src_offset(alloc.offset)
-                .dst_offset(dst_offset)
-                .size(instance_bytes.len() as u64);
-            unsafe {
-                device.cmd_copy_buffer(cmd, alloc.buffer, self.scene_buffer, &[region]);
-            }
+            stage_and_copy(staging_ring, device, cmd, instance_bytes, 16, self.scene_buffer, dst_offset)?;
         }
 
         // Zero out indirect template in scene_buffer (region 1)
@@ -772,17 +739,9 @@ impl ChunkPool {
             let zero_indirect = vk::DrawIndexedIndirectCommand::default();
             let pod = DrawCmdPod::from_vk(&zero_indirect);
             let indirect_bytes = bytemuck::bytes_of(&pod);
-            let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;
-            alloc.write_bytes(indirect_bytes);
             let dst_offset = indirect_off
                 + remove.slot_id as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64;
-            let region = vk::BufferCopy::default()
-                .src_offset(alloc.offset)
-                .dst_offset(dst_offset)
-                .size(indirect_bytes.len() as u64);
-            unsafe {
-                device.cmd_copy_buffer(cmd, alloc.buffer, self.scene_buffer, &[region]);
-            }
+            stage_and_copy(staging_ring, device, cmd, indirect_bytes, 4, self.scene_buffer, dst_offset)?;
         }
 
         // Update draw slot and dense indirect mappings (regions 2 & 3)
@@ -852,17 +811,8 @@ impl ChunkPool {
     ) -> Result<()> {
         let draw_slot = [write.slot_id];
         let slot_bytes = cast_slice(&draw_slot);
-        let mut alloc = staging_ring.allocate(slot_bytes.len() as u64, 4)?;
-        alloc.write_bytes(slot_bytes);
         let dst_offset = slot_region_offset + write.draw_index as u64 * size_of::<u32>() as u64;
-        let region = vk::BufferCopy::default()
-            .src_offset(alloc.offset)
-            .dst_offset(dst_offset)
-            .size(slot_bytes.len() as u64);
-        unsafe {
-            device.cmd_copy_buffer(cmd, alloc.buffer, self.scene_buffer, &[region]);
-        }
-        Ok(())
+        stage_and_copy(staging_ring, device, cmd, slot_bytes, 4, self.scene_buffer, dst_offset)
     }
 
     fn record_dense_indirect_copy(
@@ -882,18 +832,9 @@ impl ChunkPool {
         self.dense_indirect_shadow[write.draw_index as usize] = write.command;
         let pod = DrawCmdPod::from_vk(&write.command);
         let indirect_bytes = bytemuck::bytes_of(&pod);
-        let mut alloc = staging_ring.allocate(indirect_bytes.len() as u64, 4)?;
-        alloc.write_bytes(indirect_bytes);
         let dst_offset = dense_region_offset
             + write.draw_index as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64;
-        let region = vk::BufferCopy::default()
-            .src_offset(alloc.offset)
-            .dst_offset(dst_offset)
-            .size(indirect_bytes.len() as u64);
-        unsafe {
-            device.cmd_copy_buffer(cmd, alloc.buffer, self.scene_buffer, &[region]);
-        }
-        Ok(())
+        stage_and_copy(staging_ring, device, cmd, indirect_bytes, 4, self.scene_buffer, dst_offset)
     }
 
     pub fn destroy(mut self, renderer: &mut Renderer) -> Result<()> {
@@ -1237,57 +1178,22 @@ impl MeshletPool {
         // Upload meshlet metadata via staging.
         {
             let meta_bytes = cast_slice::<GpuMeshlet, u8>(&gpu_meshlets);
-            if !meta_bytes.is_empty() {
-                let mut alloc = staging_ring.allocate(meta_bytes.len() as u64, 16)?;
-                alloc.write_bytes(meta_bytes);
-                let dst_offset = meshlet_start as u64 * size_of::<GpuMeshlet>() as u64;
-                let region = vk::BufferCopy::default()
-                    .src_offset(alloc.offset)
-                    .dst_offset(dst_offset)
-                    .size(meta_bytes.len() as u64);
-                unsafe {
-                    device.cmd_copy_buffer(cmd, alloc.buffer, self.meshlet_meta_buffer, &[region]);
-                }
-            }
+            let dst_offset = meshlet_start as u64 * size_of::<GpuMeshlet>() as u64;
+            stage_and_copy(staging_ring, device, cmd, meta_bytes, 16, self.meshlet_meta_buffer, dst_offset)?;
         }
 
         // Upload vertex data via staging.
         {
             let vertex_bytes = cast_slice::<PackedVertex, u8>(&mesh.vertices);
-            if !vertex_bytes.is_empty() {
-                let mut alloc = staging_ring.allocate(vertex_bytes.len() as u64, 16)?;
-                alloc.write_bytes(vertex_bytes);
-                let dst_offset = vertex_start as u64 * size_of::<PackedVertex>() as u64;
-                let region = vk::BufferCopy::default()
-                    .src_offset(alloc.offset)
-                    .dst_offset(dst_offset)
-                    .size(vertex_bytes.len() as u64);
-                unsafe {
-                    device.cmd_copy_buffer(
-                        cmd,
-                        alloc.buffer,
-                        self.meshlet_vertex_buffer,
-                        &[region],
-                    );
-                }
-            }
+            let dst_offset = vertex_start as u64 * size_of::<PackedVertex>() as u64;
+            stage_and_copy(staging_ring, device, cmd, vertex_bytes, 16, self.meshlet_vertex_buffer, dst_offset)?;
         }
 
         // Upload widened triangle indices via staging.
         {
             let tri_bytes = cast_slice::<u32, u8>(&widened_tris);
-            if !tri_bytes.is_empty() {
-                let mut alloc = staging_ring.allocate(tri_bytes.len() as u64, 4)?;
-                alloc.write_bytes(tri_bytes);
-                let dst_offset = tri_start as u64 * size_of::<u32>() as u64;
-                let region = vk::BufferCopy::default()
-                    .src_offset(alloc.offset)
-                    .dst_offset(dst_offset)
-                    .size(tri_bytes.len() as u64);
-                unsafe {
-                    device.cmd_copy_buffer(cmd, alloc.buffer, self.meshlet_tri_buffer, &[region]);
-                }
-            }
+            let dst_offset = tri_start as u64 * size_of::<u32>() as u64;
+            stage_and_copy(staging_ring, device, cmd, tri_bytes, 4, self.meshlet_tri_buffer, dst_offset)?;
         }
 
         // Track chunk meshlet range (CRIT-04).

@@ -17,7 +17,7 @@ use crate::renderer::{
     swapchain::recreate_swapchain_context,
     pipeline_cache::PipelineCache,
     perf_counters::GpuPerfCounters,
-    bindless::BindlessTable,
+    bindless::{BindlessTable, BINDING_SCENE, BINDING_FRUSTUM_PLANES, BINDING_DRAW_COUNT, BINDING_HIZ_CONFIG},
 };
 use crate::runtime::scheduler::StreamingState;
 
@@ -105,7 +105,7 @@ pub fn run() -> Result<()> {
     // Bindings 1-3 are now free (all 4 regions merged into scene_buffer).
     {
         let chunk_pool = renderer.chunk_pool.as_ref().expect("chunk pool must be initialized before bindless registration");
-        bindless.register_buffer(&renderer.device_ctx.device, 0, chunk_pool.scene_buffer(), vk::WHOLE_SIZE);
+        bindless.register_buffer(&renderer.device_ctx.device, BINDING_SCENE, chunk_pool.scene_buffer(), vk::WHOLE_SIZE);
     }
 
     let bindless_layout = bindless.descriptor_set_layout;
@@ -124,9 +124,9 @@ pub fn run() -> Result<()> {
     {
         let cull_pipeline = renderer.cull_pipeline.as_ref().expect("cull pipeline must be initialized");
         let bindless = renderer.bindless.as_ref().expect("bindless must be initialized");
-        bindless.register_buffer(&renderer.device_ctx.device, 4, cull_pipeline.frustum_planes_buffer, std::mem::size_of::<crate::renderer::camera::FrustumPlanes>() as u64);
-        bindless.register_buffer(&renderer.device_ctx.device, 5, cull_pipeline.draw_count_buffer, std::mem::size_of::<u32>() as u64);
-        bindless.register_buffer(&renderer.device_ctx.device, 6, cull_pipeline.hiz_config_buffer, std::mem::size_of::<crate::renderer::cull_pipeline::HiZConfig>() as u64);
+        bindless.register_buffer(&renderer.device_ctx.device, BINDING_FRUSTUM_PLANES, cull_pipeline.frustum_planes_buffer, std::mem::size_of::<crate::renderer::camera::FrustumPlanes>() as u64);
+        bindless.register_buffer(&renderer.device_ctx.device, BINDING_DRAW_COUNT, cull_pipeline.draw_count_buffer, std::mem::size_of::<u32>() as u64);
+        bindless.register_buffer(&renderer.device_ctx.device, BINDING_HIZ_CONFIG, cull_pipeline.hiz_config_buffer, std::mem::size_of::<crate::renderer::cull_pipeline::HiZConfig>() as u64);
     }
 
     // Create and upload material table to bindless binding 8.

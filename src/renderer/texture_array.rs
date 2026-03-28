@@ -379,7 +379,7 @@ impl TextureArray {
         if let Some(bindless) = renderer.bindless.as_ref() {
             bindless.register_image(
                 &renderer.device_ctx.device,
-                9,
+                super::bindless::BINDING_TEXTURE_ARRAY,
                 view,
                 sampler,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,

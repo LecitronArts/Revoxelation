@@ -117,12 +117,25 @@ fn phase5_bindless_table_has_required_bindings() {
         "bindless.rs must contain PARTIALLY_BOUND flag"
     );
 
-    // Must have 10 bindings (0 through 9).
+    // Must have 10 bindings (0 through 9) via named constants or .binding(N).
     for i in 0..=9u32 {
         let binding_str = format!(".binding({i})");
+        let const_check = match i {
+            0 => source.contains("BINDING_SCENE"),
+            1 => source.contains("BINDING_INDIRECT_TEMPLATES"),
+            2 => source.contains("BINDING_DRAW_SLOTS"),
+            3 => source.contains("BINDING_DENSE_INDIRECT"),
+            4 => source.contains("BINDING_FRUSTUM_PLANES"),
+            5 => source.contains("BINDING_DRAW_COUNT"),
+            6 => source.contains("BINDING_HIZ_CONFIG"),
+            7 => source.contains("BINDING_HIZ_PYRAMID"),
+            8 => source.contains("BINDING_MATERIAL"),
+            9 => source.contains("BINDING_TEXTURE_ARRAY"),
+            _ => false,
+        };
         assert!(
-            source.contains(&binding_str),
-            "bindless.rs must contain binding {i} (looking for '{binding_str}')"
+            source.contains(&binding_str) || const_check,
+            "bindless.rs must contain binding {i} (looking for '{binding_str}' or named constant)"
         );
     }
 }
@@ -253,13 +266,13 @@ fn phase5_shared_set0_pipelines() {
 // Plan 05-03 Task 1 — GpuChunkInstance and unified scene_buffer layout
 // ---------------------------------------------------------------------------
 
-/// GpuChunkInstance must be exactly 48 bytes.
+/// GpuChunkInstance must be exactly 64 bytes (extended with spawn_time + pad in POLISH-08).
 #[test]
 fn phase5_gpu_chunk_instance_size() {
     assert_eq!(
         std::mem::size_of::<revoxelation::renderer::chunk_pool::GpuChunkInstance>(),
-        48,
-        "GpuChunkInstance must be 48 bytes"
+        64,
+        "GpuChunkInstance must be 64 bytes"
     );
 }
 
@@ -272,20 +285,25 @@ fn phase5_scene_buffer_layout_regions() {
     // Region 0: GpuChunkInstance[1024] starts at 0
     assert_eq!(inst_off, 0, "instance region must start at 0");
 
-    // Region 1: DrawIndexedIndirectCommand[1024] starts after instances (1024*48 = 49152)
-    assert_eq!(indirect_off, 49152, "indirect template region offset");
+    // Region 1: DrawIndexedIndirectCommand[1024] starts after instances (1024*64 = 65536)
+    assert_eq!(indirect_off, 65536, "indirect template region offset");
     assert_eq!(indirect_off % 16, 0, "indirect template region must be 16-byte aligned");
 
-    // Region 2: u32[1024] starts after indirect templates (49152 + 1024*20 = 69632)
-    assert_eq!(slot_off, 69632, "draw slot region offset");
+    // Region 2: u32[1024] starts after indirect templates (65536 + 1024*20 = 86016, aligned to 86016)
+    let expected_slot = 65536 + 1024 * 20;
+    let expected_slot_aligned = (expected_slot + 15) & !15;
+    assert_eq!(slot_off, expected_slot_aligned, "draw slot region offset");
     assert_eq!(slot_off % 16, 0, "draw slot region must be 16-byte aligned");
 
-    // Region 3: DrawIndexedIndirectCommand[1024] starts after draw slots (69632 + 1024*4 = 73728)
-    assert_eq!(dense_off, 73728, "dense indirect region offset");
+    // Region 3: after draw slots
+    let expected_dense = expected_slot_aligned + 1024 * 4;
+    let expected_dense_aligned = (expected_dense + 15) & !15;
+    assert_eq!(dense_off, expected_dense_aligned, "dense indirect region offset");
     assert_eq!(dense_off % 16, 0, "dense indirect region must be 16-byte aligned");
 
-    // Total: 73728 + 1024*20 = 94208
-    assert_eq!(total, 94208, "total scene buffer size");
+    // Total
+    let expected_total = expected_dense_aligned + 1024 * 20;
+    assert_eq!(total, expected_total, "total scene buffer size");
 }
 
 /// ChunkPool::new must allocate at least 3 buffers (vertex, index, scene).

@@ -540,7 +540,7 @@ pub fn recreate_swapchain_context(
         if let Some(bindless) = &renderer.bindless {
             bindless.register_image(
                 &renderer.device_ctx.device,
-                7,
+                super::bindless::BINDING_HIZ_PYRAMID,
                 new_hiz.full_view,
                 new_hiz.sampler,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,

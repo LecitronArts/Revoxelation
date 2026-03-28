@@ -224,7 +224,7 @@ fn mesh_03_mesh_pipeline_binds_metadata_storage_buffer() {
     let bindless_source = std::fs::read_to_string("src/renderer/bindless.rs")
         .expect("src/renderer/bindless.rs should exist");
     assert!(
-        bindless_source.contains("STORAGE_BUFFER") && bindless_source.contains(".binding(0)"),
+        bindless_source.contains("STORAGE_BUFFER") && (bindless_source.contains(".binding(0)") || bindless_source.contains("BINDING_SCENE")),
         "bindless.rs must have binding 0 as STORAGE_BUFFER"
     );
 }
@@ -590,16 +590,18 @@ fn mesh_01_greedy_mesh_single_block_has_nonzero_position_spread() {
 fn mesh_01_vertex_shader_decodes_7_bit_positions_and_expands_face_offset() {
     let shader = std::fs::read_to_string("shaders/chunk_mesh.vert")
         .expect("chunk mesh shader should exist");
+    let common = std::fs::read_to_string("shaders/common.glsl").unwrap_or_default();
+    let combined = format!("{}\n{}", shader, common);
     assert!(
-        shader.contains("0x7Fu"),
+        combined.contains("0x7Fu"),
         "decode_position must use 7-bit mask 0x7F"
     );
     assert!(
-        shader.contains(">> 7"),
+        combined.contains(">> 7"),
         "decode_position must shift Y by 7 bits"
     );
     assert!(
-        shader.contains(">> 14"),
+        combined.contains(">> 14"),
         "decode_position must shift Z by 14 bits"
     );
     assert!(

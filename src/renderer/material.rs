@@ -184,7 +184,7 @@ impl MaterialTable {
 
         // Register at bindless binding 8
         if let Some(bindless) = renderer.bindless.as_ref() {
-            bindless.register_buffer(&renderer.device_ctx.device, 8, buffer, size);
+            bindless.register_buffer(&renderer.device_ctx.device, super::bindless::BINDING_MATERIAL, buffer, size);
         }
 
         Ok((buffer, alloc))

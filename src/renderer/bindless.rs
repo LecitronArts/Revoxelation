@@ -12,6 +12,44 @@ use ash::vk;
 /// Extended from 10 to 16 in Phase 6 for meshlet SSBOs (D-08).
 const BINDING_COUNT: usize = 16;
 
+// ---------------------------------------------------------------------------
+// Named binding ID constants (REFAC-05)
+// ---------------------------------------------------------------------------
+// Replace all magic-number binding indices with these named constants.
+
+/// Binding 0: scene/metadata SSBO (GpuChunkInstance[] + indirect templates + draw slots + dense indirect).
+pub const BINDING_SCENE: u32 = 0;
+/// Binding 1: indirect templates (legacy, shares scene_buffer region).
+pub const BINDING_INDIRECT_TEMPLATES: u32 = 1;
+/// Binding 2: draw slots (legacy, shares scene_buffer region).
+pub const BINDING_DRAW_SLOTS: u32 = 2;
+/// Binding 3: dense indirect output (legacy, shares scene_buffer region).
+pub const BINDING_DENSE_INDIRECT: u32 = 3;
+/// Binding 4: frustum planes SSBO.
+pub const BINDING_FRUSTUM_PLANES: u32 = 4;
+/// Binding 5: draw count SSBO.
+pub const BINDING_DRAW_COUNT: u32 = 5;
+/// Binding 6: Hi-Z config SSBO.
+pub const BINDING_HIZ_CONFIG: u32 = 6;
+/// Binding 7: Hi-Z pyramid combined image sampler.
+pub const BINDING_HIZ_PYRAMID: u32 = 7;
+/// Binding 8: material SSBO.
+pub const BINDING_MATERIAL: u32 = 8;
+/// Binding 9: texture array combined image sampler.
+pub const BINDING_TEXTURE_ARRAY: u32 = 9;
+/// Binding 10: meshlet metadata SSBO (GpuMeshlet[]).
+pub const BINDING_MESHLET_META: u32 = 10;
+/// Binding 11: meshlet vertex SSBO (PackedVertex[]).
+pub const BINDING_MESHLET_VERTEX: u32 = 11;
+/// Binding 12: meshlet triangle index SSBO (u32[]).
+pub const BINDING_MESHLET_TRI: u32 = 12;
+/// Binding 13: visible meshlet SSBO (u32[], cull output).
+pub const BINDING_VISIBLE_MESHLET: u32 = 13;
+/// Binding 14: meshlet indirect SSBO (DrawIndexedIndirectCommand[]).
+pub const BINDING_MESHLET_INDIRECT: u32 = 14;
+/// Binding 15: meshlet count SSBO (u32, visible meshlet count).
+pub const BINDING_MESHLET_COUNT: u32 = 15;
+
 /// Manages the global descriptor set 0 shared by all pipelines.
 ///
 /// Layout (D-01, extended D-08):
@@ -56,97 +94,97 @@ impl BindlessTable {
         let bindings = [
             // binding 0: scene/metadata SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
-                .binding(0)
+                .binding(BINDING_SCENE)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
             // binding 1: indirect templates — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
-                .binding(1)
+                .binding(BINDING_INDIRECT_TEMPLATES)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
             // binding 2: draw slots — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
-                .binding(2)
+                .binding(BINDING_DRAW_SLOTS)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
             // binding 3: dense indirect output — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
-                .binding(3)
+                .binding(BINDING_DENSE_INDIRECT)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
             // binding 4: frustum planes — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
-                .binding(4)
+                .binding(BINDING_FRUSTUM_PLANES)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
             // binding 5: draw count — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
-                .binding(5)
+                .binding(BINDING_DRAW_COUNT)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
             // binding 6: Hi-Z config — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
-                .binding(6)
+                .binding(BINDING_HIZ_CONFIG)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
             // binding 7: Hi-Z pyramid combined image sampler — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
-                .binding(7)
+                .binding(BINDING_HIZ_PYRAMID)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
             // binding 8: material SSBO — FRAGMENT (+ MESH for mesh shader material access)
             vk::DescriptorSetLayoutBinding::default()
-                .binding(8)
+                .binding(BINDING_MATERIAL)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT | mesh_extra),
             // binding 9: texture array — FRAGMENT
             vk::DescriptorSetLayoutBinding::default()
-                .binding(9)
+                .binding(BINDING_TEXTURE_ARRAY)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
             // binding 10: meshlet_meta SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
-                .binding(10)
+                .binding(BINDING_MESHLET_META)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
             // binding 11: meshlet_vertex SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
-                .binding(11)
+                .binding(BINDING_MESHLET_VERTEX)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
             // binding 12: meshlet_tri SSBO — COMPUTE (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
-                .binding(12)
+                .binding(BINDING_MESHLET_TRI)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE | mesh_extra),
             // binding 13: visible_meshlet SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
-                .binding(13)
+                .binding(BINDING_VISIBLE_MESHLET)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
             // binding 14: meshlet_indirect SSBO — COMPUTE (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
-                .binding(14)
+                .binding(BINDING_MESHLET_INDIRECT)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE | mesh_extra),
             // binding 15: meshlet_count SSBO — COMPUTE (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
-                .binding(15)
+                .binding(BINDING_MESHLET_COUNT)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE | mesh_extra),
@@ -224,12 +262,12 @@ impl BindlessTable {
         device: &ash::Device,
         meshlet_pool: &super::chunk_pool::MeshletPool,
     ) {
-        self.register_buffer(device, 10, meshlet_pool.meshlet_meta_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, 11, meshlet_pool.meshlet_vertex_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, 12, meshlet_pool.meshlet_tri_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, 13, meshlet_pool.visible_meshlet_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, 14, meshlet_pool.meshlet_indirect_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, 15, meshlet_pool.meshlet_count_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, BINDING_MESHLET_META, meshlet_pool.meshlet_meta_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, BINDING_MESHLET_VERTEX, meshlet_pool.meshlet_vertex_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, BINDING_MESHLET_TRI, meshlet_pool.meshlet_tri_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, BINDING_VISIBLE_MESHLET, meshlet_pool.visible_meshlet_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, BINDING_MESHLET_INDIRECT, meshlet_pool.meshlet_indirect_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(device, BINDING_MESHLET_COUNT, meshlet_pool.meshlet_count_buffer, vk::WHOLE_SIZE);
     }
 
     /// Write a STORAGE_BUFFER descriptor to the given binding (D-03).
