@@ -330,3 +330,216 @@ fn phase6_1_mesh_sync_limit() {
         "run_mesh_sync must have a per-frame result processing limit"
     );
 }
+
+// ===========================================================================
+// Plan 03 tests — Vulkan resource safety, camera, staging, atomics
+// ===========================================================================
+
+/// HIGH-01: egui descriptor set must use per-frame descriptor sets (array of 2)
+/// or UPDATE_AFTER_BIND to avoid use-after-free on font texture update.
+#[test]
+fn phase6_1_egui_descriptor_safety() {
+    let src = std::fs::read_to_string("src/renderer/egui_backend.rs")
+        .expect("should read egui_backend.rs");
+
+    // Must have per-frame descriptor sets: an array field like `descriptor_sets: [vk::DescriptorSet; 2]`
+    // or UPDATE_AFTER_BIND on the egui descriptor pool/layout.
+    let has_per_frame = src.contains("[vk::DescriptorSet; 2]")
+        || src.contains("[vk::DescriptorSet;2]");
+    let has_update_after_bind = src.contains("UPDATE_AFTER_BIND");
+
+    assert!(
+        has_per_frame || has_update_after_bind,
+        "egui_backend.rs must use per-frame descriptor sets [vk::DescriptorSet; 2] or UPDATE_AFTER_BIND"
+    );
+}
+
+/// HIGH-02: destroy_allocated_buffer and destroy_allocated_image must call
+/// device.destroy_buffer/image BEFORE allocator.free (correct Vulkan order).
+#[test]
+fn phase6_1_destroy_order() {
+    let src = std::fs::read_to_string("src/renderer/helpers.rs")
+        .expect("should read helpers.rs");
+
+    // Check destroy_allocated_buffer: destroy_buffer must appear BEFORE .free
+    let fn_start = src
+        .find("fn destroy_allocated_buffer")
+        .expect("destroy_allocated_buffer must exist");
+    let fn_body = &src[fn_start..fn_start + 400.min(src.len() - fn_start)];
+    let destroy_pos = fn_body.find("destroy_buffer").expect("must call destroy_buffer");
+    let free_pos = fn_body.find(".free(").expect("must call .free()");
+    assert!(
+        destroy_pos < free_pos,
+        "destroy_buffer must appear BEFORE .free() in destroy_allocated_buffer"
+    );
+
+    // Check destroy_allocated_image: destroy_image must appear BEFORE .free
+    let fn_start2 = src
+        .find("fn destroy_allocated_image")
+        .expect("destroy_allocated_image must exist");
+    let fn_body2 = &src[fn_start2..fn_start2 + 400.min(src.len() - fn_start2)];
+    let destroy_pos2 = fn_body2.find("destroy_image").expect("must call destroy_image");
+    let free_pos2 = fn_body2.find(".free(").expect("must call .free()");
+    assert!(
+        destroy_pos2 < free_pos2,
+        "destroy_image must appear BEFORE .free() in destroy_allocated_image"
+    );
+}
+
+/// HIGH-07: Bindless descriptor set layout stageFlags must include
+/// TASK_SHADER_BIT_EXT and MESH_SHADER_BIT_EXT when mesh shaders are supported.
+#[test]
+fn phase6_1_bindless_mesh_shader_flags() {
+    let src = std::fs::read_to_string("src/renderer/bindless.rs")
+        .expect("should read bindless.rs");
+
+    assert!(
+        src.contains("TASK_SHADER_BIT_EXT") || src.contains("TASK_SHADER"),
+        "bindless.rs must include TASK_SHADER_BIT_EXT in stageFlags"
+    );
+    assert!(
+        src.contains("MESH_SHADER_BIT_EXT") || src.contains("MESH_SHADER"),
+        "bindless.rs must include MESH_SHADER_BIT_EXT in stageFlags"
+    );
+}
+
+/// MED-01: Camera near-plane extraction must use Vulkan z∈[0,w] formula:
+/// near plane = row2 of MVP (not row3+row2 which is OpenGL convention).
+#[test]
+fn phase6_1_camera_near_plane() {
+    let src = std::fs::read_to_string("src/renderer/camera.rs")
+        .expect("should read camera.rs");
+
+    // Find extract_frustum_planes function.
+    let fn_start = src
+        .find("fn extract_frustum_planes")
+        .expect("extract_frustum_planes must exist");
+    let fn_body = &src[fn_start..];
+
+    // Near plane must be row2 only (Vulkan), NOT row3 + row2 (OpenGL).
+    // The near plane line should contain just "row2" without "row3 + row2".
+    let near_line = fn_body.lines().find(|l| l.contains("near"));
+    assert!(
+        near_line.is_some(),
+        "must have a near plane extraction line"
+    );
+    let near_text = near_line.unwrap();
+    assert!(
+        near_text.contains("row2") && !near_text.contains("row3"),
+        "near plane must use row2 only (Vulkan z∈[0,w]), not row3+row2 (OpenGL): found '{}'",
+        near_text.trim()
+    );
+}
+
+/// MED-02: Pipeline barriers must include TASK_SHADER_BIT_EXT | MESH_SHADER_BIT_EXT
+/// in dstStageMask when mesh shaders are enabled.
+#[test]
+fn phase6_1_barrier_mesh_shader_stages() {
+    let src = std::fs::read_to_string("src/renderer/submit.rs")
+        .expect("should read submit.rs");
+
+    assert!(
+        src.contains("TASK_SHADER_BIT_EXT") || src.contains("TASK_SHADER"),
+        "submit.rs must include TASK_SHADER_BIT_EXT in barrier dstStageMask"
+    );
+}
+
+/// MED-03: transition_image_layout catch-all must use MEMORY_READ|MEMORY_WRITE
+/// and emit log::warn (no silent zero-synchronization).
+#[test]
+fn phase6_1_transition_catchall_warn() {
+    let src = std::fs::read_to_string("src/renderer/helpers.rs")
+        .expect("should read helpers.rs");
+
+    // Find transition_image_layout function.
+    let fn_start = src
+        .find("fn transition_image_layout")
+        .expect("transition_image_layout must exist");
+    let fn_body = &src[fn_start..];
+
+    // Catch-all must use MEMORY_READ and MEMORY_WRITE.
+    assert!(
+        fn_body.contains("MEMORY_READ") && fn_body.contains("MEMORY_WRITE"),
+        "transition_image_layout catch-all must use MEMORY_READ|MEMORY_WRITE"
+    );
+
+    // Must emit a warning log.
+    assert!(
+        fn_body.contains("warn!") || fn_body.contains("log::warn"),
+        "transition_image_layout catch-all must emit log::warn"
+    );
+}
+
+/// MED-04: StagingBuffer::write must return Result<()> and check for unmapped memory.
+#[test]
+fn phase6_1_staging_write_result() {
+    let src = std::fs::read_to_string("src/renderer/staging.rs")
+        .expect("should read staging.rs");
+
+    // Find the fn write signature line — it must return Result.
+    let write_line = src.lines().find(|l| l.contains("fn write(") || l.contains("fn write ("));
+    assert!(
+        write_line.is_some(),
+        "StagingBuffer must have a fn write method"
+    );
+    assert!(
+        write_line.unwrap().contains("Result"),
+        "StagingBuffer::write must return Result<()>, got: '{}'",
+        write_line.unwrap().trim()
+    );
+}
+
+/// MED-05: max_draw_count must use meshlet_pool.meshlet_capacity() instead of
+/// hardcoded INITIAL_MESHLET_CAPACITY.
+#[test]
+fn phase6_1_max_draw_count_dynamic() {
+    let src = std::fs::read_to_string("src/renderer/submit.rs")
+        .expect("should read submit.rs");
+
+    // Find the meshlet rendering path.
+    let render_start = src
+        .find("used_meshlet_path")
+        .expect("meshlet rendering path must exist");
+    let render_body = &src[render_start..];
+
+    // Must use meshlet_capacity() instead of INITIAL_MESHLET_CAPACITY.
+    assert!(
+        render_body.contains("meshlet_capacity()"),
+        "max_draw_count must use meshlet_pool.meshlet_capacity() instead of hardcoded constant"
+    );
+    assert!(
+        !render_body.contains("INITIAL_MESHLET_CAPACITY"),
+        "max_draw_count must NOT use hardcoded INITIAL_MESHLET_CAPACITY in meshlet path"
+    );
+}
+
+/// MED-09: cancel_flags must use Ordering::Release for store and Ordering::Acquire
+/// for load (correct cross-thread visibility on ARM).
+#[test]
+fn phase6_1_atomic_ordering() {
+    let job_runner_src = std::fs::read_to_string("src/streaming/job_runner.rs")
+        .expect("should read job_runner.rs");
+    let scheduler_src = std::fs::read_to_string("src/runtime/scheduler.rs")
+        .expect("should read scheduler.rs");
+
+    // job_runner.rs: cancel flag loads should use Acquire (not Relaxed).
+    let fn_start = job_runner_src
+        .find("fn spawn_chunk_job")
+        .or_else(|| job_runner_src.find("pub fn spawn_chunk_job"))
+        .expect("spawn_chunk_job must exist");
+    let fn_body = &job_runner_src[fn_start..];
+    assert!(
+        fn_body.contains("Ordering::Acquire"),
+        "job_runner.rs cancel flag load must use Ordering::Acquire, not Relaxed"
+    );
+
+    // scheduler.rs: cancel flag stores should use Release (not Relaxed).
+    let fn_start2 = scheduler_src
+        .find("fn deactivate_chunk")
+        .expect("deactivate_chunk must exist");
+    let fn_body2 = &scheduler_src[fn_start2..];
+    assert!(
+        fn_body2.contains("Ordering::Release"),
+        "scheduler.rs cancel flag store must use Ordering::Release, not Relaxed"
+    );
+}
