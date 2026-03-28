@@ -10,6 +10,7 @@ layout(location = 0) flat out uint v_block_id;
 layout(location = 1) out vec3 v_face_normal;
 layout(location = 2) out vec2 v_uv;
 layout(location = 3) flat out float v_lod_transition;
+layout(location = 4) flat out float v_fade_alpha;
 
 // Unified scene_buffer (D-07). Region 0 = GpuChunkInstance[capacity].
 layout(std430, set = 0, binding = 0) readonly buffer SceneBuffer {
@@ -31,6 +32,7 @@ layout(push_constant) uniform PushConstants {
     vec3 camera_pos;
     float screen_height;  // POLISH-01: from push constant, not hardcoded
     float sse_threshold;  // POLISH-01: from push constant, not hardcoded
+    float current_time;   // POLISH-08: seconds since engine start, for chunk fade-in
 } pc;
 
 // GpuMeshlet loader — reads chunk_slot from raw uint array.
@@ -96,4 +98,9 @@ void main() {
         parent_error, pc.camera_pos, world_position,
         pc.screen_height, pc.sse_threshold
     );
+
+    // Chunk fade-in alpha (POLISH-08): 0→1 over FADE_DURATION seconds.
+    const float FADE_DURATION = 0.5;
+    float fade_alpha = clamp((pc.current_time - inst.spawn_time) / FADE_DURATION, 0.0, 1.0);
+    v_fade_alpha = fade_alpha;
 }

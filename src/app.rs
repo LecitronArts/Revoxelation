@@ -39,6 +39,8 @@ pub struct App {
     /// Tracked key states for continuous movement.
     pub keys_pressed: KeysPressed,
     pub last_frame_time: Instant,
+    /// Engine start time for calculating spawn_time offsets (POLISH-08).
+    pub engine_start_time: Instant,
     /// D-08: Flag indicating swapchain recreation is needed before next acquire.
     pub needs_resize: bool,
     /// Current window extent (updated on Resized events).
@@ -160,6 +162,7 @@ pub fn run() -> Result<()> {
         frame_index: 0,
         keys_pressed: KeysPressed::default(),
         last_frame_time: Instant::now(),
+        engine_start_time: Instant::now(),
         needs_resize: false,
         window_extent: extent,
         perf_counters: GpuPerfCounters::default(),
@@ -348,7 +351,8 @@ pub fn run() -> Result<()> {
                     );
                     let aspect = if screen_size[1] > 0.0 { screen_size[0] / screen_size[1] } else { 1.0 };
                     let camera_uniforms = app.camera.view_proj(aspect);
-                    match crate::renderer::submit_frame(&mut app.renderer, app.frame_index, &camera_uniforms) {
+                    let current_time = app.engine_start_time.elapsed().as_secs_f32();
+                    match crate::renderer::submit_frame(&mut app.renderer, app.frame_index, &camera_uniforms, current_time) {
                         Ok(FrameOutcome::Submitted) => {}
                         Ok(FrameOutcome::NeedsRecreate) => {
                             // submit_frame signalled swapchain is stale — recreate next frame.

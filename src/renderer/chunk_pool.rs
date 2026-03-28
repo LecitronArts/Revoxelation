@@ -20,19 +20,21 @@ pub const INITIAL_CAPACITY: usize = 1024;
 const GROW_THRESHOLD: f64 = 0.9;
 pub const MAX_QUADS_PER_CHUNK: usize = 4096;
 
-/// Per-chunk GPU instance data in the unified scene_buffer (48 bytes, #[repr(C)]).
+/// Per-chunk GPU instance data in the unified scene_buffer (64 bytes, #[repr(C)]).
 ///
-/// Replaces ChunkDrawMetadata. Used by the vertex shader via `gl_InstanceIndex`
+/// Used by the vertex shader via `gl_InstanceIndex`
 /// (= firstInstance = slot_id) and by the cull compute shader.
 /// Stored in region 0 of scene_buffer.
 ///
-/// Layout (D-02):
+/// Layout (D-02, POLISH-08):
 ///   aabb_min:      [f32; 3]  — 12 bytes
-///   material_id:   u32       —  4 bytes (used in Plan 04 for material lookup)
+///   material_id:   u32       —  4 bytes
 ///   aabb_max:      [f32; 3]  — 12 bytes
 ///   lod_level:     u32       —  4 bytes
 ///   chunk_origin:  [f32; 3]  — 12 bytes
 ///   chunk_scale:   f32       —  4 bytes
+///   spawn_time:    f32       —  4 bytes (seconds since engine start, for fade-in)
+///   _pad_fade:     [u32; 3]  — 12 bytes (padding to 64 bytes for std430 alignment)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuChunkInstance {
@@ -42,6 +44,10 @@ pub struct GpuChunkInstance {
     pub lod_level: u32,
     pub chunk_origin: [f32; 3],
     pub chunk_scale: f32,
+    /// Seconds since engine start when this chunk was activated (POLISH-08).
+    pub spawn_time: f32,
+    /// Alignment padding to 64 bytes for GLSL std430 array stride.
+    pub _pad_fade: [u32; 3],
 }
 
 /// Legacy metadata struct — retained during migration. Will be removed in a future plan.
@@ -63,7 +69,7 @@ pub struct ChunkDrawMetadata {
 /// Calculate byte offsets for the 4 regions of the unified scene_buffer.
 ///
 /// Layout (D-01):
-///   Region 0: GpuChunkInstance\[capacity\]           (48 bytes each)
+///   Region 0: GpuChunkInstance\[capacity\]           (64 bytes each)
 ///   Region 1: DrawIndexedIndirectCommand\[capacity\]  (20 bytes each)
 ///   Region 2: u32\[capacity\]                         (4 bytes each)
 ///   Region 3: DrawIndexedIndirectCommand\[capacity\]  (20 bytes each)
@@ -76,7 +82,7 @@ pub fn scene_buffer_region_offsets(capacity: usize) -> (u64, u64, u64, u64, u64)
         (offset + alignment - 1) & !(alignment - 1)
     }
 
-    const INSTANCE_STRIDE: usize = size_of::<GpuChunkInstance>(); // 48
+    const INSTANCE_STRIDE: usize = size_of::<GpuChunkInstance>(); // 64
     const INDIRECT_STRIDE: usize = 20; // DrawIndexedIndirectCommand: 5 * u32
     const SLOT_STRIDE: usize = size_of::<u32>(); // 4
 
@@ -196,6 +202,8 @@ impl SlotAllocator {
             lod_level: u32::from(key.lod_level),
             chunk_origin,
             chunk_scale,
+            spawn_time: 0.0, // set by caller via SlotUpload (POLISH-08)
+            _pad_fade: [0; 3],
         };
 
         let indirect = vk::DrawIndexedIndirectCommand {

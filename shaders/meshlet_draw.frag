@@ -8,6 +8,7 @@ layout(location = 0) flat in uint v_block_id;
 layout(location = 1) in vec3 v_face_normal;
 layout(location = 2) in vec2 v_uv;
 layout(location = 3) flat in float v_lod_transition;
+layout(location = 4) flat in float v_fade_alpha;
 
 layout(location = 0) out vec4 out_color;
 
@@ -59,6 +60,16 @@ void main() {
 
     // Sample texture array with nonuniformEXT for descriptor indexing safety
     vec4 texel = texture(tex_array, vec3(v_uv, float(nonuniformEXT(tex_index))));
+
+    // Chunk fade-in via alpha dither (POLISH-08).
+    // Newly spawned chunks fade from transparent to opaque over ~0.5s.
+    float fade_alpha = v_fade_alpha;
+    if (fade_alpha < 1.0) {
+        float threshold = bayer_dither(ivec2(gl_FragCoord.xy));
+        if (fade_alpha < threshold) {
+            discard;
+        }
+    }
 
     out_color = texel;
 }

@@ -5,7 +5,7 @@
 // to eliminate code duplication across the shader codebase.
 
 // -----------------------------------------------------------------------
-// GpuChunkInstance (48 bytes, matches Rust #[repr(C)] layout)
+// GpuChunkInstance (64 bytes, matches Rust #[repr(C)] layout)
 // -----------------------------------------------------------------------
 //   aabb_min:     vec3  (12 bytes)
 //   material_id:  uint  ( 4 bytes)
@@ -13,6 +13,8 @@
 //   lod_level:    uint  ( 4 bytes)
 //   chunk_origin: vec3  (12 bytes)
 //   chunk_scale:  float ( 4 bytes)
+//   spawn_time:   float ( 4 bytes) — seconds since engine start (POLISH-08)
+//   _pad_fade:    uint×3(12 bytes) — padding to 64 bytes
 #ifndef COMMON_GLSL
 #define COMMON_GLSL
 
@@ -23,6 +25,10 @@ struct GpuChunkInstance {
     uint lod_level;
     vec3 chunk_origin;
     float chunk_scale;
+    float spawn_time;     // seconds since engine start (POLISH-08: fade-in)
+    uint _pad_fade0;
+    uint _pad_fade1;
+    uint _pad_fade2;
 };
 
 // -----------------------------------------------------------------------

@@ -58,7 +58,7 @@ layout(push_constant) uniform PushConstants {
 // All region boundaries are 16-byte (4 uint) aligned.
 // ------------------------------------------------------------------
 
-const uint INSTANCE_UINT32S = 12u;  // 48 bytes / 4
+const uint INSTANCE_UINT32S = 16u;  // 64 bytes / 4
 const uint INDIRECT_UINT32S = 5u;   // 20 bytes / 4
 const uint SLOT_UINT32S     = 1u;   // 4 bytes / 4
 
@@ -111,6 +111,10 @@ GpuChunkInstance load_instance(uint slot_id) {
         uintBitsToFloat(scene_buffer.data[base + 10])
     );
     inst.chunk_scale = uintBitsToFloat(scene_buffer.data[base + 11]);
+    inst.spawn_time = uintBitsToFloat(scene_buffer.data[base + 12]);
+    inst._pad_fade0 = scene_buffer.data[base + 13];
+    inst._pad_fade1 = scene_buffer.data[base + 14];
+    inst._pad_fade2 = scene_buffer.data[base + 15];
     return inst;
 }
 

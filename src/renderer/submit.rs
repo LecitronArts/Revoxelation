@@ -31,7 +31,7 @@ pub enum FrameOutcome {
     NeedsRecreate,
 }
 
-pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms: &CameraUniforms) -> Result<FrameOutcome> {
+pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms: &CameraUniforms, current_time: f32) -> Result<FrameOutcome> {
     let current_frame = renderer.current_frame;
     let command_buffer = renderer.frames[current_frame].command_buffer;
     let image_available = renderer.frames[current_frame].image_available;
@@ -261,6 +261,18 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                 }
             }
 
+            // POLISH-06: Copy meshlet_count_buffer to readback buffer for async GPU counter readback.
+            if let (Some(readback), Some(meshlet_pool)) =
+                (&renderer.readback_counters, &renderer.meshlet_pool)
+            {
+                readback.record_copy(
+                    &renderer.device_ctx.device,
+                    command_buffer,
+                    current_frame,
+                    meshlet_pool.meshlet_count_buffer,
+                );
+            }
+
             // Barrier: compute shader writes → indirect draw reads for both dense indirect
             // (within scene_buffer) and draw count buffers.
             let dense_barrier = vk::BufferMemoryBarrier::default()
@@ -359,6 +371,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                         max_draw_count,
                         extent,
                         renderer.sse_threshold,
+                        current_time,
                     );
                 }
             }
