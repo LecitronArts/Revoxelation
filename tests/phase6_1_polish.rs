@@ -387,19 +387,20 @@ fn phase6_1_destroy_order() {
 }
 
 /// HIGH-07: Bindless descriptor set layout stageFlags must include
-/// TASK_SHADER_BIT_EXT and MESH_SHADER_BIT_EXT when mesh shaders are supported.
+/// TASK_EXT and MESH_EXT (or TASK_SHADER_BIT_EXT/MESH_SHADER_BIT_EXT)
+/// when mesh shaders are supported.
 #[test]
 fn phase6_1_bindless_mesh_shader_flags() {
     let src = std::fs::read_to_string("src/renderer/bindless.rs")
         .expect("should read bindless.rs");
 
     assert!(
-        src.contains("TASK_SHADER_BIT_EXT") || src.contains("TASK_SHADER"),
-        "bindless.rs must include TASK_SHADER_BIT_EXT in stageFlags"
+        src.contains("TASK_EXT") || src.contains("TASK_SHADER"),
+        "bindless.rs must include TASK_EXT (or TASK_SHADER_BIT_EXT) in stageFlags"
     );
     assert!(
-        src.contains("MESH_SHADER_BIT_EXT") || src.contains("MESH_SHADER"),
-        "bindless.rs must include MESH_SHADER_BIT_EXT in stageFlags"
+        src.contains("MESH_EXT") || src.contains("MESH_SHADER"),
+        "bindless.rs must include MESH_EXT (or MESH_SHADER_BIT_EXT) in stageFlags"
     );
 }
 
@@ -431,16 +432,16 @@ fn phase6_1_camera_near_plane() {
     );
 }
 
-/// MED-02: Pipeline barriers must include TASK_SHADER_BIT_EXT | MESH_SHADER_BIT_EXT
-/// in dstStageMask when mesh shaders are enabled.
+/// MED-02: Pipeline barriers must include TASK_EXT | MESH_EXT
+/// (or TASK_SHADER_BIT_EXT) in dstStageMask when mesh shaders are enabled.
 #[test]
 fn phase6_1_barrier_mesh_shader_stages() {
     let src = std::fs::read_to_string("src/renderer/submit.rs")
         .expect("should read submit.rs");
 
     assert!(
-        src.contains("TASK_SHADER_BIT_EXT") || src.contains("TASK_SHADER"),
-        "submit.rs must include TASK_SHADER_BIT_EXT in barrier dstStageMask"
+        src.contains("TASK_SHADER_EXT") || src.contains("TASK_SHADER"),
+        "submit.rs must include TASK_SHADER_EXT in barrier dstStageMask"
     );
 }
 

@@ -93,7 +93,11 @@ pub fn run() -> Result<()> {
     renderer.pipeline_cache = Some(PipelineCache::load(&renderer.device_ctx.device)?);
 
     // Create the unified bindless descriptor set 0 BEFORE pipelines (D-04).
-    let bindless = BindlessTable::new(&renderer.device_ctx.device)?;
+    // Pass mesh_shader_supported to add TASK/MESH stage flags conditionally (HIGH-07).
+    let bindless = BindlessTable::new(
+        &renderer.device_ctx.device,
+        renderer.device_ctx.mesh_shader_supported,
+    )?;
 
     // Register the unified scene_buffer with the bindless table at binding 0 (D-07).
     // Bindings 1-3 are now free (all 4 regions merged into scene_buffer).
@@ -263,6 +267,43 @@ pub fn run() -> Result<()> {
                                 pc.total_chunks, pc.chunk_capacity,
                                 pc.frame_time_ms
                             ));
+
+                            // Meshlet LOD statistics (MSHL-05).
+                            ui.separator();
+                            ui.label(format!(
+                                "Meshlets: {} (LOD0: {}, LOD1: {})",
+                                pc.total_meshlets, pc.lod0_meshlets, pc.lod1_meshlets
+                            ));
+                            ui.label(format!(
+                                "Visible: {} | Cull rate: {:.1}%",
+                                pc.visible_meshlets, pc.meshlet_cull_rate * 100.0
+                            ));
+                        });
+
+                        // Meshlet culling controls (MSHL-05).
+                        egui::Window::new("Meshlet Culling").show(ctx, |ui| {
+                            ui.checkbox(
+                                &mut app.renderer.meshlet_cull_backface,
+                                "Backface culling",
+                            );
+                            ui.checkbox(
+                                &mut app.renderer.meshlet_cull_frustum,
+                                "Frustum culling",
+                            );
+                            ui.checkbox(
+                                &mut app.renderer.meshlet_cull_hiz,
+                                "Hi-Z occlusion culling",
+                            );
+                            ui.checkbox(
+                                &mut app.renderer.use_meshlet_rendering,
+                                "Meshlet rendering",
+                            );
+                            ui.separator();
+                            ui.label("SSE threshold (LOD)");
+                            ui.add(
+                                egui::Slider::new(&mut app.renderer.sse_threshold, 0.1..=16.0)
+                                    .text("px"),
+                            );
                         });
                     });
 
@@ -320,6 +361,12 @@ pub fn run() -> Result<()> {
                     app.perf_counters.chunk_capacity = chunk_capacity;
                     // visible_chunks approximated as total (actual readback deferred to future)
                     app.perf_counters.visible_chunks = total_chunks;
+
+                    // Meshlet LOD statistics (MSHL-05).
+                    if let Some(meshlet_pool) = &app.renderer.meshlet_pool {
+                        app.perf_counters.total_meshlets = meshlet_pool.active_meshlet_count();
+                    }
+                    app.perf_counters.sse_threshold = app.renderer.sse_threshold;
 
                     // Shader hot-reload (debug builds with hot-reload feature only).
                     #[cfg(all(debug_assertions, feature = "hot-reload"))]

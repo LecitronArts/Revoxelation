@@ -4,7 +4,6 @@ use glam::Mat4;
 
 use super::Renderer;
 use super::camera::{CameraUniforms, extract_frustum_planes};
-use super::chunk_pool::INITIAL_MESHLET_CAPACITY;
 use super::cull_pipeline::{HiZConfig, MeshletCullPushConstants};
 
 pub fn submit_frame_sequence() -> &'static [&'static str] {
@@ -112,7 +111,15 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         renderer.record_chunk_delta_uploads(command_buffer)?;
 
         // Memory barrier: ensure all transfer writes complete before compute shader reads.
+        // MED-02: Include TASK/MESH shader stages in dstStageMask when mesh shaders active.
         if renderer.chunk_pool.is_some() && renderer.staging_ring.is_some() {
+            let mut dst_stages = vk::PipelineStageFlags::COMPUTE_SHADER
+                | vk::PipelineStageFlags::VERTEX_INPUT
+                | vk::PipelineStageFlags::VERTEX_SHADER;
+            if renderer.use_mesh_shader_path {
+                dst_stages |= vk::PipelineStageFlags::TASK_SHADER_EXT
+                    | vk::PipelineStageFlags::MESH_SHADER_EXT;
+            }
             let transfer_barrier = vk::MemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .dst_access_mask(
@@ -123,9 +130,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             renderer.device_ctx.device.cmd_pipeline_barrier(
                 command_buffer,
                 vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::COMPUTE_SHADER
-                    | vk::PipelineStageFlags::VERTEX_INPUT
-                    | vk::PipelineStageFlags::VERTEX_SHADER,
+                dst_stages,
                 vk::DependencyFlags::empty(),
                 &[transfer_barrier],
                 &[],
@@ -203,6 +208,8 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                         enable_hiz: u32::from(renderer.meshlet_cull_hiz),
                         camera_pos: camera_uniforms.camera_pos,
                         _pad: 0,
+                        sse_threshold: renderer.sse_threshold,
+                        screen_height: renderer.swapchain_ctx.extent.height as f32,
                     };
                     meshlet_cull.record_dispatch(
                         &renderer.device_ctx.device,
@@ -326,13 +333,15 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                 let total_meshlets = meshlet_pool.active_meshlet_count();
                 if total_meshlets > 0 {
                     let extent = renderer.swapchain_ctx.extent;
+                    // MED-05: Use dynamic meshlet_capacity instead of hardcoded constant.
+                    let max_draw_count = meshlet_pool.meshlet_capacity() as u32;
                     meshlet_pipeline.record_draw(
                         &renderer.device_ctx.device,
                         command_buffer,
                         bindless_set,
                         camera_uniforms,
                         meshlet_pool,
-                        INITIAL_MESHLET_CAPACITY as u32,
+                        max_draw_count,
                         extent,
                     );
                 }

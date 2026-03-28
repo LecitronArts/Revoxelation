@@ -41,15 +41,25 @@ pub struct BindlessTable {
 
 impl BindlessTable {
     /// Create the BindlessTable with all 16 bindings, UPDATE_AFTER_BIND pool and layout.
-    pub fn new(device: &ash::Device) -> Result<Self> {
+    ///
+    /// When `mesh_shader_supported` is true, TASK_EXT and MESH_EXT
+    /// are added to stage flags for bindings accessible from task/mesh shaders (HIGH-07).
+    pub fn new(device: &ash::Device, mesh_shader_supported: bool) -> Result<Self> {
+        // Extra stage flags for mesh shader pipeline (HIGH-07).
+        let mesh_extra = if mesh_shader_supported {
+            vk::ShaderStageFlags::TASK_EXT | vk::ShaderStageFlags::MESH_EXT
+        } else {
+            vk::ShaderStageFlags::empty()
+        };
+
         // Define all 16 bindings.
         let bindings = [
-            // binding 0: scene/metadata SSBO — COMPUTE | VERTEX
+            // binding 0: scene/metadata SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(0)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX),
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
             // binding 1: indirect templates — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
                 .binding(1)
@@ -92,54 +102,54 @@ impl BindlessTable {
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
-            // binding 8: material SSBO — FRAGMENT
+            // binding 8: material SSBO — FRAGMENT (+ MESH for mesh shader material access)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(8)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT | mesh_extra),
             // binding 9: texture array — FRAGMENT
             vk::DescriptorSetLayoutBinding::default()
                 .binding(9)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-            // binding 10: meshlet_meta SSBO — COMPUTE | VERTEX
+            // binding 10: meshlet_meta SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(10)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX),
-            // binding 11: meshlet_vertex SSBO — COMPUTE | VERTEX
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
+            // binding 11: meshlet_vertex SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(11)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX),
-            // binding 12: meshlet_tri SSBO — COMPUTE
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
+            // binding 12: meshlet_tri SSBO — COMPUTE (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(12)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE),
-            // binding 13: visible_meshlet SSBO — COMPUTE | VERTEX
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | mesh_extra),
+            // binding 13: visible_meshlet SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(13)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX),
-            // binding 14: meshlet_indirect SSBO — COMPUTE
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
+            // binding 14: meshlet_indirect SSBO — COMPUTE (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(14)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE),
-            // binding 15: meshlet_count SSBO — COMPUTE
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | mesh_extra),
+            // binding 15: meshlet_count SSBO — COMPUTE (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(15)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+                .stage_flags(vk::ShaderStageFlags::COMPUTE | mesh_extra),
         ];
 
         // All bindings get PARTIALLY_BOUND | UPDATE_AFTER_BIND flags (D-02).

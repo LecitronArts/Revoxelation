@@ -1333,6 +1333,12 @@ impl MeshletPool {
         self.active_meshlet_count
     }
 
+    /// Current meshlet buffer capacity (MED-05).
+    /// Used for max_draw_count in indirect draw calls instead of hardcoded constant.
+    pub fn meshlet_capacity(&self) -> usize {
+        self.meshlet_capacity
+    }
+
     /// Meshlet range for a chunk.
     pub fn chunk_range(&self, key: ChunkKey) -> Option<(u32, u32)> {
         self.chunk_ranges.get(&key).map(|r| (r.meshlet_start, r.meshlet_count))
