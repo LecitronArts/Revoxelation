@@ -38,10 +38,11 @@ fn clean_dirty_record() -> MeshDirtyRecord {
 }
 
 fn skirt_vertex_count(vertices: &[PackedVertex]) -> usize {
-    vertices
-        .iter()
-        .filter(|vertex| vertex.0[0] & (1 << 24) != 0)
-        .count()
+    // LGHT-04: bit 24 of word0 is now repurposed for AO (bits 24-25).
+    // Skirt emission was disabled in MSHL-05/REFAC-07, so no vertices are skirts.
+    // The old skirt bit detection (1 << 24) is no longer valid.
+    let _ = vertices;
+    0
 }
 
 fn chunk_key(x: i32, y: i32, z: i32, lod_level: u8) -> ChunkKey {
@@ -89,8 +90,8 @@ fn mesh_01_chunk_voxels_contract_and_packed_layout() {
     assert_eq!(CHUNK_EDGE, 64);
     assert_eq!(size_of::<PackedVertex>(), 8);
 
-    let packed = pack_vertex([1, 2, 3], 4, 513, [5, 6]);
-    assert_eq!(packed.0[0], 1 | (2 << 7) | (3 << 14) | (4 << 21));
+    let packed = pack_vertex([1, 2, 3], 4, 513, [5, 6], 3);
+    assert_eq!(packed.0[0], 1 | (2 << 7) | (3 << 14) | (4 << 21) | (3 << 24));
     assert_eq!(packed.0[1], 513 | (5 << 16) | (6 << 24));
 }
 

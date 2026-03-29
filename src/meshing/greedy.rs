@@ -2,6 +2,120 @@ use super::{
     ChunkNeighborSet, ChunkVoxels, GreedyQuad, MeshDirtyRecord, PackedMesh, pack_quad,
 };
 
+// -----------------------------------------------------------------------
+// Voxel Ambient Occlusion (LGHT-04)
+// -----------------------------------------------------------------------
+
+/// Check if a block at the given position is opaque for AO purposes.
+/// Air (block_id == 0) is non-occluding. Out-of-chunk positions are checked
+/// via neighbor chunks; if no neighbor data is available, treat as non-occluding.
+fn is_opaque_for_ao(
+    chunk: &ChunkVoxels,
+    neighbors: &ChunkNeighborSet<'_>,
+    pos: [i32; 3],
+) -> bool {
+    let block = sample_with_halo(chunk, neighbors, pos[0], pos[1], pos[2]);
+    // block_id 0 = air, non-occluding.
+    // TODO: respect FLAG_TRANSPARENT — would require MaterialTable access here.
+    // For now, only air is non-occluding (sufficient for voxel AO).
+    block != 0
+}
+
+/// Compute voxel AO for a single vertex corner on a face.
+///
+/// For a face on axis `a` at position face_pos, the two tangent axes are u,v.
+/// For a corner at (du, dv) where du/dv are -1 or +1 offsets along u,v:
+///   side1 = block at face_pos offset by du along u-axis
+///   side2 = block at face_pos offset by dv along v-axis
+///   corner = block at face_pos offset by du along u-axis AND dv along v-axis
+///
+/// Returns AO level: 0 (fully occluded/dark) to 3 (fully open/bright).
+fn compute_corner_ao(
+    chunk: &ChunkVoxels,
+    neighbors: &ChunkNeighborSet<'_>,
+    face_pos: [i32; 3],
+    axis: u8,
+    du: i32, // -1 or +1 along u-tangent
+    dv: i32, // -1 or +1 along v-tangent
+) -> u8 {
+    let (u_axis, v_axis) = plane_axes(axis);
+
+    let mut s1_pos = face_pos;
+    s1_pos[u_axis] += du;
+
+    let mut s2_pos = face_pos;
+    s2_pos[v_axis] += dv;
+
+    let mut c_pos = face_pos;
+    c_pos[u_axis] += du;
+    c_pos[v_axis] += dv;
+
+    let side1 = is_opaque_for_ao(chunk, neighbors, s1_pos);
+    let side2 = is_opaque_for_ao(chunk, neighbors, s2_pos);
+    let corner = is_opaque_for_ao(chunk, neighbors, c_pos);
+
+    if side1 && side2 {
+        0 // fully occluded — corner is hidden behind two solid blocks
+    } else {
+        3 - (side1 as u8 + side2 as u8 + corner as u8)
+    }
+}
+
+/// Compute AO values for all 4 corners of a greedy quad.
+///
+/// The face position is the block face exposed to air. For each corner vertex,
+/// we determine the du/dv offsets (+1 or -1) along the tangent axes and
+/// sample the 3 AO neighbors (side1, side2, diagonal).
+///
+/// For greedy-merged quads (size > 1), we sample AO at the actual corner
+/// positions of the merged quad rather than individual voxels, which gives
+/// visually correct results.
+fn compute_quad_ao(
+    chunk: &ChunkVoxels,
+    neighbors: &ChunkNeighborSet<'_>,
+    quad: &GreedyQuad,
+) -> [u8; 4] {
+    let (u_axis, v_axis) = plane_axes(quad.axis);
+    let axis_idx = quad.axis as usize;
+
+    // The face is on the surface of the block. For positive faces, the face
+    // is at origin[axis] + 1; for negative faces, at origin[axis].
+    // The AO sampling position is one step into the air side of the face.
+    let mut face_base = [
+        quad.origin[0] as i32,
+        quad.origin[1] as i32,
+        quad.origin[2] as i32,
+    ];
+    if quad.positive_face {
+        face_base[axis_idx] += 1;
+    } else {
+        face_base[axis_idx] -= 1;
+    }
+
+    // Corner order matches pack_quad corners:
+    //   0: (origin_u, origin_v)         → du=-1, dv=-1
+    //   1: (origin_u + size_u, origin_v) → du=+1, dv=-1
+    //   2: (origin_u + size_u, origin_v + size_v) → du=+1, dv=+1
+    //   3: (origin_u, origin_v + size_v) → du=-1, dv=+1
+    //
+    // For each corner, the face_pos is at the corner's actual world position.
+    let corners: [(i32, i32, i32, i32); 4] = [
+        (0, 0, -1, -1),
+        (quad.size[0] as i32, 0, 1, -1),
+        (quad.size[0] as i32, quad.size[1] as i32, 1, 1),
+        (0, quad.size[1] as i32, -1, 1),
+    ];
+
+    let mut ao = [3u8; 4];
+    for (i, &(u_off, v_off, du, dv)) in corners.iter().enumerate() {
+        let mut face_pos = face_base;
+        face_pos[u_axis] = quad.origin[u_axis] as i32 + u_off;
+        face_pos[v_axis] = quad.origin[v_axis] as i32 + v_off;
+        ao[i] = compute_corner_ao(chunk, neighbors, face_pos, quad.axis, du, dv);
+    }
+    ao
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MergeKey {
     axis: u8,
@@ -36,7 +150,8 @@ pub fn build_greedy_mesh(
             aabb_min[axis] = aabb_min[axis].min(quad_min[axis]);
             aabb_max[axis] = aabb_max[axis].max(quad_max[axis]);
         }
-        pack_quad(quad, &mut vertices, &mut indices);
+        let ao = compute_quad_ao(chunk, neighbors, quad);
+        pack_quad(quad, ao, &mut vertices, &mut indices);
     }
 
     if quads.is_empty() {

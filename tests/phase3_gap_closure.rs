@@ -507,8 +507,8 @@ fn mesh_01_chunk_cull_pipeline_uses_alignment_safe_spirv_decoder() {
 
 #[test]
 fn mesh_01_pack_vertex_uses_7_bit_coordinate_encoding() {
-    let packed = pack_vertex([1, 2, 3], 4, 513, [5, 6]);
-    assert_eq!(packed.0[0], 1 | (2 << 7) | (3 << 14) | (4 << 21));
+    let packed = pack_vertex([1, 2, 3], 4, 513, [5, 6], 3);
+    assert_eq!(packed.0[0], 1 | (2 << 7) | (3 << 14) | (4 << 21) | (3 << 24));
     assert_eq!(packed.0[1], 513 | (5 << 16) | (6 << 24));
 }
 
@@ -524,7 +524,7 @@ fn mesh_01_pack_quad_produces_non_degenerate_quads() {
     };
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
-    pack_quad(&quad, &mut vertices, &mut indices);
+    pack_quad(&quad, [3, 3, 3, 3], &mut vertices, &mut indices);
     assert_eq!(vertices.len(), 4);
     assert_eq!(indices.len(), 6);
     // At least two vertices must have distinct word0 (distinct positions)

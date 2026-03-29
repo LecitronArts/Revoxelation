@@ -90,11 +90,16 @@ pub struct PackedMesh {
     pub aabb_max: [f32; 3],
 }
 
-pub fn pack_vertex(local_xyz: [u8; 3], face: u8, block_id: u16, uv_local: [u8; 2]) -> PackedVertex {
+/// Pack a single vertex into 8 bytes (uvec2).
+///
+/// Layout of word0: x(7) | y(7) | z(7) | face(3) | ao(2) | unused(6)
+/// Layout of word1: block_id(16) | u(8) | v(8)
+pub fn pack_vertex(local_xyz: [u8; 3], face: u8, block_id: u16, uv_local: [u8; 2], ao: u8) -> PackedVertex {
     let word0 = u32::from(local_xyz[0])
         | (u32::from(local_xyz[1]) << 7)
         | (u32::from(local_xyz[2]) << 14)
-        | (u32::from(face) << 21);
+        | (u32::from(face) << 21)
+        | (u32::from(ao & 0x3) << 24); // LGHT-04: 2 bits AO (0=dark, 3=bright)
     let word1 = u32::from(block_id)
         | (u32::from(uv_local[0]) << 16)
         | (u32::from(uv_local[1]) << 24);
@@ -102,7 +107,14 @@ pub fn pack_vertex(local_xyz: [u8; 3], face: u8, block_id: u16, uv_local: [u8; 2
     PackedVertex([word0, word1])
 }
 
-pub fn pack_quad(quad: &GreedyQuad, vertices: &mut Vec<PackedVertex>, indices: &mut Vec<u32>) {
+/// Pack a quad into vertices and indices.
+///
+/// `ao` contains per-corner AO values (0=fully occluded/dark, 3=fully open/bright)
+/// in order: [corner00, corner_u0, corner_uv, corner_0v].
+///
+/// When opposite-corner AO sums differ, the quad diagonal is flipped to produce
+/// correct AO interpolation (Minecraft-style fix for interpolation anisotropy).
+pub fn pack_quad(quad: &GreedyQuad, ao: [u8; 4], vertices: &mut Vec<PackedVertex>, indices: &mut Vec<u32>) {
     let base_index = vertices.len() as u32;
     let face = face_index(quad.axis, quad.positive_face);
     let corners = [
@@ -113,7 +125,7 @@ pub fn pack_quad(quad: &GreedyQuad, vertices: &mut Vec<PackedVertex>, indices: &
     ];
 
     let (u_axis, v_axis) = plane_axes(quad.axis);
-    for &[du, dv] in &corners {
+    for (i, &[du, dv]) in corners.iter().enumerate() {
         let mut pos = quad.origin;
         pos[u_axis] = quad.origin[u_axis] + du;
         pos[v_axis] = quad.origin[v_axis] + dv;
@@ -127,21 +139,35 @@ pub fn pack_quad(quad: &GreedyQuad, vertices: &mut Vec<PackedVertex>, indices: &
         } else {
             [du, dv]
         };
-        let mut vertex = pack_vertex(pos, face, quad.block_id, uv);
-        if quad.is_skirt {
-            vertex.0[0] |= 1 << 24;
-        }
+        let vertex = pack_vertex(pos, face, quad.block_id, uv, ao[i]);
         vertices.push(vertex);
     }
 
-    indices.extend_from_slice(&[
-        base_index,
-        base_index + 1,
-        base_index + 2,
-        base_index,
-        base_index + 2,
-        base_index + 3,
-    ]);
+    // LGHT-04: Flip quad diagonal when ao[0]+ao[2] < ao[1]+ao[3] to fix
+    // AO interpolation anisotropy (Minecraft-style diagonal flip).
+    let diag_a = u16::from(ao[0]) + u16::from(ao[2]);
+    let diag_b = u16::from(ao[1]) + u16::from(ao[3]);
+    if diag_a < diag_b {
+        // Flipped diagonal: triangles (0,1,3) and (1,2,3)
+        indices.extend_from_slice(&[
+            base_index,
+            base_index + 1,
+            base_index + 3,
+            base_index + 1,
+            base_index + 2,
+            base_index + 3,
+        ]);
+    } else {
+        // Default diagonal: triangles (0,1,2) and (0,2,3)
+        indices.extend_from_slice(&[
+            base_index,
+            base_index + 1,
+            base_index + 2,
+            base_index,
+            base_index + 2,
+            base_index + 3,
+        ]);
+    }
 }
 
 fn face_index(axis: u8, positive_face: bool) -> u8 {
@@ -397,11 +423,10 @@ fn build_lod1(
         // Identify boundary vertices: those used by multiple groups.
         let mut vertex_lock = vec![false; merged_vertex_count];
         for (&global_idx, &local_idx) in &global_to_local {
-            if let Some(glist) = vertex_to_groups.get(&global_idx) {
-                if glist.len() > 1 {
+            if let Some(glist) = vertex_to_groups.get(&global_idx)
+                && glist.len() > 1 {
                     vertex_lock[local_idx as usize] = true;
                 }
-            }
         }
 
         // Build VertexDataAdapter for meshopt.

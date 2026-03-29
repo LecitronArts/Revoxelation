@@ -78,10 +78,10 @@ fn phase6_build_meshlets_simple_quad() {
     use revoxelation::meshing::{PackedMesh, build_meshlets_from_packed, pack_vertex};
 
     // A single quad: 4 vertices, 6 indices (2 triangles).
-    let v0 = pack_vertex([0, 0, 0], 0, 1, [0, 0]);
-    let v1 = pack_vertex([1, 0, 0], 0, 1, [1, 0]);
-    let v2 = pack_vertex([1, 1, 0], 0, 1, [1, 1]);
-    let v3 = pack_vertex([0, 1, 0], 0, 1, [0, 1]);
+    let v0 = pack_vertex([0, 0, 0], 0, 1, [0, 0], 3);
+    let v1 = pack_vertex([1, 0, 0], 0, 1, [1, 0], 3);
+    let v2 = pack_vertex([1, 1, 0], 0, 1, [1, 1], 3);
+    let v3 = pack_vertex([0, 1, 0], 0, 1, [0, 1], 3);
 
     let packed = PackedMesh {
         vertices: vec![v0, v1, v2, v3].into_boxed_slice(),
@@ -114,10 +114,10 @@ fn phase6_build_meshlets_bounds_valid() {
     for i in 0..16u8 {
         let base = vertices.len() as u32;
         let x = i * 2;
-        vertices.push(pack_vertex([x, 0, 0], 0, 1, [0, 0]));
-        vertices.push(pack_vertex([x + 1, 0, 0], 0, 1, [1, 0]));
-        vertices.push(pack_vertex([x + 1, 1, 0], 0, 1, [1, 1]));
-        vertices.push(pack_vertex([x, 1, 0], 0, 1, [0, 1]));
+        vertices.push(pack_vertex([x, 0, 0], 0, 1, [0, 0], 3));
+        vertices.push(pack_vertex([x + 1, 0, 0], 0, 1, [1, 0], 3));
+        vertices.push(pack_vertex([x + 1, 1, 0], 0, 1, [1, 1], 3));
+        vertices.push(pack_vertex([x, 1, 0], 0, 1, [0, 1], 3));
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
@@ -154,10 +154,10 @@ fn phase6_meshlet_vertex_limit() {
     for i in 0..32u8 {
         let base = vertices.len() as u32;
         let x = i * 2;
-        vertices.push(pack_vertex([x, 0, 0], 0, 1, [0, 0]));
-        vertices.push(pack_vertex([x + 1, 0, 0], 0, 1, [1, 0]));
-        vertices.push(pack_vertex([x + 1, 1, 0], 0, 1, [1, 1]));
-        vertices.push(pack_vertex([x, 1, 0], 0, 1, [0, 1]));
+        vertices.push(pack_vertex([x, 0, 0], 0, 1, [0, 0], 3));
+        vertices.push(pack_vertex([x + 1, 0, 0], 0, 1, [1, 0], 3));
+        vertices.push(pack_vertex([x + 1, 1, 0], 0, 1, [1, 1], 3));
+        vertices.push(pack_vertex([x, 1, 0], 0, 1, [0, 1], 3));
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     assert!(vertices.len() > 64, "need >64 verts to test limit");
@@ -189,10 +189,10 @@ fn phase6_meshlet_vertex_limit() {
 fn phase6_meshlet_preserves_aabb() {
     use revoxelation::meshing::{PackedMesh, build_meshlets_from_packed, pack_vertex};
 
-    let v0 = pack_vertex([0, 0, 0], 0, 1, [0, 0]);
-    let v1 = pack_vertex([10, 0, 0], 0, 1, [1, 0]);
-    let v2 = pack_vertex([10, 10, 0], 0, 1, [1, 1]);
-    let v3 = pack_vertex([0, 10, 0], 0, 1, [0, 1]);
+    let v0 = pack_vertex([0, 0, 0], 0, 1, [0, 0], 3);
+    let v1 = pack_vertex([10, 0, 0], 0, 1, [1, 0], 3);
+    let v2 = pack_vertex([10, 10, 0], 0, 1, [1, 1], 3);
+    let v3 = pack_vertex([0, 10, 0], 0, 1, [0, 1], 3);
 
     let packed = PackedMesh {
         vertices: vec![v0, v1, v2, v3].into_boxed_slice(),
@@ -395,10 +395,10 @@ fn make_large_packed_mesh() -> revoxelation::meshing::PackedMesh {
             for z in 0..8u8 {
                 let base = vertices.len() as u32;
                 // +X face quad
-                vertices.push(pack_vertex([x * 2 + 1, y * 2, z * 2], 0, 1, [0, 0]));
-                vertices.push(pack_vertex([x * 2 + 1, y * 2 + 1, z * 2], 0, 1, [1, 0]));
-                vertices.push(pack_vertex([x * 2 + 1, y * 2 + 1, z * 2 + 1], 0, 1, [1, 1]));
-                vertices.push(pack_vertex([x * 2 + 1, y * 2, z * 2 + 1], 0, 1, [0, 1]));
+                vertices.push(pack_vertex([x * 2 + 1, y * 2, z * 2], 0, 1, [0, 0], 3));
+                vertices.push(pack_vertex([x * 2 + 1, y * 2 + 1, z * 2], 0, 1, [1, 0], 3));
+                vertices.push(pack_vertex([x * 2 + 1, y * 2 + 1, z * 2 + 1], 0, 1, [1, 1], 3));
+                vertices.push(pack_vertex([x * 2 + 1, y * 2, z * 2 + 1], 0, 1, [0, 1], 3));
                 indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
         }
@@ -477,10 +477,10 @@ fn phase6_lod_small_mesh_lod0_only() {
     for i in 0..2u8 {
         let base = vertices.len() as u32;
         let x = i * 2;
-        vertices.push(pack_vertex([x, 0, 0], 0, 1, [0, 0]));
-        vertices.push(pack_vertex([x + 1, 0, 0], 0, 1, [1, 0]));
-        vertices.push(pack_vertex([x + 1, 1, 0], 0, 1, [1, 1]));
-        vertices.push(pack_vertex([x, 1, 0], 0, 1, [0, 1]));
+        vertices.push(pack_vertex([x, 0, 0], 0, 1, [0, 0], 3));
+        vertices.push(pack_vertex([x + 1, 0, 0], 0, 1, [1, 0], 3));
+        vertices.push(pack_vertex([x + 1, 1, 0], 0, 1, [1, 1], 3));
+        vertices.push(pack_vertex([x, 1, 0], 0, 1, [0, 1], 3));
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
