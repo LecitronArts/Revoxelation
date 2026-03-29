@@ -22,7 +22,15 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 07-lighting-and-shadows
-**Status:** Executing (Plan 07-04 COMPLETE)
+**Status:** Executing (Plan 07-03 COMPLETE)
+
+## Key Decisions (Phase 07 Plan 03)
+
+- SSAO-01: Single-pass horizontal bilateral blur with image copy back to binding 17 (avoids descriptor swapping mid-command-buffer)
+- SSAO-02: AO images kept in GENERAL layout throughout (simplifies barrier management for compute read/write)
+- SSAO-03: Fragment shaders use textureSize(ssao_texture) for screen UV computation (no extra push constant needed)
+- SSAO-04: Interleaved gradient noise for sample randomization (cheaper than blue noise texture)
+- SSAO-05: SSAO dispatch after Hi-Z generation, reads depth from Hi-Z mip 0 at binding 7
 
 ## Key Decisions (Phase 07 Plan 04)
 
@@ -198,3 +206,4 @@ See: .planning/PROJECT.md
 - 2026-03-29: Executed 07-01 — Directional light + PBR lighting model (LGHT-01) — Cook-Torrance BRDF, 25 bindless bindings, 32B BlockMaterial, LightingState, PointLightManager
 - 2026-03-29: Executed 07-02 — 4-cascade CSM (LGHT-02) — D32_SFLOAT depth array, comparison sampler, PCF 3x3, cascade blending, texel snapping, egui controls
 - 2026-03-29: Executed 07-04 — Voxel AO (LGHT-04) — 4-corner AO in greedy meshing, word0 bits 24-25, decode in shaders, ambient-only modulation, diagonal flip
+- 2026-03-29: Executed 07-03 — SSAO (LGHT-03) — GTAO/HBAO+/classic compute pipelines, bilateral blur, combined AO (voxel×SSAO), egui controls
