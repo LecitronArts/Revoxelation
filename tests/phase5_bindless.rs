@@ -193,13 +193,13 @@ fn phase5_mesh_pipeline_no_own_descriptor_set() {
 // Plan 05-04 Task 1 — BlockMaterial and MaterialTable
 // ---------------------------------------------------------------------------
 
-/// BlockMaterial must be exactly 8 bytes (4 × u16).
+/// BlockMaterial must be exactly 32 bytes (16 × u16) — expanded for PBR in LGHT-01.
 #[test]
 fn phase5_block_material_size() {
     assert_eq!(
         std::mem::size_of::<revoxelation::renderer::material::BlockMaterial>(),
-        8,
-        "BlockMaterial must be 8 bytes (top_texture, side_texture, bottom_texture, flags — all u16)"
+        32,
+        "BlockMaterial must be 32 bytes (16 x u16) — expanded for PBR texture indices (LGHT-01)"
     );
 }
 
