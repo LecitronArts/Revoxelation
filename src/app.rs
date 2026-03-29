@@ -232,6 +232,58 @@ impl App {
                     }
                 });
             }
+
+            // SSAO controls (LGHT-03).
+            {
+                let ssao_cfg = &mut self.renderer.ssao_config;
+                egui::Window::new("SSAO").show(ctx, |ui| {
+                    ui.checkbox(&mut ssao_cfg.enabled, "SSAO enabled");
+                    ui.separator();
+
+                    // Algorithm selector.
+                    let algo_label = ssao_cfg.algorithm.as_str();
+                    egui::ComboBox::from_label("Algorithm")
+                        .selected_text(algo_label)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut ssao_cfg.algorithm,
+                                crate::renderer::ssao::SsaoAlgorithm::Gtao,
+                                "GTAO",
+                            );
+                            ui.selectable_value(
+                                &mut ssao_cfg.algorithm,
+                                crate::renderer::ssao::SsaoAlgorithm::HbaoPlus,
+                                "HBAO+",
+                            );
+                            ui.selectable_value(
+                                &mut ssao_cfg.algorithm,
+                                crate::renderer::ssao::SsaoAlgorithm::ClassicSsao,
+                                "Classic SSAO",
+                            );
+                        });
+
+                    ui.label("AO Radius");
+                    ui.add(
+                        egui::Slider::new(&mut ssao_cfg.radius, 0.1..=2.0)
+                            .text("world"),
+                    );
+                    ui.label("AO Intensity");
+                    ui.add(
+                        egui::Slider::new(&mut ssao_cfg.intensity, 0.0..=3.0),
+                    );
+                    ui.label("Sample Count");
+                    ui.add(
+                        egui::Slider::new(&mut ssao_cfg.sample_count, 4..=64),
+                    );
+                    ui.checkbox(&mut ssao_cfg.half_resolution, "Half resolution");
+                    ui.checkbox(&mut ssao_cfg.debug_view, "Debug AO view");
+
+                    if let Some(ssao) = &self.renderer.ssao_pass {
+                        ui.separator();
+                        ui.label(format!("AO size: {}x{}", ssao.width, ssao.height));
+                    }
+                });
+            }
         });
 
         let clipped_primitives =
@@ -410,6 +462,19 @@ pub fn run() -> Result<()> {
         )?;
         csm.register_shadow_maps(&renderer);
         renderer.shadow_map = Some(csm);
+    }
+
+    // Create SSAO pass (LGHT-03).
+    {
+        let ssao_config = renderer.ssao_config.clone();
+        let ssao = crate::renderer::ssao::SsaoPass::new(
+            &mut renderer,
+            extent.width,
+            extent.height,
+            &ssao_config,
+        )?;
+        ssao.register_bindless(&renderer);
+        renderer.ssao_pass = Some(ssao);
     }
 
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);
