@@ -127,4 +127,122 @@ struct CameraUniforms {
     float _pad;
 };
 
+// -----------------------------------------------------------------------
+// PBR Lighting (LGHT-01)
+// -----------------------------------------------------------------------
+const float PI = 3.14159265359;
+
+// Lighting params SSBO (binding 18)
+struct LightingParams {
+    vec3 sun_direction;
+    float sun_intensity;
+    vec3 sun_color;
+    float ambient_intensity;
+    vec3 ambient_color;
+    float time_of_day;
+    mat4 shadow_matrices[4];
+    vec4 cascade_splits;
+    vec3 fog_color;
+    float fog_density;
+    float fog_start;
+    float fog_end;
+    uint fog_type;
+    uint _lp_pad;
+};
+
+// Point light struct (matches Rust PointLight #[repr(C)])
+struct PointLight {
+    vec3 position;
+    float radius;
+    vec3 color;
+    float intensity;
+};
+
+// GGX Normal Distribution Function
+float distribution_ggx(float NdotH, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom * denom + 1e-7);
+}
+
+// Smith-GGX Geometry Function (Schlick-GGX approximation)
+float geometry_schlick_ggx(float NdotV, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k + 1e-7);
+}
+
+float geometry_smith(float NdotV, float NdotL, float roughness) {
+    return geometry_schlick_ggx(NdotV, roughness) * geometry_schlick_ggx(NdotL, roughness);
+}
+
+// Schlick Fresnel Approximation
+vec3 fresnel_schlick(float cos_theta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+// Full Cook-Torrance BRDF evaluation
+// Returns combined diffuse + specular for a single light direction.
+vec3 cook_torrance_brdf(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughness) {
+    vec3 H = normalize(V + L);
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+
+    // Fresnel reflectance at normal incidence (F0)
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+
+    // Cook-Torrance specular BRDF
+    float D = distribution_ggx(NdotH, roughness);
+    float G = geometry_smith(NdotV, NdotL, roughness);
+    vec3  F = fresnel_schlick(HdotV, F0);
+
+    vec3 numerator = D * G * F;
+    float denominator = 4.0 * NdotV * NdotL + 1e-4;
+    vec3 specular = numerator / denominator;
+
+    // Energy conservation: diffuse = (1 - F) * (1 - metallic)
+    vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
+    vec3 diffuse = kD * albedo / PI;
+
+    return diffuse + specular;
+}
+
+// Apply directional light using Cook-Torrance BRDF
+vec3 apply_directional_light(vec3 N, vec3 V, vec3 world_pos, vec3 albedo,
+                              float metallic, float roughness, LightingParams lp) {
+    vec3 L = normalize(lp.sun_direction);
+    float NdotL = max(dot(N, L), 0.0);
+
+    vec3 brdf = cook_torrance_brdf(N, V, L, albedo, metallic, roughness);
+    vec3 direct = brdf * lp.sun_color * lp.sun_intensity * NdotL;
+
+    // Ambient term
+    vec3 ambient = lp.ambient_color * lp.ambient_intensity * albedo;
+
+    return direct + ambient;
+}
+
+// Evaluate a single point light contribution using Cook-Torrance BRDF
+vec3 evaluate_point_light(vec3 N, vec3 V, vec3 world_pos, vec3 albedo,
+                           float metallic, float roughness, PointLight light) {
+    vec3 to_light = light.position - world_pos;
+    float dist = length(to_light);
+    if (dist > light.radius) return vec3(0.0);
+    vec3 L = to_light / dist; // normalize
+
+    // Attenuation: inverse-square with radius cutoff
+    float attenuation = light.intensity / (1.0 + dist * dist);
+    // Smooth falloff near radius boundary
+    float falloff = 1.0 - smoothstep(light.radius * 0.75, light.radius, dist);
+    attenuation *= falloff;
+
+    vec3 brdf = cook_torrance_brdf(N, V, L, albedo, metallic, roughness);
+    float NdotL = max(dot(N, L), 0.0);
+
+    return brdf * light.color * attenuation * NdotL;
+}
+
 #endif // COMMON_GLSL

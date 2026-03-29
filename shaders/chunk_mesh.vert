@@ -8,6 +8,7 @@ layout(location = 0) in uvec2 in_packed;
 layout(location = 0) flat out uint v_block_id;
 layout(location = 1) out vec3 v_face_normal;
 layout(location = 2) out vec2 v_uv;
+layout(location = 5) out vec3 v_world_pos;
 
 // Unified scene_buffer (D-07). Region 0 = GpuChunkInstance[capacity].
 // Vertex shader only needs region 0, so we can safely declare the SSBO
@@ -43,6 +44,7 @@ void main() {
     vec3 local = (pos + face_offset) * inst.chunk_scale;
     vec3 world_position = inst.chunk_origin + local;
     gl_Position = camera.view_proj * vec4(world_position, 1.0);
+    v_world_pos = world_position;
 
     // Extract block_id from word1 low 16 bits
     v_block_id = word1 & 0xFFFFu;

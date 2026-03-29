@@ -86,9 +86,9 @@ impl ComputeIndirectPath {
     pub fn new(renderer: &Renderer, bindless_layout: vk::DescriptorSetLayout) -> Result<Self> {
         let device = &renderer.device_ctx.device;
 
-        // Push constant range for MeshletDrawPushConstants (84 bytes, VERTEX stage, POLISH-01)
+        // Push constant range for MeshletDrawPushConstants (88 bytes, VERTEX | FRAGMENT stage, LGHT-01)
         let push_constant_ranges = [vk::PushConstantRange {
-            stage_flags: vk::ShaderStageFlags::VERTEX,
+            stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             offset: 0,
             size: std::mem::size_of::<MeshletDrawPushConstants>() as u32,
         }];
@@ -266,7 +266,7 @@ impl MeshletPipeline for ComputeIndirectPath {
             device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
                 bytemuck::bytes_of(&draw_pc),
             );
@@ -371,7 +371,7 @@ impl MeshShaderPath {
                 size: std::mem::size_of::<MeshletCullPushConstants>() as u32,
             },
             vk::PushConstantRange {
-                stage_flags: vk::ShaderStageFlags::MESH_EXT,
+                stage_flags: vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT,
                 offset: 48, // 40 bytes cull + 8 bytes padding for mat4 alignment
                 size: std::mem::size_of::<CameraUniforms>() as u32,
             },
@@ -575,7 +575,7 @@ impl MeshletPipeline for MeshShaderPath {
             device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::MESH_EXT,
+                vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT,
                 48,
                 &combined_bytes[48..128],
             );
@@ -641,9 +641,9 @@ impl ChunkMeshPipeline {
     pub fn new(renderer: &Renderer, bindless_layout: vk::DescriptorSetLayout) -> Result<Self> {
         let device = &renderer.device_ctx.device;
 
-        // Push constant range for CameraUniforms (80 bytes, VERTEX stage) — D-06
+        // Push constant range for CameraUniforms (80 bytes, VERTEX | FRAGMENT stage) — D-06, LGHT-01
         let push_constant_ranges = [vk::PushConstantRange {
-            stage_flags: vk::ShaderStageFlags::VERTEX,
+            stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             offset: 0,
             size: std::mem::size_of::<CameraUniforms>() as u32, // 80 bytes
         }];
@@ -802,7 +802,7 @@ impl ChunkMeshPipeline {
             renderer.device_ctx.device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
                 bytemuck::bytes_of(camera_uniforms),
             );

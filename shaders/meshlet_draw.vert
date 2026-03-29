@@ -11,6 +11,7 @@ layout(location = 1) out vec3 v_face_normal;
 layout(location = 2) out vec2 v_uv;
 layout(location = 3) flat out float v_lod_transition;
 layout(location = 4) flat out float v_fade_alpha;
+layout(location = 5) out vec3 v_world_pos;
 
 // Unified scene_buffer (D-07). Region 0 = GpuChunkInstance[capacity].
 layout(std430, set = 0, binding = 0) readonly buffer SceneBuffer {
@@ -79,6 +80,7 @@ void main() {
     vec3 local = (pos + face_offset) * inst.chunk_scale;
     vec3 world_position = inst.chunk_origin + local;
     gl_Position = pc.view_proj * vec4(world_position, 1.0);
+    v_world_pos = world_position;
 
     // Extract block_id from word1 low 16 bits
     v_block_id = word1 & 0xFFFFu;

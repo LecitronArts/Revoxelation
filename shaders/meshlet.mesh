@@ -14,6 +14,7 @@ layout(location = 0) flat out uint v_block_id[];
 layout(location = 1) out vec3 v_face_normal[];
 layout(location = 2) out vec2 v_uv[];
 layout(location = 3) flat out float v_lod_transition[];
+layout(location = 5) out vec3 v_world_pos[];
 
 // -----------------------------------------------------------------------
 // SSBO bindings (shared bindless set 0)
@@ -141,6 +142,7 @@ void main() {
         // use the task shader's culling to determine visibility. Set 0.0 (fully opaque)
         // for mesh shader path since the task shader already culls by SSE.
         v_lod_transition[tid] = 0.0;
+        v_world_pos[tid] = world_position;
     }
 
     // Each thread also processes triangle indices.
