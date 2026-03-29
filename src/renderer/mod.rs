@@ -19,11 +19,13 @@ pub mod hiz;
 #[cfg(all(debug_assertions, feature = "hot-reload"))]
 pub mod hot_reload;
 pub mod instance;
+pub mod lighting;
 pub mod material;
 pub mod mesh_pipeline;
 pub mod perf_counters;
 pub mod pipeline_cache;
 pub mod pipeline_set;
+pub mod point_light;
 pub mod pool_manager;
 pub mod spirv;
 pub mod staging;
@@ -126,6 +128,10 @@ pub struct Renderer {
     /// Latest GPU-counted visible meshlet count from readback (POLISH-06).
     /// Updated each frame after fence wait (reads previous frame's data).
     pub last_gpu_visible_meshlets: u32,
+    /// Directional lighting state — sun direction, color, UBO management (LGHT-01).
+    pub lighting_state: Option<lighting::LightingState>,
+    /// Point light manager for emissive blocks (LGHT-01).
+    pub point_light_manager: Option<point_light::PointLightManager>,
 }
 
 impl Renderer {
@@ -234,6 +240,8 @@ impl Renderer {
             sse_threshold: 2.0,
             readback_counters: None,
             last_gpu_visible_meshlets: 0,
+            lighting_state: None,
+            point_light_manager: None,
         })
     }
 }
@@ -254,6 +262,18 @@ impl Drop for Renderer {
             if let Some(readback) = self.readback_counters.take()
                 && let Err(e) = readback.destroy(self) {
                     log::warn!("failed to cleanup readback counters: {e}");
+                }
+
+            // Clean up point light manager before bindless table.
+            if let Some(plm) = self.point_light_manager.take()
+                && let Err(e) = plm.destroy(self) {
+                    log::warn!("failed to cleanup point light manager: {e}");
+                }
+
+            // Clean up lighting state before bindless table.
+            if let Some(ls) = self.lighting_state.take()
+                && let Err(e) = ls.destroy(self) {
+                    log::warn!("failed to cleanup lighting state: {e}");
                 }
 
             // Clean up texture array before bindless table.

@@ -9,11 +9,11 @@ use ash::vk;
 
 /// Number of bindings in the global bindless descriptor set 0.
 ///
-/// Extended from 10 to 16 in Phase 6 for meshlet SSBOs (D-08).
-const BINDING_COUNT: usize = 16;
+/// Extended from 16 to 25 in Phase 7 for lighting/PBR bindings (LGHT-01).
+const BINDING_COUNT: usize = 25;
 
 // ---------------------------------------------------------------------------
-// Named binding ID constants (REFAC-05)
+// Named binding ID constants (REFAC-05, extended LGHT-01)
 // ---------------------------------------------------------------------------
 // Replace all magic-number binding indices with these named constants.
 
@@ -49,10 +49,29 @@ pub const BINDING_VISIBLE_MESHLET: u32 = 13;
 pub const BINDING_MESHLET_INDIRECT: u32 = 14;
 /// Binding 15: meshlet count SSBO (u32, visible meshlet count).
 pub const BINDING_MESHLET_COUNT: u32 = 15;
+/// Binding 16: CSM shadow maps combined image sampler (LGHT-02, reserved).
+pub const BINDING_CSM_SHADOW_MAPS: u32 = 16;
+/// Binding 17: SSAO texture combined image sampler (LGHT-03, reserved).
+pub const BINDING_SSAO_TEXTURE: u32 = 17;
+/// Binding 18: lighting parameters SSBO (LGHT-01).
+pub const BINDING_LIGHTING_UBO: u32 = 18;
+/// Binding 19: metallic-roughness texture array combined image sampler (LGHT-01).
+pub const BINDING_MR_TEXTURE_ARRAY: u32 = 19;
+/// Binding 20: normal map texture array combined image sampler (LGHT-01).
+pub const BINDING_NORMAL_TEXTURE_ARRAY: u32 = 20;
+/// Binding 21: emissive texture array combined image sampler (LGHT-01).
+pub const BINDING_EMISSIVE_TEXTURE_ARRAY: u32 = 21;
+/// Binding 22: point light SSBO (LGHT-01).
+pub const BINDING_POINT_LIGHT_SSBO: u32 = 22;
+/// Binding 23: sky/atmosphere parameters SSBO (LGHT-05, reserved).
+pub const BINDING_SKY_PARAMS: u32 = 23;
+/// Binding 24: SSAO blur intermediate storage image (LGHT-03, reserved).
+#[allow(dead_code)]
+pub const BINDING_SSAO_BLUR_INTERMEDIATE: u32 = 24;
 
 /// Manages the global descriptor set 0 shared by all pipelines.
 ///
-/// Layout (D-01, extended D-08):
+/// Layout (D-01, extended D-08, extended LGHT-01):
 /// - binding  0: STORAGE_BUFFER (scene/metadata SSBO) — COMPUTE | VERTEX
 /// - binding  1: STORAGE_BUFFER (indirect templates) — COMPUTE
 /// - binding  2: STORAGE_BUFFER (draw slots) — COMPUTE
@@ -69,6 +88,15 @@ pub const BINDING_MESHLET_COUNT: u32 = 15;
 /// - binding 13: STORAGE_BUFFER (visible_meshlet) — COMPUTE
 /// - binding 14: STORAGE_BUFFER (meshlet_indirect) — COMPUTE
 /// - binding 15: STORAGE_BUFFER (meshlet_count) — COMPUTE
+/// - binding 16: COMBINED_IMAGE_SAMPLER (CSM shadow maps) — FRAGMENT
+/// - binding 17: COMBINED_IMAGE_SAMPLER (SSAO texture) — FRAGMENT
+/// - binding 18: STORAGE_BUFFER (lighting params) — VERTEX | FRAGMENT
+/// - binding 19: COMBINED_IMAGE_SAMPLER (MR texture array) — FRAGMENT
+/// - binding 20: COMBINED_IMAGE_SAMPLER (normal map texture array) — FRAGMENT
+/// - binding 21: COMBINED_IMAGE_SAMPLER (emissive texture array) — FRAGMENT
+/// - binding 22: STORAGE_BUFFER (point light SSBO) — FRAGMENT
+/// - binding 23: STORAGE_BUFFER (sky params) — VERTEX | FRAGMENT
+/// - binding 24: STORAGE_IMAGE (SSAO blur intermediate) — COMPUTE
 ///
 /// All bindings have PARTIALLY_BOUND | UPDATE_AFTER_BIND flags (D-02).
 pub struct BindlessTable {
@@ -78,7 +106,7 @@ pub struct BindlessTable {
 }
 
 impl BindlessTable {
-    /// Create the BindlessTable with all 16 bindings, UPDATE_AFTER_BIND pool and layout.
+    /// Create the BindlessTable with all 25 bindings, UPDATE_AFTER_BIND pool and layout.
     ///
     /// When `mesh_shader_supported` is true, TASK_EXT and MESH_EXT
     /// are added to stage flags for bindings accessible from task/mesh shaders (HIGH-07).
@@ -90,7 +118,7 @@ impl BindlessTable {
             vk::ShaderStageFlags::empty()
         };
 
-        // Define all 16 bindings.
+        // Define all 25 bindings.
         let bindings = [
             // binding 0: scene/metadata SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
@@ -188,6 +216,60 @@ impl BindlessTable {
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE | mesh_extra),
+            // binding 16: CSM shadow maps — FRAGMENT (reserved for LGHT-02)
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_CSM_SHADOW_MAPS)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            // binding 17: SSAO texture — FRAGMENT (reserved for LGHT-03)
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_SSAO_TEXTURE)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            // binding 18: lighting params SSBO — VERTEX | FRAGMENT
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_LIGHTING_UBO)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
+            // binding 19: MR texture array — FRAGMENT
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_MR_TEXTURE_ARRAY)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            // binding 20: normal map texture array — FRAGMENT
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_NORMAL_TEXTURE_ARRAY)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            // binding 21: emissive texture array — FRAGMENT
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_EMISSIVE_TEXTURE_ARRAY)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            // binding 22: point light SSBO — FRAGMENT
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_POINT_LIGHT_SSBO)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            // binding 23: sky params SSBO — VERTEX | FRAGMENT (reserved for LGHT-05)
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_SKY_PARAMS)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
+            // binding 24: SSAO blur intermediate — COMPUTE (reserved for LGHT-03)
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDING_SSAO_BLUR_INTERMEDIATE)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
         ];
 
         // All bindings get PARTIALLY_BOUND | UPDATE_AFTER_BIND flags (D-02).
@@ -212,15 +294,19 @@ impl BindlessTable {
         };
 
         // Pool created with UPDATE_AFTER_BIND_BIT flag (D-02).
-        // 14 STORAGE_BUFFER descriptors: bindings 0-6, 8, 10-15
-        //  2 COMBINED_IMAGE_SAMPLER descriptors: bindings 7, 9
+        // 17 STORAGE_BUFFER descriptors: bindings 0-6, 8, 10-15, 18, 22, 23
+        //  6 COMBINED_IMAGE_SAMPLER descriptors: bindings 7, 9, 16, 17, 19, 20, 21
+        //  1 STORAGE_IMAGE descriptor: binding 24
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(14), // bindings 0-6, 8, 10-15
+                .descriptor_count(17), // bindings 0-6, 8, 10-15, 18, 22, 23
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(2), // bindings 7, 9
+                .descriptor_count(7), // bindings 7, 9, 16, 17, 19, 20, 21
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::STORAGE_IMAGE)
+                .descriptor_count(1), // binding 24
         ];
         let descriptor_pool = unsafe {
             device

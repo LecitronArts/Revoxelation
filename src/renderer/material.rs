@@ -1,7 +1,8 @@
-//! Block material system with per-face texture indices.
+//! Block material system with per-face texture indices and PBR properties.
 //!
-//! Each block type has a `BlockMaterial` (8 bytes) specifying which texture
-//! array layer to use for the top (+Y), side (±X/±Z), and bottom (-Y) faces.
+//! Each block type has a `BlockMaterial` (32 bytes) specifying which texture
+//! array layer to use for the top (+Y), side (±X/±Z), and bottom (-Y) faces,
+//! plus PBR texture indices (metallic-roughness, normal map, emissive).
 //! `MaterialTable` wraps the full array indexed by block_id.
 
 use anyhow::Result;
@@ -14,11 +15,14 @@ use super::helpers::{create_allocated_buffer, submit_one_shot_commands};
 
 /// Per-block material data uploaded to the material SSBO (binding 8).
 ///
-/// Layout (D-01): 4 × u16 = 8 bytes total.
+/// Layout (D-01, expanded LGHT-01): 16 × u16 = 32 bytes total.
 /// - `top_texture`: texture array layer for +Y faces
 /// - `side_texture`: texture array layer for ±X/±Z faces
 /// - `bottom_texture`: texture array layer for -Y faces
-/// - `flags`: bit flags (0x01 = emissive, 0x02 = transparent, reserved)
+/// - `flags`: bit flags (0x01 = emissive, 0x02 = transparent, 0x04 = has_mr,
+///            0x08 = has_normal, 0x10 = has_emissive_map, 0x20 = is_32x32)
+/// - PBR texture indices (0xFFFF = no texture, use shader defaults)
+/// - `emissive_intensity`: fixed-point 8.8 emissive strength
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct BlockMaterial {
@@ -26,13 +30,43 @@ pub struct BlockMaterial {
     pub side_texture: u16,
     pub bottom_texture: u16,
     pub flags: u16,
+    // PBR texture indices (0xFFFF = no texture, use defaults)
+    pub top_mr: u16,        // metallic-roughness texture layer (top face)
+    pub side_mr: u16,       // metallic-roughness texture layer (side faces)
+    pub bottom_mr: u16,     // metallic-roughness texture layer (bottom face)
+    pub top_normal: u16,    // normal map texture layer (top face)
+    pub side_normal: u16,   // normal map texture layer (side faces)
+    pub bottom_normal: u16, // normal map texture layer (bottom face)
+    pub top_emissive: u16,  // emissive texture layer (top face)
+    pub side_emissive: u16, // emissive texture layer (side faces)
+    pub bottom_emissive: u16, // emissive texture layer (bottom face)
+    pub emissive_intensity: u16, // emissive strength (fixed-point 8.8)
+    pub _pad0: u16,
+    pub _pad1: u16,
 }
 
+// Compile-time size assertion: BlockMaterial must be exactly 32 bytes.
+const _: () = assert!(std::mem::size_of::<BlockMaterial>() == 32);
+
 /// Flag bit: block emits light.
-#[allow(dead_code)]
 pub const FLAG_EMISSIVE: u16 = 0x01;
 /// Flag bit: block is transparent / alpha-tested.
 pub const FLAG_TRANSPARENT: u16 = 0x02;
+/// Flag bit: block has metallic-roughness texture.
+#[allow(dead_code)]
+pub const FLAG_HAS_MR: u16 = 0x04;
+/// Flag bit: block has normal map texture.
+#[allow(dead_code)]
+pub const FLAG_HAS_NORMAL: u16 = 0x08;
+/// Flag bit: block has emissive map texture.
+#[allow(dead_code)]
+pub const FLAG_HAS_EMISSIVE_MAP: u16 = 0x10;
+/// Flag bit: PBR maps (MR/normal/emissive) sample from 32x32 texture arrays.
+#[allow(dead_code)]
+pub const FLAG_IS_32X32: u16 = 0x20;
+
+/// No PBR texture assigned — shader uses defaults.
+const NO_TEX: u16 = 0xFFFF;
 
 /// Collection of `BlockMaterial` entries indexed by `block_id`.
 pub struct MaterialTable {
@@ -54,6 +88,9 @@ impl MaterialTable {
     ///   8 = planks
     ///   9 = leaves
     ///  10 = water
+    ///
+    /// All existing blocks get 0xFFFF for PBR texture indices (use shader defaults:
+    /// metallic=0.0, roughness=0.8, flat normal, no emissive).
     pub fn default_table() -> Self {
         let entries = vec![
             // 0: Air — never rendered
@@ -64,6 +101,11 @@ impl MaterialTable {
                 side_texture: 1,
                 bottom_texture: 1,
                 flags: 0,
+                top_mr: NO_TEX, side_mr: NO_TEX, bottom_mr: NO_TEX,
+                top_normal: NO_TEX, side_normal: NO_TEX, bottom_normal: NO_TEX,
+                top_emissive: NO_TEX, side_emissive: NO_TEX, bottom_emissive: NO_TEX,
+                emissive_intensity: 0,
+                _pad0: 0, _pad1: 0,
             },
             // 2: Grass — top: grass_top (2), side: grass_side (3), bottom: dirt (1)
             BlockMaterial {
@@ -71,6 +113,11 @@ impl MaterialTable {
                 side_texture: 3,
                 bottom_texture: 1,
                 flags: 0,
+                top_mr: NO_TEX, side_mr: NO_TEX, bottom_mr: NO_TEX,
+                top_normal: NO_TEX, side_normal: NO_TEX, bottom_normal: NO_TEX,
+                top_emissive: NO_TEX, side_emissive: NO_TEX, bottom_emissive: NO_TEX,
+                emissive_intensity: 0,
+                _pad0: 0, _pad1: 0,
             },
             // 3: Stone — all faces: stone (layer 4)
             BlockMaterial {
@@ -78,6 +125,11 @@ impl MaterialTable {
                 side_texture: 4,
                 bottom_texture: 4,
                 flags: 0,
+                top_mr: NO_TEX, side_mr: NO_TEX, bottom_mr: NO_TEX,
+                top_normal: NO_TEX, side_normal: NO_TEX, bottom_normal: NO_TEX,
+                top_emissive: NO_TEX, side_emissive: NO_TEX, bottom_emissive: NO_TEX,
+                emissive_intensity: 0,
+                _pad0: 0, _pad1: 0,
             },
             // 4: Sand — all faces: sand (layer 5)
             BlockMaterial {
@@ -85,6 +137,11 @@ impl MaterialTable {
                 side_texture: 5,
                 bottom_texture: 5,
                 flags: 0,
+                top_mr: NO_TEX, side_mr: NO_TEX, bottom_mr: NO_TEX,
+                top_normal: NO_TEX, side_normal: NO_TEX, bottom_normal: NO_TEX,
+                top_emissive: NO_TEX, side_emissive: NO_TEX, bottom_emissive: NO_TEX,
+                emissive_intensity: 0,
+                _pad0: 0, _pad1: 0,
             },
             // 5: Log — top/bottom: log_end (7), side: log_bark (6)
             BlockMaterial {
@@ -92,6 +149,11 @@ impl MaterialTable {
                 side_texture: 6,
                 bottom_texture: 7,
                 flags: 0,
+                top_mr: NO_TEX, side_mr: NO_TEX, bottom_mr: NO_TEX,
+                top_normal: NO_TEX, side_normal: NO_TEX, bottom_normal: NO_TEX,
+                top_emissive: NO_TEX, side_emissive: NO_TEX, bottom_emissive: NO_TEX,
+                emissive_intensity: 0,
+                _pad0: 0, _pad1: 0,
             },
             // 6: Planks — all faces: planks (layer 8)
             BlockMaterial {
@@ -99,6 +161,11 @@ impl MaterialTable {
                 side_texture: 8,
                 bottom_texture: 8,
                 flags: 0,
+                top_mr: NO_TEX, side_mr: NO_TEX, bottom_mr: NO_TEX,
+                top_normal: NO_TEX, side_normal: NO_TEX, bottom_normal: NO_TEX,
+                top_emissive: NO_TEX, side_emissive: NO_TEX, bottom_emissive: NO_TEX,
+                emissive_intensity: 0,
+                _pad0: 0, _pad1: 0,
             },
             // 7: Leaves — all faces: leaves (layer 9), transparent
             BlockMaterial {
@@ -106,6 +173,11 @@ impl MaterialTable {
                 side_texture: 9,
                 bottom_texture: 9,
                 flags: FLAG_TRANSPARENT,
+                top_mr: NO_TEX, side_mr: NO_TEX, bottom_mr: NO_TEX,
+                top_normal: NO_TEX, side_normal: NO_TEX, bottom_normal: NO_TEX,
+                top_emissive: NO_TEX, side_emissive: NO_TEX, bottom_emissive: NO_TEX,
+                emissive_intensity: 0,
+                _pad0: 0, _pad1: 0,
             },
             // 8: Water — all faces: water (layer 10), transparent
             BlockMaterial {
@@ -113,6 +185,11 @@ impl MaterialTable {
                 side_texture: 10,
                 bottom_texture: 10,
                 flags: FLAG_TRANSPARENT,
+                top_mr: NO_TEX, side_mr: NO_TEX, bottom_mr: NO_TEX,
+                top_normal: NO_TEX, side_normal: NO_TEX, bottom_normal: NO_TEX,
+                top_emissive: NO_TEX, side_emissive: NO_TEX, bottom_emissive: NO_TEX,
+                emissive_intensity: 0,
+                _pad0: 0, _pad1: 0,
             },
         ];
 
