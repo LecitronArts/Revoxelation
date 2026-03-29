@@ -204,6 +204,34 @@ impl App {
                     );
                 });
             }
+
+            // CSM Shadow controls (LGHT-02).
+            {
+                let sc = &mut self.renderer.shadow_config;
+                egui::Window::new("Shadows").show(ctx, |ui| {
+                    ui.checkbox(&mut sc.enabled, "Shadows enabled");
+                    ui.separator();
+                    ui.label("Split Lambda");
+                    ui.add(
+                        egui::Slider::new(&mut sc.split_lambda, 0.0..=1.0)
+                            .text("lambda"),
+                    );
+                    ui.label("Bias Constant");
+                    ui.add(
+                        egui::Slider::new(&mut sc.bias_constant, 0.0..=5.0),
+                    );
+                    ui.label("Bias Slope");
+                    ui.add(
+                        egui::Slider::new(&mut sc.bias_slope, 0.0..=5.0),
+                    );
+                    ui.checkbox(&mut sc.debug_cascades, "Debug cascade colors");
+                    if let Some(sm) = &self.renderer.shadow_map {
+                        ui.separator();
+                        ui.label(format!("Resolution: {}x{}", sm.resolution, sm.resolution));
+                        ui.label(format!("Cascades: {}", crate::renderer::shadow::CASCADE_COUNT));
+                    }
+                });
+            }
         });
 
         let clipped_primitives =
@@ -373,6 +401,16 @@ pub fn run() -> Result<()> {
 
     // Create point light manager (binding 22 SSBO) (LGHT-01).
     renderer.point_light_manager = Some(crate::renderer::point_light::PointLightManager::new(&mut renderer)?);
+
+    // Create CSM shadow map (4 cascades, default 2048 resolution) (LGHT-02).
+    {
+        let csm = crate::renderer::shadow::CascadedShadowMap::new(
+            &mut renderer,
+            crate::renderer::shadow::DEFAULT_SHADOW_RESOLUTION,
+        )?;
+        csm.register_shadow_maps(&renderer);
+        renderer.shadow_map = Some(csm);
+    }
 
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);
 
