@@ -155,5 +155,12 @@ void main() {
         lit_color += texel.rgb * max(emissive_strength, 0.5);
     }
 
+    // Distance fog — applied after all lighting (LGHT-05).
+    if (lp.fog_density > 0.0 || lp.fog_type == 0u) {
+        float dist_to_camera = length(v_world_pos - pc.camera_pos);
+        lit_color = apply_distance_fog(lit_color, lp.fog_color, dist_to_camera,
+                                        lp.fog_start, lp.fog_end, lp.fog_density, lp.fog_type, v_world_pos);
+    }
+
     out_color = vec4(lit_color, texel.a);
 }

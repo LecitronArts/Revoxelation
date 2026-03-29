@@ -346,4 +346,30 @@ float sample_shadow_csm(sampler2DArrayShadow csm, LightingParams lp,
     return shadow;
 }
 
+// -----------------------------------------------------------------------
+// Distance Fog (LGHT-05)
+// -----------------------------------------------------------------------
+// fog_type: 0=linear, 1=exponential, 2=exponential squared, 3=height
+vec3 apply_distance_fog(vec3 color, vec3 fog_color, float dist, float fog_start, float fog_end,
+                        float fog_density, uint fog_type, vec3 world_pos) {
+    float fog_factor;
+    if (fog_type == 0u) {
+        // Linear fog
+        fog_factor = clamp((fog_end - dist) / (fog_end - fog_start + 0.001), 0.0, 1.0);
+    } else if (fog_type == 1u) {
+        // Exponential fog
+        fog_factor = exp(-fog_density * dist);
+    } else if (fog_type == 2u) {
+        // Exponential squared fog
+        float f = fog_density * dist;
+        fog_factor = exp(-f * f);
+    } else {
+        // Height fog: denser at lower altitudes
+        float height_factor = exp(-fog_density * max(world_pos.y, 0.0) * 0.01);
+        fog_factor = exp(-fog_density * dist * height_factor);
+    }
+    fog_factor = clamp(fog_factor, 0.0, 1.0);
+    return mix(fog_color, color, fog_factor);
+}
+
 #endif // COMMON_GLSL
