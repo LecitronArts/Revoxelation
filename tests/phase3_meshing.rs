@@ -527,9 +527,11 @@ fn mesh_03_build_script_and_indirect_submit_contract() {
             "meshlet_cull_to_draw_barrier",
             "indirect_barrier",
             "render_pass",
+            "sky_draw",
             "meshlet_draw_or_chunk_draw",
             "egui",
             "hiz_generate",
+            "ssao_compute",
         ]
     );
 }

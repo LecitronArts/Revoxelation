@@ -118,6 +118,11 @@ impl App {
 
         let screen_size = [size.width as f32, size.height as f32];
 
+        // Tick day-night cycle (LGHT-05).
+        if let Some(ls) = &mut self.renderer.lighting_state {
+            ls.tick_day_night(dt);
+        }
+
         // Build egui frame.
         let raw_input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -282,6 +287,124 @@ impl App {
                         ui.separator();
                         ui.label(format!("AO size: {}x{}", ssao.width, ssao.height));
                     }
+                });
+            }
+
+            // Sky / Atmosphere / Fog controls (LGHT-05).
+            if let Some(sky) = &mut self.renderer.sky_renderer {
+                egui::Window::new("Sky & Atmosphere").show(ctx, |ui| {
+                    ui.checkbox(&mut sky.config.enabled, "Sky enabled");
+                    ui.separator();
+
+                    // Atmosphere model selector.
+                    let model_label = sky.config.atmosphere_model.as_str();
+                    egui::ComboBox::from_label("Atmosphere Model")
+                        .selected_text(model_label)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut sky.config.atmosphere_model,
+                                crate::renderer::sky::AtmosphereModel::Preetham,
+                                "Preetham",
+                            );
+                            ui.selectable_value(
+                                &mut sky.config.atmosphere_model,
+                                crate::renderer::sky::AtmosphereModel::HosekWilkie,
+                                "Hosek-Wilkie",
+                            );
+                        });
+
+                    ui.label("Turbidity");
+                    ui.add(
+                        egui::Slider::new(&mut sky.config.turbidity, 1.0..=10.0),
+                    );
+                    ui.label("Sun Disk Size");
+                    ui.add(
+                        egui::Slider::new(&mut sky.config.sun_angular_radius, 0.001..=0.05)
+                            .text("rad"),
+                    );
+                });
+            }
+
+            // Day-Night Cycle controls (LGHT-05).
+            if let Some(ls) = &mut self.renderer.lighting_state {
+                egui::Window::new("Day-Night Cycle").show(ctx, |ui| {
+                    ui.checkbox(&mut ls.use_day_night_cycle, "Use day-night cycle");
+                    ui.separator();
+
+                    // Time display.
+                    let time_str = ls.day_night.time_as_hhmm();
+                    let elevation = ls.day_night.sun_elevation();
+                    ui.label(format!("Time: {} | Sun elev: {:.2}", time_str, elevation));
+                    ui.separator();
+
+                    // Time of day slider.
+                    ui.label("Time of Day");
+                    let time_labels = "Midnight          Dawn          Noon          Dusk";
+                    ui.label(time_labels);
+                    ui.add(
+                        egui::Slider::new(&mut ls.day_night.time_of_day, 0.0..=1.0),
+                    );
+
+                    // Day speed slider.
+                    ui.label("Day Speed (seconds per game day)");
+                    ui.add(
+                        egui::Slider::new(&mut ls.day_night.day_speed, 60.0..=3600.0)
+                            .text("sec"),
+                    );
+
+                    // Pause toggle.
+                    ui.checkbox(&mut ls.day_night.paused, "Paused");
+
+                    // Lighting summary.
+                    ui.separator();
+                    ui.label(format!("Sun dir: [{:.2}, {:.2}, {:.2}]",
+                        ls.sun_color[0], ls.sun_color[1], ls.sun_color[2]));
+                    ui.label(format!("Sun intensity: {:.2}", ls.sun_intensity));
+                    ui.label(format!("Ambient: [{:.2}, {:.2}, {:.2}] @ {:.2}",
+                        ls.ambient_color[0], ls.ambient_color[1], ls.ambient_color[2],
+                        ls.ambient_intensity));
+                });
+
+                // Fog controls (LGHT-05).
+                egui::Window::new("Distance Fog").show(ctx, |ui| {
+                    ui.checkbox(&mut ls.fog_config.enabled, "Fog enabled");
+                    ui.separator();
+
+                    // Fog type selector.
+                    let fog_label = ls.fog_config.fog_type.as_str();
+                    egui::ComboBox::from_label("Fog Type")
+                        .selected_text(fog_label)
+                        .show_ui(ui, |ui| {
+                            for &ft in crate::renderer::lighting::FogType::all() {
+                                ui.selectable_value(
+                                    &mut ls.fog_config.fog_type,
+                                    ft,
+                                    ft.as_str(),
+                                );
+                            }
+                        });
+
+                    ui.label("Fog Density");
+                    ui.add(
+                        egui::Slider::new(&mut ls.fog_config.density, 0.001..=0.1)
+                            .logarithmic(true),
+                    );
+
+                    // Linear fog start/end (only relevant for linear fog type).
+                    ui.label("Fog Start (linear)");
+                    ui.add(
+                        egui::Slider::new(&mut ls.fog_config.start, 10.0..=500.0)
+                            .text("m"),
+                    );
+                    ui.label("Fog End (linear)");
+                    ui.add(
+                        egui::Slider::new(&mut ls.fog_config.end, 50.0..=2000.0)
+                            .text("m"),
+                    );
+
+                    // Show current fog color.
+                    let fc = ls.day_night.fog_color();
+                    ui.label(format!("Fog color: [{:.2}, {:.2}, {:.2}]", fc[0], fc[1], fc[2]));
                 });
             }
         });
@@ -476,6 +599,9 @@ pub fn run() -> Result<()> {
         ssao.register_bindless(&renderer);
         renderer.ssao_pass = Some(ssao);
     }
+
+    // Create sky renderer (LGHT-05).
+    renderer.sky_renderer = Some(crate::renderer::sky::SkyRenderer::new(&mut renderer)?);
 
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);
 

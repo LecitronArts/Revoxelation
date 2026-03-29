@@ -339,6 +339,11 @@ impl LightingState {
         }
     }
 
+    /// Compute sun direction from elevation and azimuth angles (public accessor).
+    pub fn compute_sun_direction_pub(&self) -> [f32; 3] {
+        self.compute_sun_direction()
+    }
+
     /// Compute sun direction from elevation and azimuth angles.
     fn compute_sun_direction(&self) -> [f32; 3] {
         let elev_rad = self.sun_elevation.to_radians();

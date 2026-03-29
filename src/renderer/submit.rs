@@ -17,6 +17,7 @@ pub fn submit_frame_sequence() -> &'static [&'static str] {
         "meshlet_cull_to_draw_barrier",
         "indirect_barrier",
         "render_pass",
+        "sky_draw",
         "meshlet_draw_or_chunk_draw",
         "egui",
         "hiz_generate",
@@ -293,16 +294,32 @@ unsafe fn dispatch_chunk_cull(
 }
 
 /// Begin the MSAA render pass with clear values.
+///
+/// Clear color is dynamically computed from the sky's zenith color at the
+/// current time_of_day to roughly match the procedural sky (LGHT-05).
 unsafe fn begin_render_pass(
     renderer: &Renderer,
     command_buffer: vk::CommandBuffer,
     image_index: u32,
 ) {
+    // Compute dynamic clear color from day-night cycle (LGHT-05).
+    let clear_color = if let Some(ls) = &renderer.lighting_state {
+        if ls.use_day_night_cycle {
+            let fog_c = ls.day_night.fog_color();
+            // Darken the fog color slightly for the zenith approximation.
+            [fog_c[0] * 0.8, fog_c[1] * 0.8, fog_c[2] * 0.9, 1.0]
+        } else {
+            [0.1, 0.1, 0.15, 1.0]
+        }
+    } else {
+        [0.1, 0.1, 0.15, 1.0]
+    };
+
     let clear_values = [
         // Attachment 0: MSAA color
         vk::ClearValue {
             color: vk::ClearColorValue {
-                float32: [0.1, 0.1, 0.15, 1.0],
+                float32: clear_color,
             },
         },
         // Attachment 1: MSAA depth
@@ -787,6 +804,21 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             }
         }
 
+        // 3.6. Update sky params SSBO (LGHT-05).
+        // Must happen after lighting_state.update() so sun direction is current.
+        {
+            let current_frame = renderer.current_frame;
+            let sun_direction = renderer.lighting_state.as_ref()
+                .map(|ls| ls.compute_sun_direction_pub())
+                .unwrap_or([0.0, 1.0, 0.0]);
+            let sun_color = renderer.lighting_state.as_ref()
+                .map(|ls| ls.sun_color)
+                .unwrap_or([1.0, 1.0, 1.0]);
+            if let Some(sky) = &renderer.sky_renderer {
+                sky.update(renderer, current_frame, sun_direction, sun_color, camera_uniforms);
+            }
+        }
+
         // 4. Record staging→GPU copy commands for pending chunk deltas.
         renderer.record_chunk_delta_uploads(command_buffer)?;
 
@@ -826,7 +858,24 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         // 7. Begin render pass.
         begin_render_pass(renderer, command_buffer, image_index);
 
-        // 8. Draw meshlets (or legacy per-chunk path).
+        // 7.5: Draw sky (fullscreen triangle behind all geometry, LGHT-05).
+        if let Some(sky_renderer) = &renderer.sky_renderer {
+            if sky_renderer.config.enabled {
+                let bindless_set = renderer
+                    .bindless
+                    .as_ref()
+                    .map(|b| b.descriptor_set)
+                    .unwrap_or(vk::DescriptorSet::null());
+                sky_renderer.record_draw(
+                    &renderer.device_ctx.device,
+                    command_buffer,
+                    bindless_set,
+                    renderer.swapchain_ctx.extent,
+                );
+            }
+        }
+
+        // 8. Draw meshlets (geometry overwrites sky at closer depth).
         draw_meshlets(renderer, command_buffer, camera_uniforms, current_time);
 
         // 9. Draw egui overlay.
