@@ -261,6 +261,18 @@ vec3 apply_directional_light_shadowed(vec3 N, vec3 V, vec3 world_pos, vec3 albed
 }
 
 // -----------------------------------------------------------------------
+// Voxel AO decoding (LGHT-04)
+// -----------------------------------------------------------------------
+// Bits 24-25 of word0 encode per-vertex AO (0=dark, 3=bright).
+// Convert to float: 0->0.2, 1->0.5, 2->0.75, 3->1.0
+float decode_vertex_ao(uint word0) {
+    uint ao_bits = (word0 >> 24) & 0x3u;
+    // AO curve: slightly non-linear for better visual contrast
+    const float ao_values[4] = float[4](0.2, 0.5, 0.75, 1.0);
+    return ao_values[ao_bits];
+}
+
+// -----------------------------------------------------------------------
 // CSM Shadow Sampling (LGHT-02)
 // -----------------------------------------------------------------------
 

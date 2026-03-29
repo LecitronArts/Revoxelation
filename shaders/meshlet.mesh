@@ -15,6 +15,7 @@ layout(location = 1) out vec3 v_face_normal[];
 layout(location = 2) out vec2 v_uv[];
 layout(location = 3) flat out float v_lod_transition[];
 layout(location = 5) out vec3 v_world_pos[];
+layout(location = 6) out float v_voxel_ao[];
 
 // -----------------------------------------------------------------------
 // SSBO bindings (shared bindless set 0)
@@ -143,6 +144,9 @@ void main() {
         // for mesh shader path since the task shader already culls by SSE.
         v_lod_transition[tid] = 0.0;
         v_world_pos[tid] = world_position;
+
+        // Voxel AO (LGHT-04): decode per-vertex AO from word0 bits 24-25.
+        v_voxel_ao[tid] = decode_vertex_ao(word0);
     }
 
     // Each thread also processes triangle indices.

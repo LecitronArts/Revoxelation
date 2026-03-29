@@ -12,6 +12,7 @@ layout(location = 2) out vec2 v_uv;
 layout(location = 3) flat out float v_lod_transition;
 layout(location = 4) flat out float v_fade_alpha;
 layout(location = 5) out vec3 v_world_pos;
+layout(location = 6) out float v_voxel_ao;
 
 // Unified scene_buffer (D-07). Region 0 = GpuChunkInstance[capacity].
 layout(std430, set = 0, binding = 0) readonly buffer SceneBuffer {
@@ -105,4 +106,7 @@ void main() {
     const float FADE_DURATION = 0.5;
     float fade_alpha = clamp((pc.current_time - inst.spawn_time) / FADE_DURATION, 0.0, 1.0);
     v_fade_alpha = fade_alpha;
+
+    // Voxel AO (LGHT-04): decode per-vertex AO from word0 bits 24-25.
+    v_voxel_ao = decode_vertex_ao(word0);
 }

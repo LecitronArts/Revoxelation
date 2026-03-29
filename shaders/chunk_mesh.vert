@@ -9,6 +9,7 @@ layout(location = 0) flat out uint v_block_id;
 layout(location = 1) out vec3 v_face_normal;
 layout(location = 2) out vec2 v_uv;
 layout(location = 5) out vec3 v_world_pos;
+layout(location = 6) out float v_voxel_ao;
 
 // Unified scene_buffer (D-07). Region 0 = GpuChunkInstance[capacity].
 // Vertex shader only needs region 0, so we can safely declare the SSBO
@@ -56,4 +57,7 @@ void main() {
     float u = float((word1 >> 16) & 0xFFu);
     float v = float((word1 >> 24) & 0xFFu);
     v_uv = vec2(u, v);
+
+    // Voxel AO (LGHT-04): decode per-vertex AO from word0 bits 24-25.
+    v_voxel_ao = decode_vertex_ao(word0);
 }

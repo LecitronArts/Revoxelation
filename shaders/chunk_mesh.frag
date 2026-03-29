@@ -8,6 +8,7 @@ layout(location = 0) flat in uint v_block_id;
 layout(location = 1) in vec3 v_face_normal;
 layout(location = 2) in vec2 v_uv;
 layout(location = 5) in vec3 v_world_pos;
+layout(location = 6) in float v_voxel_ao;
 
 layout(location = 0) out vec4 out_color;
 
@@ -93,6 +94,13 @@ void main() {
     }
 
     vec3 lit_color = apply_directional_light_shadowed(N, V, v_world_pos, texel.rgb, metallic, roughness, lp, shadow_factor);
+
+    // Voxel AO (LGHT-04): apply per-vertex AO to ambient term only.
+    // TODO(07-03): final_ao = v_voxel_ao * ssao_sample;
+    float final_ao = v_voxel_ao;
+    // Subtract unmodulated ambient, re-add with AO applied.
+    vec3 ambient_raw = lp.ambient_color * lp.ambient_intensity * texel.rgb;
+    lit_color = lit_color - ambient_raw + ambient_raw * final_ao;
 
     // Accumulate point light contributions (LGHT-01).
     uint num_lights = min(point_light_data.point_light_count, point_light_data.max_point_lights);
