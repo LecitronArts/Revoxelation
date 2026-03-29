@@ -27,6 +27,7 @@ pub mod pipeline_cache;
 pub mod pipeline_set;
 pub mod point_light;
 pub mod pool_manager;
+pub mod shadow;
 pub mod spirv;
 pub mod staging;
 pub mod staging_ring;
@@ -62,6 +63,7 @@ pub fn shader_source_files() -> &'static [&'static str] {
         "shaders/meshlet_draw.frag",
         "shaders/meshlet.task",
         "shaders/meshlet.mesh",
+        "shaders/shadow_depth.vert",
     ]
 }
 
@@ -138,6 +140,10 @@ pub struct Renderer {
     pub normal_texture_array: Option<texture_array::TextureArray>,
     /// PBR emissive texture array at binding 21 (LGHT-01).
     pub emissive_texture_array: Option<texture_array::TextureArray>,
+    /// Cascaded shadow map for directional light shadows (LGHT-02).
+    pub shadow_map: Option<shadow::CascadedShadowMap>,
+    /// Shadow configuration (egui-adjustable, LGHT-02).
+    pub shadow_config: shadow::ShadowConfig,
 }
 
 impl Renderer {
@@ -251,6 +257,8 @@ impl Renderer {
             mr_texture_array: None,
             normal_texture_array: None,
             emissive_texture_array: None,
+            shadow_map: None,
+            shadow_config: shadow::ShadowConfig::default(),
         })
     }
 }
@@ -271,6 +279,12 @@ impl Drop for Renderer {
             if let Some(readback) = self.readback_counters.take()
                 && let Err(e) = readback.destroy(self) {
                     log::warn!("failed to cleanup readback counters: {e}");
+                }
+
+            // Clean up CSM shadow map before bindless table (LGHT-02).
+            if let Some(sm) = self.shadow_map.take()
+                && let Err(e) = sm.destroy(self) {
+                    log::warn!("failed to cleanup shadow map: {e}");
                 }
 
             // Clean up point light manager before bindless table.

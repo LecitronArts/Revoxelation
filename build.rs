@@ -15,7 +15,7 @@ fn main() {
     }
 }
 
-fn shader_sources() -> [&'static str; 11] {
+fn shader_sources() -> [&'static str; 12] {
     [
         "shaders/chunk_mesh.vert",
         "shaders/chunk_mesh.frag",
@@ -28,6 +28,7 @@ fn shader_sources() -> [&'static str; 11] {
         "shaders/meshlet_draw.frag",
         "shaders/meshlet.task",
         "shaders/meshlet.mesh",
+        "shaders/shadow_depth.vert",
     ]
 }
 
