@@ -66,6 +66,229 @@ pub struct KeysPressed {
     pub down: bool,
 }
 
+impl App {
+    /// Main per-frame tick — extracted from the RedrawRequested handler body (REFAC-08).
+    ///
+    /// Returns `Ok(())` on success, or an error if a critical failure occurs.
+    /// Swapchain recreation is handled internally (sets `needs_resize` flag).
+    pub fn tick(&mut self, window: &winit::window::Window) {
+        // D-07: When window extent is 0×0 (minimized), skip rendering entirely.
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+
+        // D-08: If needs_resize, recreate swapchain before rendering.
+        if self.needs_resize {
+            let new_extent = vk::Extent2D {
+                width: size.width,
+                height: size.height,
+            };
+            if let Err(e) = recreate_swapchain_context(&mut self.renderer, new_extent) {
+                log::error!("Failed to recreate swapchain on resize: {e:#}");
+                return;
+            }
+            self.needs_resize = false;
+        }
+
+        // Delta time for smooth movement.
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_frame_time).as_secs_f32();
+        self.last_frame_time = now;
+
+        // Apply continuous keyboard movement.
+        if self.keys_pressed.forward {
+            self.camera.process_keyboard(CameraKey::Forward, true, dt);
+        }
+        if self.keys_pressed.backward {
+            self.camera.process_keyboard(CameraKey::Backward, true, dt);
+        }
+        if self.keys_pressed.left {
+            self.camera.process_keyboard(CameraKey::Left, true, dt);
+        }
+        if self.keys_pressed.right {
+            self.camera.process_keyboard(CameraKey::Right, true, dt);
+        }
+        if self.keys_pressed.up {
+            self.camera.process_keyboard(CameraKey::Up, true, dt);
+        }
+        if self.keys_pressed.down {
+            self.camera.process_keyboard(CameraKey::Down, true, dt);
+        }
+
+        let screen_size = [size.width as f32, size.height as f32];
+
+        // Build egui frame.
+        let raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(screen_size[0], screen_size[1]),
+            )),
+            ..Default::default()
+        };
+
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            egui::Window::new("Debug").show(ctx, |ui| {
+                ui.label(format!("Frame: {}", self.frame_index));
+                ui.separator();
+                let pc = &self.perf_counters;
+                ui.label(format!(
+                    "Chunks: {}/{} | Slots: {}/{} | Frame: {:.1}ms",
+                    pc.visible_chunks, pc.total_chunks,
+                    pc.total_chunks, pc.chunk_capacity,
+                    pc.frame_time_ms
+                ));
+
+                // Meshlet LOD statistics (MSHL-05).
+                ui.separator();
+                ui.label(format!(
+                    "Meshlets: {} (LOD0: {}, LOD1: {})",
+                    pc.total_meshlets, pc.lod0_meshlets, pc.lod1_meshlets
+                ));
+                ui.label(format!(
+                    "Visible: {} | Cull rate: {:.1}%",
+                    pc.visible_meshlets, pc.meshlet_cull_rate * 100.0
+                ));
+            });
+
+            // Meshlet culling controls (MSHL-05).
+            egui::Window::new("Meshlet Culling").show(ctx, |ui| {
+                ui.checkbox(
+                    &mut self.renderer.meshlet_cull_backface,
+                    "Backface culling",
+                );
+                ui.checkbox(
+                    &mut self.renderer.meshlet_cull_frustum,
+                    "Frustum culling",
+                );
+                ui.checkbox(
+                    &mut self.renderer.meshlet_cull_hiz,
+                    "Hi-Z occlusion culling",
+                );
+                ui.checkbox(
+                    &mut self.renderer.use_meshlet_rendering,
+                    "Meshlet rendering",
+                );
+                ui.separator();
+                ui.label("SSE threshold (LOD)");
+                ui.add(
+                    egui::Slider::new(&mut self.renderer.sse_threshold, 0.1..=16.0)
+                        .text("px"),
+                );
+            });
+
+            // Lighting controls (LGHT-01).
+            if let Some(ls) = &mut self.renderer.lighting_state {
+                egui::Window::new("Lighting").show(ctx, |ui| {
+                    ui.label("Sun Elevation");
+                    ui.add(
+                        egui::Slider::new(&mut ls.sun_elevation, 0.0..=90.0)
+                            .text("deg"),
+                    );
+                    ui.label("Sun Azimuth");
+                    ui.add(
+                        egui::Slider::new(&mut ls.sun_azimuth, 0.0..=360.0)
+                            .text("deg"),
+                    );
+                    ui.label("Sun Intensity");
+                    ui.add(
+                        egui::Slider::new(&mut ls.sun_intensity, 0.0..=5.0),
+                    );
+                    ui.label("Ambient Intensity");
+                    ui.add(
+                        egui::Slider::new(&mut ls.ambient_intensity, 0.0..=1.0),
+                    );
+                    ui.label("Time of Day");
+                    ui.add(
+                        egui::Slider::new(&mut ls.time_of_day, 0.0..=1.0),
+                    );
+                });
+            }
+        });
+
+        let clipped_primitives =
+            self.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+        let textures_delta = full_output.textures_delta;
+
+        // Store egui output for submit_frame to consume.
+        self.renderer.pending_egui_output = Some(PendingEguiOutput {
+            textures_delta,
+            clipped_primitives,
+            screen_size,
+        });
+
+        // Run scheduler frame, then handle renderer submission.
+        let camera_pos = self.camera.position.to_array();
+        let _result = crate::runtime::run_frame(
+            &mut self.streaming,
+            &mut self.meshing,
+            Some(&mut self.renderer),
+            self.frame_index,
+            camera_pos,
+            screen_size[1],
+            self.camera.fov_y,
+        );
+
+        // Drain pending render deltas and submit frame from app-owned renderer.
+        crate::runtime::scheduler::drain_pending_render_deltas_into_renderer(
+            &mut self.streaming,
+            &mut self.renderer,
+        );
+        let aspect = if screen_size[1] > 0.0 { screen_size[0] / screen_size[1] } else { 1.0 };
+        let camera_uniforms = self.camera.view_proj(aspect);
+        let current_time = self.engine_start_time.elapsed().as_secs_f32();
+        match crate::renderer::submit_frame(&mut self.renderer, self.frame_index, &camera_uniforms, current_time) {
+            Ok(FrameOutcome::Submitted) => {}
+            Ok(FrameOutcome::NeedsRecreate) => {
+                // submit_frame signalled swapchain is stale — recreate next frame.
+                self.needs_resize = true;
+            }
+            Err(e) => {
+                log::error!("submit_frame failed: {e:#}");
+            }
+        }
+
+        // Update performance counters for next frame's HUD.
+        let frame_time_ms = dt * 1000.0;
+        let total_chunks = self.renderer.chunk_pool.as_ref()
+            .map(|cp| cp.active_draw_count())
+            .unwrap_or(0);
+        let chunk_capacity = self.renderer.chunk_pool.as_ref()
+            .map(|cp| cp.capacity() as u32)
+            .unwrap_or(0);
+        self.perf_counters.frame_time_ms = frame_time_ms;
+        self.perf_counters.total_chunks = total_chunks;
+        self.perf_counters.chunk_capacity = chunk_capacity;
+        // visible_chunks approximated as total (actual readback deferred to future)
+        self.perf_counters.visible_chunks = total_chunks;
+
+        // Meshlet LOD statistics (MSHL-05).
+        if let Some(meshlet_pool) = &self.renderer.meshlet_pool {
+            self.perf_counters.total_meshlets = meshlet_pool.active_meshlet_count();
+        }
+        // POLISH-06: Use real GPU readback data for visible meshlet count.
+        self.perf_counters.visible_meshlets = self.renderer.last_gpu_visible_meshlets;
+        if self.perf_counters.total_meshlets > 0 {
+            self.perf_counters.meshlet_cull_rate = 1.0
+                - (self.perf_counters.visible_meshlets as f32
+                    / self.perf_counters.total_meshlets as f32);
+        } else {
+            self.perf_counters.meshlet_cull_rate = 0.0;
+        }
+        self.perf_counters.sse_threshold = self.renderer.sse_threshold;
+
+        // Shader hot-reload (debug builds with hot-reload feature only).
+        #[cfg(all(debug_assertions, feature = "hot-reload"))]
+        {
+            if let Err(e) = self.hot_reload.check_and_reload(&mut self.renderer) {
+                log::error!("Shader hot-reload error: {e:#}");
+            }
+        }
+
+        self.frame_index = self.frame_index.saturating_add(1);
+    }
+}
+
 pub fn run() -> Result<()> {
     let event_loop = EventLoop::new().context("failed to create winit event loop")?;
     let window = WindowBuilder::new()
@@ -139,6 +362,17 @@ pub fn run() -> Result<()> {
 
     // Create texture array and register at bindless binding 9.
     renderer.texture_array = Some(crate::renderer::texture_array::TextureArray::new(&mut renderer)?);
+
+    // Create PBR texture arrays (MR, normal, emissive) at bindings 19/20/21 (LGHT-01).
+    renderer.mr_texture_array = Some(crate::renderer::texture_array::new_mr_array_16(&mut renderer)?);
+    renderer.normal_texture_array = Some(crate::renderer::texture_array::new_normal_array_16(&mut renderer)?);
+    renderer.emissive_texture_array = Some(crate::renderer::texture_array::new_emissive_array_16(&mut renderer)?);
+
+    // Create directional lighting state (binding 18 SSBO) (LGHT-01).
+    renderer.lighting_state = Some(crate::renderer::lighting::LightingState::new(&mut renderer)?);
+
+    // Create point light manager (binding 22 SSBO) (LGHT-01).
+    renderer.point_light_manager = Some(crate::renderer::point_light::PointLightManager::new(&mut renderer)?);
 
     renderer.egui_backend = Some(EguiAshBackend::new(&mut renderer)?);
 
@@ -215,192 +449,7 @@ pub fn run() -> Result<()> {
                     }
                 }
                 WindowEvent::RedrawRequested => {
-                    // D-07: When window extent is 0×0 (minimized), skip rendering entirely.
-                    let size = window.inner_size();
-                    if size.width == 0 || size.height == 0 {
-                        return;
-                    }
-
-                    // D-08: If needs_resize, recreate swapchain before rendering.
-                    if app.needs_resize {
-                        let new_extent = vk::Extent2D {
-                            width: size.width,
-                            height: size.height,
-                        };
-                        if let Err(e) = recreate_swapchain_context(&mut app.renderer, new_extent) {
-                            log::error!("Failed to recreate swapchain on resize: {e:#}");
-                            return;
-                        }
-                        app.needs_resize = false;
-                    }
-
-                    // Delta time for smooth movement.
-                    let now = Instant::now();
-                    let dt = now.duration_since(app.last_frame_time).as_secs_f32();
-                    app.last_frame_time = now;
-
-                    // Apply continuous keyboard movement.
-                    if app.keys_pressed.forward {
-                        app.camera.process_keyboard(CameraKey::Forward, true, dt);
-                    }
-                    if app.keys_pressed.backward {
-                        app.camera.process_keyboard(CameraKey::Backward, true, dt);
-                    }
-                    if app.keys_pressed.left {
-                        app.camera.process_keyboard(CameraKey::Left, true, dt);
-                    }
-                    if app.keys_pressed.right {
-                        app.camera.process_keyboard(CameraKey::Right, true, dt);
-                    }
-                    if app.keys_pressed.up {
-                        app.camera.process_keyboard(CameraKey::Up, true, dt);
-                    }
-                    if app.keys_pressed.down {
-                        app.camera.process_keyboard(CameraKey::Down, true, dt);
-                    }
-
-                    let screen_size = [size.width as f32, size.height as f32];
-
-                    // Build egui frame.
-                    let raw_input = egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(screen_size[0], screen_size[1]),
-                        )),
-                        ..Default::default()
-                    };
-
-                    let full_output = app.egui_ctx.run(raw_input, |ctx| {
-                        egui::Window::new("Debug").show(ctx, |ui| {
-                            ui.label(format!("Frame: {}", app.frame_index));
-                            ui.separator();
-                            let pc = &app.perf_counters;
-                            ui.label(format!(
-                                "Chunks: {}/{} | Slots: {}/{} | Frame: {:.1}ms",
-                                pc.visible_chunks, pc.total_chunks,
-                                pc.total_chunks, pc.chunk_capacity,
-                                pc.frame_time_ms
-                            ));
-
-                            // Meshlet LOD statistics (MSHL-05).
-                            ui.separator();
-                            ui.label(format!(
-                                "Meshlets: {} (LOD0: {}, LOD1: {})",
-                                pc.total_meshlets, pc.lod0_meshlets, pc.lod1_meshlets
-                            ));
-                            ui.label(format!(
-                                "Visible: {} | Cull rate: {:.1}%",
-                                pc.visible_meshlets, pc.meshlet_cull_rate * 100.0
-                            ));
-                        });
-
-                        // Meshlet culling controls (MSHL-05).
-                        egui::Window::new("Meshlet Culling").show(ctx, |ui| {
-                            ui.checkbox(
-                                &mut app.renderer.meshlet_cull_backface,
-                                "Backface culling",
-                            );
-                            ui.checkbox(
-                                &mut app.renderer.meshlet_cull_frustum,
-                                "Frustum culling",
-                            );
-                            ui.checkbox(
-                                &mut app.renderer.meshlet_cull_hiz,
-                                "Hi-Z occlusion culling",
-                            );
-                            ui.checkbox(
-                                &mut app.renderer.use_meshlet_rendering,
-                                "Meshlet rendering",
-                            );
-                            ui.separator();
-                            ui.label("SSE threshold (LOD)");
-                            ui.add(
-                                egui::Slider::new(&mut app.renderer.sse_threshold, 0.1..=16.0)
-                                    .text("px"),
-                            );
-                        });
-                    });
-
-                    let clipped_primitives =
-                        app.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
-                    let textures_delta = full_output.textures_delta;
-
-                    // Store egui output for submit_frame to consume.
-                    app.renderer.pending_egui_output = Some(PendingEguiOutput {
-                        textures_delta,
-                        clipped_primitives,
-                        screen_size,
-                    });
-
-                    // Run scheduler frame, then handle renderer submission.
-                    let camera_pos = app.camera.position.to_array();
-                    let _result = crate::runtime::run_frame(
-                        &mut app.streaming,
-                        &mut app.meshing,
-                        Some(&mut app.renderer),
-                        app.frame_index,
-                        camera_pos,
-                        screen_size[1],
-                        app.camera.fov_y,
-                    );
-
-                    // Drain pending render deltas and submit frame from app-owned renderer.
-                    crate::runtime::scheduler::drain_pending_render_deltas_into_renderer(
-                        &mut app.streaming,
-                        &mut app.renderer,
-                    );
-                    let aspect = if screen_size[1] > 0.0 { screen_size[0] / screen_size[1] } else { 1.0 };
-                    let camera_uniforms = app.camera.view_proj(aspect);
-                    let current_time = app.engine_start_time.elapsed().as_secs_f32();
-                    match crate::renderer::submit_frame(&mut app.renderer, app.frame_index, &camera_uniforms, current_time) {
-                        Ok(FrameOutcome::Submitted) => {}
-                        Ok(FrameOutcome::NeedsRecreate) => {
-                            // submit_frame signalled swapchain is stale — recreate next frame.
-                            app.needs_resize = true;
-                        }
-                        Err(e) => {
-                            log::error!("submit_frame failed: {e:#}");
-                        }
-                    }
-
-                    // Update performance counters for next frame's HUD.
-                    let frame_time_ms = dt * 1000.0;
-                    let total_chunks = app.renderer.chunk_pool.as_ref()
-                        .map(|cp| cp.active_draw_count())
-                        .unwrap_or(0);
-                    let chunk_capacity = app.renderer.chunk_pool.as_ref()
-                        .map(|cp| cp.capacity() as u32)
-                        .unwrap_or(0);
-                    app.perf_counters.frame_time_ms = frame_time_ms;
-                    app.perf_counters.total_chunks = total_chunks;
-                    app.perf_counters.chunk_capacity = chunk_capacity;
-                    // visible_chunks approximated as total (actual readback deferred to future)
-                    app.perf_counters.visible_chunks = total_chunks;
-
-                    // Meshlet LOD statistics (MSHL-05).
-                    if let Some(meshlet_pool) = &app.renderer.meshlet_pool {
-                        app.perf_counters.total_meshlets = meshlet_pool.active_meshlet_count();
-                    }
-                    // POLISH-06: Use real GPU readback data for visible meshlet count.
-                    app.perf_counters.visible_meshlets = app.renderer.last_gpu_visible_meshlets;
-                    if app.perf_counters.total_meshlets > 0 {
-                        app.perf_counters.meshlet_cull_rate = 1.0
-                            - (app.perf_counters.visible_meshlets as f32
-                                / app.perf_counters.total_meshlets as f32);
-                    } else {
-                        app.perf_counters.meshlet_cull_rate = 0.0;
-                    }
-                    app.perf_counters.sse_threshold = app.renderer.sse_threshold;
-
-                    // Shader hot-reload (debug builds with hot-reload feature only).
-                    #[cfg(all(debug_assertions, feature = "hot-reload"))]
-                    {
-                        if let Err(e) = app.hot_reload.check_and_reload(&mut app.renderer) {
-                            log::error!("Shader hot-reload error: {e:#}");
-                        }
-                    }
-
-                    app.frame_index = app.frame_index.saturating_add(1);
+                    app.tick(&window);
                 }
                 _ => {}
             },

@@ -132,6 +132,12 @@ pub struct Renderer {
     pub lighting_state: Option<lighting::LightingState>,
     /// Point light manager for emissive blocks (LGHT-01).
     pub point_light_manager: Option<point_light::PointLightManager>,
+    /// PBR metallic-roughness texture array at binding 19 (LGHT-01).
+    pub mr_texture_array: Option<texture_array::TextureArray>,
+    /// PBR normal map texture array at binding 20 (LGHT-01).
+    pub normal_texture_array: Option<texture_array::TextureArray>,
+    /// PBR emissive texture array at binding 21 (LGHT-01).
+    pub emissive_texture_array: Option<texture_array::TextureArray>,
 }
 
 impl Renderer {
@@ -242,6 +248,9 @@ impl Renderer {
             last_gpu_visible_meshlets: 0,
             lighting_state: None,
             point_light_manager: None,
+            mr_texture_array: None,
+            normal_texture_array: None,
+            emissive_texture_array: None,
         })
     }
 }
@@ -274,6 +283,20 @@ impl Drop for Renderer {
             if let Some(ls) = self.lighting_state.take()
                 && let Err(e) = ls.destroy(self) {
                     log::warn!("failed to cleanup lighting state: {e}");
+                }
+
+            // Clean up PBR texture arrays before bindless table.
+            if let Some(ta) = self.emissive_texture_array.take()
+                && let Err(e) = ta.destroy(self) {
+                    log::warn!("failed to cleanup emissive texture array: {e}");
+                }
+            if let Some(ta) = self.normal_texture_array.take()
+                && let Err(e) = ta.destroy(self) {
+                    log::warn!("failed to cleanup normal texture array: {e}");
+                }
+            if let Some(ta) = self.mr_texture_array.take()
+                && let Err(e) = ta.destroy(self) {
+                    log::warn!("failed to cleanup MR texture array: {e}");
                 }
 
             // Clean up texture array before bindless table.

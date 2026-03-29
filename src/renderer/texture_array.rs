@@ -417,6 +417,293 @@ impl TextureArray {
 }
 
 // ---------------------------------------------------------------------------
+// PBR texture array factory functions (LGHT-01)
+// ---------------------------------------------------------------------------
+
+/// Create a 16x16 metallic-roughness texture array (256 layers, RGBA8).
+/// Layer 0 = default: R=0 (metallic=0), G=204 (roughness=0.8), B=0, A=255.
+/// Registered at bindless binding 19.
+pub fn new_mr_array_16(renderer: &mut Renderer) -> Result<TextureArray> {
+    create_pbr_texture_array(renderer, TEX_SIZE, [0, 204, 0, 255], super::bindless::BINDING_MR_TEXTURE_ARRAY, "mr-array-16")
+}
+
+/// Create a 16x16 normal map texture array (256 layers, RGBA8).
+/// Layer 0 = default flat normal: R=128, G=128, B=255, A=255 (tangent-space (0,0,1)).
+/// Registered at bindless binding 20.
+pub fn new_normal_array_16(renderer: &mut Renderer) -> Result<TextureArray> {
+    create_pbr_texture_array(renderer, TEX_SIZE, [128, 128, 255, 255], super::bindless::BINDING_NORMAL_TEXTURE_ARRAY, "normal-array-16")
+}
+
+/// Create a 16x16 emissive texture array (256 layers, RGBA8).
+/// Layer 0 = default: black (no emission).
+/// Registered at bindless binding 21.
+pub fn new_emissive_array_16(renderer: &mut Renderer) -> Result<TextureArray> {
+    create_pbr_texture_array(renderer, TEX_SIZE, [0, 0, 0, 255], super::bindless::BINDING_EMISSIVE_TEXTURE_ARRAY, "emissive-array-16")
+}
+
+/// Internal helper to create a PBR texture array with a single default layer.
+fn create_pbr_texture_array(
+    renderer: &mut Renderer,
+    tex_size: u32,
+    default_pixel: [u8; 4],
+    binding: u32,
+    name: &'static str,
+) -> Result<TextureArray> {
+    let device = renderer.device_ctx.device.clone();
+    let mip_levels = calculate_mip_levels(tex_size, tex_size);
+
+    // Create VkImage
+    let image = unsafe {
+        device
+            .create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(vk::Format::R8G8B8A8_UNORM)
+                    .extent(vk::Extent3D { width: tex_size, height: tex_size, depth: 1 })
+                    .mip_levels(mip_levels)
+                    .array_layers(MAX_LAYERS)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(
+                        vk::ImageUsageFlags::TRANSFER_DST
+                            | vk::ImageUsageFlags::TRANSFER_SRC
+                            | vk::ImageUsageFlags::SAMPLED,
+                    )
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+            .context("failed to create PBR texture array image")?
+    };
+
+    let requirements = unsafe { device.get_image_memory_requirements(image) };
+    let allocation = allocator_mut(renderer)
+        .allocate(&AllocationCreateDesc {
+            name,
+            requirements,
+            location: MemoryLocation::GpuOnly,
+            linear: false,
+            allocation_scheme: AllocationScheme::DedicatedImage(image),
+        })
+        .map_err(|e| anyhow!("failed to allocate PBR texture array memory: {e}"))?;
+
+    unsafe {
+        device
+            .bind_image_memory(image, allocation.memory(), allocation.offset())
+            .context("failed to bind PBR texture array image memory")?;
+    }
+
+    // Generate default texture (single layer, layer 0)
+    let pixel_bytes_per_layer = (tex_size * tex_size * 4) as usize;
+    let mut default_tex = vec![0u8; pixel_bytes_per_layer];
+    for i in 0..(tex_size * tex_size) as usize {
+        default_tex[i * 4] = default_pixel[0];
+        default_tex[i * 4 + 1] = default_pixel[1];
+        default_tex[i * 4 + 2] = default_pixel[2];
+        default_tex[i * 4 + 3] = default_pixel[3];
+    }
+
+    // Create staging buffer
+    let (staging_buffer, staging_alloc) = super::helpers::create_allocated_buffer(
+        renderer,
+        pixel_bytes_per_layer as u64,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        MemoryLocation::CpuToGpu,
+        AllocationScheme::GpuAllocatorManaged,
+        "pbr-tex-staging",
+    )?;
+
+    if let Some(mapped) = staging_alloc.mapped_ptr() {
+        let ptr = mapped.as_ptr() as *mut u8;
+        unsafe {
+            std::ptr::copy_nonoverlapping(default_tex.as_ptr(), ptr, pixel_bytes_per_layer);
+        }
+    }
+
+    let device_clone = device.clone();
+    submit_one_shot_commands(renderer, |device, cmd| {
+        // Transition to TRANSFER_DST
+        let barrier = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .image(image)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(0)
+                    .level_count(mip_levels)
+                    .base_array_layer(0)
+                    .layer_count(MAX_LAYERS),
+            );
+        unsafe {
+            device.cmd_pipeline_barrier(
+                cmd, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(), &[], &[], &[barrier],
+            );
+        }
+
+        // Copy layer 0 from staging
+        let region = vk::BufferImageCopy::default()
+            .buffer_offset(0)
+            .image_subresource(
+                vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(0)
+                    .base_array_layer(0)
+                    .layer_count(1),
+            )
+            .image_extent(vk::Extent3D { width: tex_size, height: tex_size, depth: 1 });
+        unsafe {
+            device.cmd_copy_buffer_to_image(
+                cmd, staging_buffer, image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region],
+            );
+        }
+
+        // Generate mipmaps for layer 0
+        let mut mip_width = tex_size as i32;
+        let mut mip_height = tex_size as i32;
+        for mip in 1..mip_levels {
+            let src_barrier = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                .image(image)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level(mip - 1).level_count(1)
+                        .base_array_layer(0).layer_count(1),
+                );
+            unsafe {
+                device.cmd_pipeline_barrier(
+                    cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(), &[], &[], &[src_barrier],
+                );
+            }
+
+            let next_w = (mip_width / 2).max(1);
+            let next_h = (mip_height / 2).max(1);
+            let blit = vk::ImageBlit::default()
+                .src_subresource(vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR).mip_level(mip - 1)
+                    .base_array_layer(0).layer_count(1))
+                .src_offsets([
+                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                    vk::Offset3D { x: mip_width, y: mip_height, z: 1 },
+                ])
+                .dst_subresource(vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR).mip_level(mip)
+                    .base_array_layer(0).layer_count(1))
+                .dst_offsets([
+                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                    vk::Offset3D { x: next_w, y: next_h, z: 1 },
+                ]);
+            unsafe {
+                device.cmd_blit_image(
+                    cmd, image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[blit], vk::Filter::LINEAR,
+                );
+            }
+            mip_width = next_w;
+            mip_height = next_h;
+        }
+
+        // Transition last mip to TRANSFER_SRC
+        let last_barrier = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .image(image)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(mip_levels - 1).level_count(1)
+                    .base_array_layer(0).layer_count(1),
+            );
+        unsafe {
+            device.cmd_pipeline_barrier(
+                cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(), &[], &[], &[last_barrier],
+            );
+        }
+
+        // Final transition: all layers + all mips → SHADER_READ_ONLY
+        let final_barrier = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .image(image)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(0).level_count(mip_levels)
+                    .base_array_layer(0).layer_count(MAX_LAYERS),
+            );
+        unsafe {
+            device.cmd_pipeline_barrier(
+                cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(), &[], &[], &[final_barrier],
+            );
+        }
+        Ok(())
+    })?;
+
+    super::helpers::destroy_allocated_buffer(renderer, staging_buffer, staging_alloc)?;
+
+    // Create image view
+    let view = unsafe {
+        device_clone.create_image_view(
+            &vk::ImageViewCreateInfo::default()
+                .image(image)
+                .view_type(vk::ImageViewType::TYPE_2D_ARRAY)
+                .format(vk::Format::R8G8B8A8_UNORM)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level(0).level_count(mip_levels)
+                        .base_array_layer(0).layer_count(MAX_LAYERS),
+                ),
+            None,
+        ).context("failed to create PBR texture array image view")?
+    };
+
+    // Create sampler (same quality as albedo)
+    let sampler = unsafe {
+        device_clone.create_sampler(
+            &vk::SamplerCreateInfo::default()
+                .mag_filter(vk::Filter::LINEAR)
+                .min_filter(vk::Filter::LINEAR)
+                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                .address_mode_u(vk::SamplerAddressMode::REPEAT)
+                .address_mode_v(vk::SamplerAddressMode::REPEAT)
+                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .anisotropy_enable(true)
+                .max_anisotropy(16.0)
+                .min_lod(0.0)
+                .max_lod(mip_levels as f32),
+            None,
+        ).context("failed to create PBR texture array sampler")?
+    };
+
+    // Register at bindless binding
+    if let Some(bindless) = renderer.bindless.as_ref() {
+        bindless.register_image(
+            &renderer.device_ctx.device, binding, view, sampler,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
+    }
+
+    log::info!("PBR texture array '{name}' created: {tex_size}x{tex_size}, {mip_levels} mip levels, binding {binding}");
+
+    Ok(TextureArray { image, allocation: Some(allocation), view, sampler })
+}
+
+// ---------------------------------------------------------------------------
 // Procedural texture generation (16x16 RGBA8 per layer)
 // ---------------------------------------------------------------------------
 
