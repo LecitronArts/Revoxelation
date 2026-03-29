@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 05.1: Critical Bug Fixes and Safety Hardening** (INSERTED) - Fix critical GPU resource bugs (Hi-Z resize, egui UAF), harden safety (bounds checks, unsafe docs, safe casts), improve robustness (staging exhaustion, camera passthrough, clippy cleanup).
 - [x] **Phase 6: Meshlet Pipeline** - Meshlet generation, per-meshlet GPU culling, software mesh shader emulation, optional VK_EXT_mesh_shader hardware path.
 - [x] **Phase 06.1: Rendering Polish, Bug Fixes, and Architecture Refactoring** (INSERTED) - Fix all critical/high/medium bugs, refactor God Objects, harden error handling, improve visual quality, smooth runtime behavior.
-- [ ] **Phase 7: Lighting and Shadows** - Directional PBR lighting, cascaded shadow maps, SSAO, voxel AO, sky/atmosphere with day-night cycle.
+- [x] **Phase 7: Lighting and Shadows** - Directional PBR lighting, cascaded shadow maps, SSAO, voxel AO, sky/atmosphere with day-night cycle.
 - [ ] **Phase 8: Movement and Collision Modes** - Deliver fly/gravity movement with stable voxel collision during streaming churn.
 - [ ] **Phase 9: Authoritative Block Editing Feedback** - Apply block edits authoritatively and reflect them visually near-immediately.
 - [ ] **Phase 10: Chunk Persistence and Recovery** - Persist edited chunks across restart with versioning/integrity and non-blocking saves.
@@ -228,7 +228,7 @@ Plans:
 - [x] 07-02: Cascaded shadow maps (4 cascades, depth-only pass, PCF soft shadows).
 - [x] 07-03: Screen-space ambient occlusion (SSAO compute, bilateral blur, compositing).
 - [x] 07-04: Voxel ambient occlusion + GI probes (per-vertex AO in meshing, optional irradiance probes).
-- [ ] 07-05: Sky/atmosphere + day-night cycle (Preetham model, sun rotation, distance fog).
+- [x] 07-05: Sky/atmosphere + day-night cycle (Preetham model, sun rotation, distance fog).
 
 ### Phase 8: Movement and Collision Modes
 **Goal**: Players can navigate the world with reliable fly/gravity modes and collision behavior that remains stable during chunk streaming transitions.

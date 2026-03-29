@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 07-lighting-and-shadows
-status: executing
-last_updated: "2026-03-29T12:00:00.000Z"
+status: complete
+last_updated: "2026-03-29T08:54:07Z"
 progress:
   total_phases: 14
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 52
-  completed_plans: 51
+  completed_plans: 52
 ---
 
 # Session State
@@ -22,7 +22,16 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 07-lighting-and-shadows
-**Status:** Executing (Plan 07-03 COMPLETE)
+**Status:** COMPLETE (Plan 07-05 done, Phase 07 fully complete)
+
+## Key Decisions (Phase 07 Plan 05)
+
+- LGHT-05-01: Sky renders as fullscreen triangle at depth=1.0 BEFORE geometry (geometry overwrites at closer depth)
+- LGHT-05-02: Double-buffered sky params SSBO at binding 23 with inv_view_proj for ray direction reconstruction
+- LGHT-05-03: DayNightCycle drives sun_elevation/azimuth/color/intensity when use_day_night_cycle=true
+- LGHT-05-04: Fog color tracks sky horizon color through day-night cycle for seamless blending
+- LGHT-05-05: Dynamic clear color from fog_color to roughly match procedural sky
+- LGHT-05-06: Day-night cycle starts paused; default day_speed=600s (10-minute game day)
 
 ## Key Decisions (Phase 07 Plan 03)
 
@@ -207,3 +216,4 @@ See: .planning/PROJECT.md
 - 2026-03-29: Executed 07-02 — 4-cascade CSM (LGHT-02) — D32_SFLOAT depth array, comparison sampler, PCF 3x3, cascade blending, texel snapping, egui controls
 - 2026-03-29: Executed 07-04 — Voxel AO (LGHT-04) — 4-corner AO in greedy meshing, word0 bits 24-25, decode in shaders, ambient-only modulation, diagonal flip
 - 2026-03-29: Executed 07-03 — SSAO (LGHT-03) — GTAO/HBAO+/classic compute pipelines, bilateral blur, combined AO (voxel×SSAO), egui controls
+- 2026-03-29: Executed 07-05 — Sky/atmosphere/fog (LGHT-05) — Preetham sky model, day-night cycle, 4-type distance fog, egui controls — Phase 07 COMPLETE
