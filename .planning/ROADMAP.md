@@ -224,7 +224,7 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 07-01: Directional light + PBR lighting model (Lambertian+GGX, face normals, metallic/roughness).
+- [x] 07-01: Directional light + PBR lighting model (Lambertian+GGX, face normals, metallic/roughness).
 - [ ] 07-02: Cascaded shadow maps (4 cascades, depth-only pass, PCF soft shadows).
 - [ ] 07-03: Screen-space ambient occlusion (SSAO compute, bilateral blur, compositing).
 - [ ] 07-04: Voxel ambient occlusion + GI probes (per-vertex AO in meshing, optional irradiance probes).
@@ -300,7 +300,7 @@ Phases execute in numeric order: 2 -> 2.5 -> 3 -> 4 -> 5 -> 05.1 -> 6 -> 06.1 ->
 | 05.1. Critical Bug Fixes and Safety Hardening | 6/6 | Complete | 2026-03-27 |
 | 6. Meshlet Pipeline | 5/5 | Complete | 2026-03-28 |
 | 06.1. Rendering Polish, Bug Fixes, Refactoring | 8/8 | Complete    | 2026-03-28 |
-| 7. Lighting and Shadows | 0/5 | Not started | - |
+| 7. Lighting and Shadows | 1/5 | In progress | - |
 | 8. Movement and Collision Modes | 0/2 | Not started | - |
 | 9. Authoritative Block Editing Feedback | 0/2 | Not started | - |
 | 10. Chunk Persistence and Recovery | 0/2 | Not started | - |

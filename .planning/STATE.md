@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 06.1-rendering-polish
-status: planning
-last_updated: "2026-03-28T10:08:31.373Z"
+current_phase: 07-lighting-and-shadows
+status: executing
+last_updated: "2026-03-29T12:00:00.000Z"
 progress:
   total_phases: 14
   completed_phases: 9
-  total_plans: 47
-  completed_plans: 47
+  total_plans: 52
+  completed_plans: 48
 ---
 
 # Session State
@@ -21,8 +21,21 @@ See: .planning/PROJECT.md
 ## Position
 
 **Milestone:** v1.0 milestone
-**Current phase:** 06.1-rendering-polish
-**Status:** Ready to plan
+**Current phase:** 07-lighting-and-shadows
+**Status:** Executing (Plan 07-01 COMPLETE)
+
+## Key Decisions (Phase 07 Plan 01)
+
+- LGHT-01: BindlessTable extended from 16 to 25 bindings (CSM, SSAO, lighting, PBR textures, point lights, sky, SSAO blur)
+- BlockMaterial expanded from 8B (4 x u16) to 32B (16 x u16) with per-face MR/normal/emissive texture indices + emissive_intensity
+- New flags: FLAG_HAS_MR=0x04, FLAG_HAS_NORMAL=0x08, FLAG_HAS_EMISSIVE_MAP=0x10, FLAG_IS_32X32=0x20
+- Cook-Torrance BRDF in common.glsl: GGX NDF + Smith geometry + Schlick Fresnel + Lambertian diffuse
+- LightingState: double-buffered SSBOs at binding 18, CPU-side sun elevation/azimuth/intensity/ambient controls
+- PointLightManager: double-buffered SSBOs at binding 22, MAX_VISIBLE_POINT_LIGHTS=64
+- PBR texture arrays (MR/normal/emissive) at bindings 19/20/21, 16x16 RGBA8 with mipmaps+aniso
+- Push constants updated to VERTEX|FRAGMENT for all 3 pipeline paths (camera_pos needed for V vector)
+- Default PBR: metallic=0.0, roughness=0.8 (dielectric, slightly rough)
+- 32x32 arrays deferred — no blocks currently use FLAG_IS_32X32
 
 ## Key Decisions (Phase 06.1 Plan 08)
 
@@ -160,3 +173,4 @@ See: .planning/PROJECT.md
 - 2026-03-28: Executed 06.1-06 — Error handling hardening + GPU readback counters (POLISH-05, POLISH-06, MED-10~11)
 - 2026-03-28: Executed 06.1-07 — Camera smoothing + chunk fade-in + dead code cleanup (POLISH-08, POLISH-09, MED-12, REFAC-06~07)
 - 2026-03-28: Executed 06.1-08 — Architecture refactoring (REFAC-01~05, REFAC-08) — Phase 06.1 COMPLETE
+- 2026-03-29: Executed 07-01 — Directional light + PBR lighting model (LGHT-01) — Cook-Torrance BRDF, 25 bindless bindings, 32B BlockMaterial, LightingState, PointLightManager
