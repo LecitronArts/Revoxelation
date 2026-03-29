@@ -9,7 +9,7 @@ progress:
   total_phases: 14
   completed_phases: 9
   total_plans: 52
-  completed_plans: 49
+  completed_plans: 51
 ---
 
 # Session State
@@ -22,7 +22,16 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 07-lighting-and-shadows
-**Status:** Executing (Plan 07-02 COMPLETE)
+**Status:** Executing (Plan 07-04 COMPLETE)
+
+## Key Decisions (Phase 07 Plan 04)
+
+- LGHT-04-01: AO packed in word0 bits 24-25 (2 bits), repurposing former skirt bit (skirts removed in MSHL-05)
+- LGHT-04-02: AO curve non-linear [0.2, 0.5, 0.75, 1.0] for better visual contrast at dark end
+- LGHT-04-03: AO applied to ambient term only (subtract raw ambient, re-add with AO factor) — physically correct
+- LGHT-04-04: Quad diagonal flip when opposite corner AO sums differ — Minecraft-style interpolation fix
+- LGHT-04-05: is_opaque_for_ao uses sample_with_halo for cross-chunk boundary lookups — air=non-occluding
+- LGHT-04-06: Transparent block FLAG_TRANSPARENT check deferred — requires MaterialTable access in meshing (noted as TODO)
 
 ## Key Decisions (Phase 07 Plan 02)
 
@@ -188,3 +197,4 @@ See: .planning/PROJECT.md
 - 2026-03-28: Executed 06.1-08 — Architecture refactoring (REFAC-01~05, REFAC-08) — Phase 06.1 COMPLETE
 - 2026-03-29: Executed 07-01 — Directional light + PBR lighting model (LGHT-01) — Cook-Torrance BRDF, 25 bindless bindings, 32B BlockMaterial, LightingState, PointLightManager
 - 2026-03-29: Executed 07-02 — 4-cascade CSM (LGHT-02) — D32_SFLOAT depth array, comparison sampler, PCF 3x3, cascade blending, texel snapping, egui controls
+- 2026-03-29: Executed 07-04 — Voxel AO (LGHT-04) — 4-corner AO in greedy meshing, word0 bits 24-25, decode in shaders, ambient-only modulation, diagonal flip

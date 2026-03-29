@@ -124,7 +124,7 @@
 - [ ] **LGHT-01**: Blocks display PBR lighting with diffuse and specular response under directional light.
 - [ ] **LGHT-02**: Blocks cast correct shadows via cascaded shadow maps; cascade transitions are flicker-free.
 - [ ] **LGHT-03**: SSAO produces visible darkening at block edges and corners with acceptable performance.
-- [ ] **LGHT-04**: Voxel AO provides per-vertex ambient occlusion computed during meshing.
+- [x] **LGHT-04**: Voxel AO provides per-vertex ambient occlusion computed during meshing.
 - [ ] **LGHT-05**: Sky color and light direction change with day-night cycle; distance fog fades far objects.
 
 ### Movement and Collision
@@ -267,7 +267,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LGHT-01 | Phase 7 | Pending |
 | LGHT-02 | Phase 7 | Pending |
 | LGHT-03 | Phase 7 | Pending |
-| LGHT-04 | Phase 7 | Pending |
+| LGHT-04 | Phase 7 | **Complete** |
 | LGHT-05 | Phase 7 | Pending |
 | MOVE-01 | Phase 8 | Pending |
 | MOVE-02 | Phase 8 | Pending |
