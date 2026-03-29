@@ -15,7 +15,7 @@ fn main() {
     }
 }
 
-fn shader_sources() -> [&'static str; 14] {
+fn shader_sources() -> [&'static str; 16] {
     [
         "shaders/chunk_mesh.vert",
         "shaders/chunk_mesh.frag",
@@ -31,6 +31,8 @@ fn shader_sources() -> [&'static str; 14] {
         "shaders/shadow_depth.vert",
         "shaders/ssao_compute.comp",
         "shaders/ssao_blur.comp",
+        "shaders/sky.vert",
+        "shaders/sky.frag",
     ]
 }
 

@@ -28,6 +28,7 @@ pub mod pipeline_set;
 pub mod point_light;
 pub mod pool_manager;
 pub mod shadow;
+pub mod sky;
 pub mod spirv;
 pub mod ssao;
 pub mod staging;
@@ -67,6 +68,8 @@ pub fn shader_source_files() -> &'static [&'static str] {
         "shaders/shadow_depth.vert",
         "shaders/ssao_compute.comp",
         "shaders/ssao_blur.comp",
+        "shaders/sky.vert",
+        "shaders/sky.frag",
     ]
 }
 
@@ -151,6 +154,8 @@ pub struct Renderer {
     pub ssao_pass: Option<ssao::SsaoPass>,
     /// SSAO configuration (egui-adjustable, LGHT-03).
     pub ssao_config: ssao::SsaoConfig,
+    /// Sky/atmosphere renderer (LGHT-05).
+    pub sky_renderer: Option<sky::SkyRenderer>,
 }
 
 impl Renderer {
@@ -268,6 +273,7 @@ impl Renderer {
             shadow_config: shadow::ShadowConfig::default(),
             ssao_pass: None,
             ssao_config: ssao::SsaoConfig::default(),
+            sky_renderer: None,
         })
     }
 }
@@ -288,6 +294,12 @@ impl Drop for Renderer {
             if let Some(readback) = self.readback_counters.take()
                 && let Err(e) = readback.destroy(self) {
                     log::warn!("failed to cleanup readback counters: {e}");
+                }
+
+            // Clean up sky renderer before bindless table (LGHT-05).
+            if let Some(sky) = self.sky_renderer.take()
+                && let Err(e) = sky.destroy(self) {
+                    log::warn!("failed to cleanup sky renderer: {e}");
                 }
 
             // Clean up SSAO pass before bindless table (LGHT-03).
