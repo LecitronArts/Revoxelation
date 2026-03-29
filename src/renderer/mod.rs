@@ -29,6 +29,7 @@ pub mod point_light;
 pub mod pool_manager;
 pub mod shadow;
 pub mod spirv;
+pub mod ssao;
 pub mod staging;
 pub mod staging_ring;
 pub mod submit;
@@ -64,6 +65,8 @@ pub fn shader_source_files() -> &'static [&'static str] {
         "shaders/meshlet.task",
         "shaders/meshlet.mesh",
         "shaders/shadow_depth.vert",
+        "shaders/ssao_compute.comp",
+        "shaders/ssao_blur.comp",
     ]
 }
 
@@ -144,6 +147,10 @@ pub struct Renderer {
     pub shadow_map: Option<shadow::CascadedShadowMap>,
     /// Shadow configuration (egui-adjustable, LGHT-02).
     pub shadow_config: shadow::ShadowConfig,
+    /// Screen-space ambient occlusion pass (LGHT-03).
+    pub ssao_pass: Option<ssao::SsaoPass>,
+    /// SSAO configuration (egui-adjustable, LGHT-03).
+    pub ssao_config: ssao::SsaoConfig,
 }
 
 impl Renderer {
@@ -259,6 +266,8 @@ impl Renderer {
             emissive_texture_array: None,
             shadow_map: None,
             shadow_config: shadow::ShadowConfig::default(),
+            ssao_pass: None,
+            ssao_config: ssao::SsaoConfig::default(),
         })
     }
 }
@@ -279,6 +288,12 @@ impl Drop for Renderer {
             if let Some(readback) = self.readback_counters.take()
                 && let Err(e) = readback.destroy(self) {
                     log::warn!("failed to cleanup readback counters: {e}");
+                }
+
+            // Clean up SSAO pass before bindless table (LGHT-03).
+            if let Some(ssao) = self.ssao_pass.take()
+                && let Err(e) = ssao.destroy(self) {
+                    log::warn!("failed to cleanup SSAO pass: {e}");
                 }
 
             // Clean up CSM shadow map before bindless table (LGHT-02).

@@ -1,0 +1,241 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant) uniform SsaoPushConstants {
+    uint algorithm;    // 0=GTAO, 1=HBAO+, 2=classic
+    float radius;
+    float intensity;
+    uint sample_count;
+    vec2 screen_size;
+    float near_plane;
+    float far_plane;
+} params;
+
+// Read depth from Hi-Z mip 0 (binding 7) — already in SHADER_READ_ONLY after Hi-Z gen.
+layout(set = 0, binding = 7) uniform sampler2D depth_tex;
+// Output AO — binding 17 (R8_UNORM, writeonly image2D).
+layout(r8, set = 0, binding = 17) uniform writeonly image2D ao_output;
+
+// -----------------------------------------------------------------------
+// Pseudo-random noise using interleaved gradient noise (Jimenez 2014)
+// -----------------------------------------------------------------------
+float interleaved_gradient_noise(vec2 pos) {
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(pos, magic.xy)));
+}
+
+// -----------------------------------------------------------------------
+// Linearize reverse-Z depth to view-space Z distance
+// -----------------------------------------------------------------------
+float linearize_depth(float d) {
+    // Vulkan depth [0,1], perspective projection
+    return params.near_plane * params.far_plane /
+           (params.far_plane - d * (params.far_plane - params.near_plane));
+}
+
+// -----------------------------------------------------------------------
+// Reconstruct view-space position from UV + depth
+// -----------------------------------------------------------------------
+vec3 reconstruct_view_pos(vec2 uv, float depth) {
+    float z = linearize_depth(depth);
+    // Assume symmetric perspective: tan(fov/2) ~ 1.0 (approx)
+    // For a more accurate reconstruction we'd need the projection matrix,
+    // but this approximation works well for AO which is relative.
+    float aspect = params.screen_size.x / params.screen_size.y;
+    float tan_half_fov = 1.0; // ~60 deg FOV
+    float x = (uv.x * 2.0 - 1.0) * aspect * tan_half_fov * z;
+    float y = (uv.y * 2.0 - 1.0) * tan_half_fov * z;
+    return vec3(x, y, -z);
+}
+
+// -----------------------------------------------------------------------
+// Reconstruct view-space normal from depth buffer cross-product
+// -----------------------------------------------------------------------
+vec3 reconstruct_normal(vec2 uv) {
+    vec2 texel = 1.0 / params.screen_size;
+    float dc = texture(depth_tex, uv).r;
+    float dl = texture(depth_tex, uv - vec2(texel.x, 0.0)).r;
+    float dr = texture(depth_tex, uv + vec2(texel.x, 0.0)).r;
+    float db = texture(depth_tex, uv - vec2(0.0, texel.y)).r;
+    float dt = texture(depth_tex, uv + vec2(0.0, texel.y)).r;
+
+    vec3 pc = reconstruct_view_pos(uv, dc);
+    // Use the derivative pair that's closer (avoids edges)
+    vec3 ddx = (abs(dl - dc) < abs(dr - dc))
+        ? pc - reconstruct_view_pos(uv - vec2(texel.x, 0.0), dl)
+        : reconstruct_view_pos(uv + vec2(texel.x, 0.0), dr) - pc;
+    vec3 ddy = (abs(db - dc) < abs(dt - dc))
+        ? pc - reconstruct_view_pos(uv - vec2(0.0, texel.y), db)
+        : reconstruct_view_pos(uv + vec2(0.0, texel.y), dt) - pc;
+
+    return normalize(cross(ddy, ddx));
+}
+
+// -----------------------------------------------------------------------
+// GTAO: Ground Truth Ambient Occlusion (horizon-based)
+// -----------------------------------------------------------------------
+float compute_gtao(vec2 uv, vec3 view_pos, vec3 normal) {
+    float ao = 0.0;
+    float noise = interleaved_gradient_noise(gl_GlobalInvocationID.xy);
+    vec2 texel = 1.0 / params.screen_size;
+    uint directions = max(params.sample_count, 1u);
+    uint steps = 4u;
+
+    for (uint d = 0u; d < directions; d++) {
+        float angle = (float(d) + noise) * PI / float(directions);
+        vec2 dir = vec2(cos(angle), sin(angle));
+
+        float max_horizon = -1.0;
+
+        for (uint s = 1u; s <= steps; s++) {
+            float step_scale = float(s) / float(steps);
+            vec2 sample_uv = uv + dir * step_scale * params.radius * texel * 8.0;
+            sample_uv = clamp(sample_uv, vec2(0.001), vec2(0.999));
+
+            float sample_depth = texture(depth_tex, sample_uv).r;
+            vec3 sample_pos = reconstruct_view_pos(sample_uv, sample_depth);
+            vec3 diff = sample_pos - view_pos;
+            float dist = length(diff);
+            if (dist < 0.001) continue;
+
+            float horizon = dot(diff / dist, normal);
+            max_horizon = max(max_horizon, horizon);
+        }
+
+        // Integrate: AO contribution from this direction
+        ao += max(0.0, max_horizon);
+    }
+
+    ao /= float(directions);
+    return 1.0 - clamp(ao * params.intensity, 0.0, 1.0);
+}
+
+// -----------------------------------------------------------------------
+// HBAO+: Horizon-Based Ambient Occlusion Plus
+// -----------------------------------------------------------------------
+float compute_hbao(vec2 uv, vec3 view_pos, vec3 normal) {
+    float ao = 0.0;
+    float noise_angle = interleaved_gradient_noise(gl_GlobalInvocationID.xy) * 2.0 * PI;
+    float noise_scale = interleaved_gradient_noise(gl_GlobalInvocationID.xy + vec2(1.0, 0.0));
+    vec2 texel = 1.0 / params.screen_size;
+    uint directions = max(params.sample_count, 1u);
+    uint steps = 4u;
+
+    for (uint d = 0u; d < directions; d++) {
+        float angle = noise_angle + float(d) * 2.0 * PI / float(directions);
+        vec2 dir = vec2(cos(angle), sin(angle));
+
+        float max_horizon_sin = 0.0;
+        float bias_angle = 0.1; // small bias to avoid self-occlusion
+
+        for (uint s = 1u; s <= steps; s++) {
+            float step_scale = (float(s) + noise_scale) / float(steps);
+            vec2 sample_uv = uv + dir * step_scale * params.radius * texel * 10.0;
+            sample_uv = clamp(sample_uv, vec2(0.001), vec2(0.999));
+
+            float sample_depth = texture(depth_tex, sample_uv).r;
+            vec3 sample_pos = reconstruct_view_pos(sample_uv, sample_depth);
+            vec3 diff = sample_pos - view_pos;
+            float dist = length(diff);
+            if (dist < 0.001 || dist > params.radius * 20.0) continue;
+
+            float horizon_sin = dot(diff / dist, normal);
+            // Distance attenuation
+            float atten = 1.0 - clamp(dist / (params.radius * 20.0), 0.0, 1.0);
+            horizon_sin *= atten;
+            max_horizon_sin = max(max_horizon_sin, horizon_sin - bias_angle);
+        }
+
+        ao += max(0.0, max_horizon_sin);
+    }
+
+    ao /= float(directions);
+    return 1.0 - clamp(ao * params.intensity * 2.0, 0.0, 1.0);
+}
+
+// -----------------------------------------------------------------------
+// Classic SSAO: hemisphere kernel sampling
+// -----------------------------------------------------------------------
+float compute_classic_ssao(vec2 uv, vec3 view_pos, vec3 normal) {
+    float ao = 0.0;
+    uint samples = max(params.sample_count, 1u);
+    vec2 texel = 1.0 / params.screen_size;
+
+    for (uint i = 0u; i < samples; i++) {
+        // Generate pseudo-random sample in hemisphere
+        float fi = float(i);
+        float noise1 = interleaved_gradient_noise(gl_GlobalInvocationID.xy + vec2(fi, 0.0));
+        float noise2 = interleaved_gradient_noise(gl_GlobalInvocationID.xy + vec2(0.0, fi));
+        float noise3 = interleaved_gradient_noise(gl_GlobalInvocationID.xy + vec2(fi, fi));
+
+        // Cosine-weighted hemisphere sample
+        float r = sqrt(noise1);
+        float theta = 2.0 * PI * noise2;
+        vec3 sample_dir = vec3(r * cos(theta), r * sin(theta), sqrt(max(0.0, 1.0 - noise1)));
+
+        // Orient to normal
+        vec3 tangent = abs(normal.y) < 0.999
+            ? normalize(cross(vec3(0.0, 1.0, 0.0), normal))
+            : normalize(cross(vec3(1.0, 0.0, 0.0), normal));
+        vec3 bitangent = cross(normal, tangent);
+        vec3 oriented = tangent * sample_dir.x + bitangent * sample_dir.y + normal * sample_dir.z;
+
+        // Scale by random distance within radius
+        float scale = noise3;
+        scale = 0.1 + 0.9 * scale * scale; // bias towards center
+
+        vec3 sample_pos = view_pos + oriented * params.radius * scale;
+
+        // Project sample to screen UV
+        float aspect = params.screen_size.x / params.screen_size.y;
+        float tan_half_fov = 1.0;
+        vec2 sample_uv = vec2(
+            sample_pos.x / (-sample_pos.z * aspect * tan_half_fov) * 0.5 + 0.5,
+            sample_pos.y / (-sample_pos.z * tan_half_fov) * 0.5 + 0.5
+        );
+        sample_uv = clamp(sample_uv, vec2(0.001), vec2(0.999));
+
+        float sample_depth = texture(depth_tex, sample_uv).r;
+        float sample_z = linearize_depth(sample_depth);
+
+        // Compare depths: occluded if sample is behind scene geometry
+        float range_check = smoothstep(0.0, 1.0, params.radius * 10.0 / max(abs(-sample_pos.z - sample_z), 0.001));
+        ao += (sample_z <= -sample_pos.z - 0.01 ? 1.0 : 0.0) * range_check;
+    }
+
+    ao /= float(samples);
+    return 1.0 - clamp(ao * params.intensity, 0.0, 1.0);
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 output_size = imageSize(ao_output);
+    if (pixel.x >= output_size.x || pixel.y >= output_size.y) return;
+
+    vec2 uv = (vec2(pixel) + 0.5) / params.screen_size;
+
+    float depth = texture(depth_tex, uv).r;
+    // Skip skybox (depth == 1.0 or near-zero linearized)
+    if (depth >= 0.9999) {
+        imageStore(ao_output, pixel, vec4(1.0));
+        return;
+    }
+
+    vec3 view_pos = reconstruct_view_pos(uv, depth);
+    vec3 normal = reconstruct_normal(uv);
+
+    float ao;
+    if (params.algorithm == 0u) {
+        ao = compute_gtao(uv, view_pos, normal);
+    } else if (params.algorithm == 1u) {
+        ao = compute_hbao(uv, view_pos, normal);
+    } else {
+        ao = compute_classic_ssao(uv, view_pos, normal);
+    }
+
+    imageStore(ao_output, pixel, vec4(ao, 0.0, 0.0, 0.0));
+}
