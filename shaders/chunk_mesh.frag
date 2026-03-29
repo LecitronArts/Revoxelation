@@ -31,6 +31,9 @@ layout(std430, set = 0, binding = 8) readonly buffer MaterialBuffer {
 // Texture array sampler at bindless binding 9.
 layout(set = 0, binding = 9) uniform sampler2DArray tex_array;
 
+// CSM shadow maps at binding 16 (LGHT-02).
+layout(set = 0, binding = 16) uniform sampler2DArrayShadow csm_shadow_maps;
+
 // Lighting params SSBO at binding 18 (LGHT-01).
 layout(std430, set = 0, binding = 18) readonly buffer LightingBuffer {
     LightingParams lighting;
@@ -81,7 +84,15 @@ void main() {
 
     // Apply directional light with Cook-Torrance BRDF (LGHT-01).
     LightingParams lp = lighting_ssbo.lighting;
-    vec3 lit_color = apply_directional_light(N, V, v_world_pos, texel.rgb, metallic, roughness, lp);
+
+    // CSM shadow sampling (LGHT-02).
+    float view_depth = length(camera.camera_pos - v_world_pos);
+    float shadow_factor = 1.0;
+    if (lp.cascade_splits.x > 0.0) {
+        shadow_factor = sample_shadow_csm(csm_shadow_maps, lp, v_world_pos, view_depth, 2048.0);
+    }
+
+    vec3 lit_color = apply_directional_light_shadowed(N, V, v_world_pos, texel.rgb, metallic, roughness, lp, shadow_factor);
 
     // Accumulate point light contributions (LGHT-01).
     uint num_lights = min(point_light_data.point_light_count, point_light_data.max_point_lights);

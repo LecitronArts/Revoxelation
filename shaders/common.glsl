@@ -245,4 +245,93 @@ vec3 evaluate_point_light(vec3 N, vec3 V, vec3 world_pos, vec3 albedo,
     return brdf * light.color * attenuation * NdotL;
 }
 
+// Apply directional light using Cook-Torrance BRDF with shadow factor (LGHT-02).
+vec3 apply_directional_light_shadowed(vec3 N, vec3 V, vec3 world_pos, vec3 albedo,
+                              float metallic, float roughness, LightingParams lp, float shadow) {
+    vec3 L = normalize(lp.sun_direction);
+    float NdotL = max(dot(N, L), 0.0);
+
+    vec3 brdf = cook_torrance_brdf(N, V, L, albedo, metallic, roughness);
+    vec3 direct = brdf * lp.sun_color * lp.sun_intensity * NdotL * shadow;
+
+    // Ambient term (not affected by shadow)
+    vec3 ambient = lp.ambient_color * lp.ambient_intensity * albedo;
+
+    return direct + ambient;
+}
+
+// -----------------------------------------------------------------------
+// CSM Shadow Sampling (LGHT-02)
+// -----------------------------------------------------------------------
+
+// Select cascade index from view-space depth (linear depth from camera).
+uint select_cascade(float view_depth, vec4 cascade_splits) {
+    for (uint i = 0u; i < 4u; i++) {
+        if (view_depth < cascade_splits[i]) {
+            return i;
+        }
+    }
+    return 3u;
+}
+
+// PCF shadow sampling with 3x3 kernel using sampler2DArrayShadow.
+// shadow_coord.xy = UV in shadow map, shadow_coord.z = reference depth.
+float shadow_sample_pcf(sampler2DArrayShadow csm, vec3 shadow_coord, uint layer, float texel_size) {
+    float shadow = 0.0;
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            vec2 offset = vec2(float(x), float(y)) * texel_size;
+            // sampler2DArrayShadow: texture(sampler, vec4(uv, layer, ref_depth))
+            shadow += texture(csm, vec4(shadow_coord.xy + offset, float(layer), shadow_coord.z));
+        }
+    }
+    return shadow / 9.0;
+}
+
+// Full CSM shadow sampling with cascade selection and blending.
+// Returns shadow factor: 1.0 = fully lit, 0.0 = fully shadowed.
+float sample_shadow_csm(sampler2DArrayShadow csm, LightingParams lp,
+                         vec3 world_pos, float view_depth, float shadow_resolution) {
+    uint cascade = select_cascade(view_depth, lp.cascade_splits);
+    float texel_size = 1.0 / shadow_resolution;
+
+    // Project world position into shadow space.
+    vec4 shadow_pos = lp.shadow_matrices[cascade] * vec4(world_pos, 1.0);
+    vec3 shadow_coord = shadow_pos.xyz / shadow_pos.w;
+    // Map from [-1,1] to [0,1] for UV, z already in [0,1] for Vulkan.
+    shadow_coord.xy = shadow_coord.xy * 0.5 + 0.5;
+
+    // Out-of-bounds check — fragments outside shadow map are fully lit.
+    if (shadow_coord.x < 0.0 || shadow_coord.x > 1.0 ||
+        shadow_coord.y < 0.0 || shadow_coord.y > 1.0 ||
+        shadow_coord.z < 0.0 || shadow_coord.z > 1.0) {
+        return 1.0;
+    }
+
+    float shadow = shadow_sample_pcf(csm, shadow_coord, cascade, texel_size);
+
+    // Cascade blending: blend with next cascade in 10% transition zone.
+    if (cascade < 3u) {
+        float split_near = (cascade == 0u) ? 0.0 : lp.cascade_splits[cascade - 1u];
+        float split_far = lp.cascade_splits[cascade];
+        float range = split_far - split_near;
+        float blend_zone = range * 0.1; // 10% transition zone
+        float dist_to_edge = split_far - view_depth;
+
+        if (dist_to_edge < blend_zone && blend_zone > 0.0) {
+            // Sample next cascade.
+            uint next_cascade = cascade + 1u;
+            vec4 next_shadow_pos = lp.shadow_matrices[next_cascade] * vec4(world_pos, 1.0);
+            vec3 next_coord = next_shadow_pos.xyz / next_shadow_pos.w;
+            next_coord.xy = next_coord.xy * 0.5 + 0.5;
+
+            float next_shadow = shadow_sample_pcf(csm, next_coord, next_cascade, texel_size);
+            float blend_factor = dist_to_edge / blend_zone;
+            shadow = mix(next_shadow, shadow, blend_factor);
+        }
+    }
+
+    return shadow;
+}
+
 #endif // COMMON_GLSL

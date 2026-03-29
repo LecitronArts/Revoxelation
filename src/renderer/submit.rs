@@ -556,6 +556,183 @@ unsafe fn present(renderer: &Renderer, command_buffer: vk::CommandBuffer, image_
     }
 }
 
+/// Record CSM shadow depth passes for all 4 cascades (LGHT-02).
+///
+/// Inserted between dispatch_chunk_cull and begin_render_pass.
+/// Computes cascade matrices from camera + sun direction, renders depth-only
+/// passes, then transitions shadow images to read-only for fragment sampling.
+unsafe fn record_csm_shadow_passes(
+    renderer: &mut Renderer,
+    command_buffer: vk::CommandBuffer,
+    camera_uniforms: &CameraUniforms,
+) {
+    if !renderer.shadow_config.enabled {
+        return;
+    }
+    let Some(shadow_map) = &renderer.shadow_map else { return };
+
+    // Get sun direction from lighting state.
+    let sun_direction = if let Some(ls) = &renderer.lighting_state {
+        let elev = ls.sun_elevation.to_radians();
+        let azim = ls.sun_azimuth.to_radians();
+        let cos_elev = elev.cos();
+        glam::Vec3::new(
+            cos_elev * azim.sin(),
+            elev.sin(),
+            cos_elev * azim.cos(),
+        )
+        .normalize_or_zero()
+    } else {
+        glam::Vec3::new(0.0, 1.0, 0.0)
+    };
+
+    // Compute camera inverse view-proj for frustum corner extraction.
+    let view_proj = Mat4::from_cols_array_2d(&camera_uniforms.view_proj);
+    let view_proj_inv = view_proj.inverse();
+
+    let camera_near = 0.1_f32;
+    let camera_far = 2000.0_f32;
+    let lambda = renderer.shadow_config.split_lambda;
+    let resolution = shadow_map.resolution;
+
+    let (cascade_matrices, cascade_splits) = super::shadow::compute_cascade_matrices(
+        &view_proj_inv,
+        camera_near,
+        camera_far,
+        sun_direction,
+        lambda,
+        resolution,
+    );
+
+    // Write cascade matrices and splits to lighting params SSBO.
+    if let Some(ls) = &renderer.lighting_state {
+        let current_frame = renderer.current_frame;
+        if let Some(alloc) = &ls.ssbo_allocs[current_frame] {
+            if let Some(mapped) = alloc.mapped_ptr() {
+                let ptr = mapped.as_ptr() as *mut u8;
+                // shadow_matrices start at offset 48 (3*f32 + f32 + 3*f32 + f32 + 3*f32 + f32 = 48 bytes)
+                let shadow_matrices_offset = 48usize;
+                let shadow_matrices_data: [[f32; 16]; 4] = [
+                    cascade_matrices[0].to_cols_array(),
+                    cascade_matrices[1].to_cols_array(),
+                    cascade_matrices[2].to_cols_array(),
+                    cascade_matrices[3].to_cols_array(),
+                ];
+                let matrix_bytes = bytemuck::bytes_of(&shadow_matrices_data);
+                std::ptr::copy_nonoverlapping(
+                    matrix_bytes.as_ptr(),
+                    ptr.add(shadow_matrices_offset),
+                    matrix_bytes.len(),
+                );
+                // cascade_splits at offset 48 + 256 = 304
+                let splits_offset = shadow_matrices_offset + std::mem::size_of::<[[f32; 16]; 4]>();
+                let splits_bytes = bytemuck::bytes_of(&cascade_splits);
+                std::ptr::copy_nonoverlapping(
+                    splits_bytes.as_ptr(),
+                    ptr.add(splits_offset),
+                    splits_bytes.len(),
+                );
+            }
+        }
+    }
+
+    // Bind bindless descriptor set for shadow pipeline.
+    let bindless_set = renderer
+        .bindless
+        .as_ref()
+        .map(|b| b.descriptor_set)
+        .unwrap_or(vk::DescriptorSet::null());
+
+    // Record shadow depth passes for all 4 cascades.
+    // Need to bind bindless set inside each cascade render pass.
+    let meshlet_pool = renderer.meshlet_pool.as_ref();
+    let total_meshlets = meshlet_pool.map(|mp| mp.active_meshlet_count()).unwrap_or(0);
+    if total_meshlets == 0 {
+        return;
+    }
+    let meshlet_pool = meshlet_pool.unwrap();
+
+    let viewport = vk::Viewport {
+        x: 0.0,
+        y: 0.0,
+        width: resolution as f32,
+        height: resolution as f32,
+        min_depth: 0.0,
+        max_depth: 1.0,
+    };
+    let scissor = vk::Rect2D {
+        offset: vk::Offset2D { x: 0, y: 0 },
+        extent: vk::Extent2D { width: resolution, height: resolution },
+    };
+    let vertex_buffers = [meshlet_pool.meshlet_vertex_buffer];
+    let vertex_offsets: [vk::DeviceSize; 1] = [0];
+    let max_draw_count = meshlet_pool.meshlet_capacity() as u32;
+
+    for cascade in 0..super::shadow::CASCADE_COUNT as usize {
+        let clear_values = [vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+        }];
+        let render_pass_begin = vk::RenderPassBeginInfo::default()
+            .render_pass(shadow_map.render_pass)
+            .framebuffer(shadow_map.framebuffers[cascade])
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D { width: resolution, height: resolution },
+            })
+            .clear_values(&clear_values);
+
+        let shadow_pc = super::shadow::ShadowPushConstants {
+            light_view_proj: cascade_matrices[cascade].to_cols_array_2d(),
+        };
+
+        renderer.device_ctx.device.cmd_begin_render_pass(
+            command_buffer, &render_pass_begin, vk::SubpassContents::INLINE,
+        );
+        renderer.device_ctx.device.cmd_bind_pipeline(
+            command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_map.pipeline,
+        );
+        renderer.device_ctx.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+        renderer.device_ctx.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+        renderer.device_ctx.device.cmd_push_constants(
+            command_buffer,
+            shadow_map.pipeline_layout,
+            vk::ShaderStageFlags::VERTEX,
+            0,
+            bytemuck::bytes_of(&shadow_pc),
+        );
+        renderer.device_ctx.device.cmd_bind_descriptor_sets(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            shadow_map.pipeline_layout,
+            0,
+            &[bindless_set],
+            &[],
+        );
+        renderer.device_ctx.device.cmd_bind_vertex_buffers(
+            command_buffer, 0, &vertex_buffers, &vertex_offsets,
+        );
+        renderer.device_ctx.device.cmd_bind_index_buffer(
+            command_buffer,
+            meshlet_pool.meshlet_tri_buffer,
+            0,
+            vk::IndexType::UINT32,
+        );
+        renderer.device_ctx.device.cmd_draw_indexed_indirect_count(
+            command_buffer,
+            meshlet_pool.meshlet_indirect_buffer,
+            0,
+            meshlet_pool.meshlet_count_buffer,
+            0,
+            max_draw_count,
+            std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
+        );
+        renderer.device_ctx.device.cmd_end_render_pass(command_buffer);
+    }
+
+    // Transition shadow depth images to read-only for fragment shader sampling.
+    shadow_map.transition_to_read(&renderer.device_ctx.device, command_buffer);
+}
+
 // ---------------------------------------------------------------------------
 // Main submit_frame — orchestrator calling the named sub-functions above.
 // ---------------------------------------------------------------------------
@@ -618,6 +795,9 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         // 6. Dispatch chunk + meshlet culling.
         dispatch_chunk_cull(renderer, command_buffer, camera_uniforms);
 
+        // 6.5: Record CSM shadow depth passes (LGHT-02).
+        record_csm_shadow_passes(renderer, command_buffer, camera_uniforms);
+
         // 7. Begin render pass.
         begin_render_pass(renderer, command_buffer, image_index);
 
@@ -632,6 +812,13 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
 
         // 11. Generate Hi-Z pyramid.
         generate_hiz(renderer, command_buffer);
+
+        // 11.5. Transition CSM shadow maps back to attachment for next frame (LGHT-02).
+        if renderer.shadow_config.enabled {
+            if let Some(shadow_map) = &renderer.shadow_map {
+                shadow_map.transition_to_attachment(&renderer.device_ctx.device, command_buffer);
+            }
+        }
 
         // 12. Submit and present.
         let needs_recreate = present(renderer, command_buffer, image_index)?;
