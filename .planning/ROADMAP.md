@@ -225,7 +225,7 @@ Plans:
 
 Plans:
 - [x] 07-01: Directional light + PBR lighting model (Lambertian+GGX, face normals, metallic/roughness).
-- [ ] 07-02: Cascaded shadow maps (4 cascades, depth-only pass, PCF soft shadows).
+- [x] 07-02: Cascaded shadow maps (4 cascades, depth-only pass, PCF soft shadows).
 - [ ] 07-03: Screen-space ambient occlusion (SSAO compute, bilateral blur, compositing).
 - [ ] 07-04: Voxel ambient occlusion + GI probes (per-vertex AO in meshing, optional irradiance probes).
 - [ ] 07-05: Sky/atmosphere + day-night cycle (Preetham model, sun rotation, distance fog).

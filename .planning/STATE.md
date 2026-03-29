@@ -9,7 +9,7 @@ progress:
   total_phases: 14
   completed_phases: 9
   total_plans: 52
-  completed_plans: 48
+  completed_plans: 49
 ---
 
 # Session State
@@ -22,7 +22,20 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 07-lighting-and-shadows
-**Status:** Executing (Plan 07-01 COMPLETE)
+**Status:** Executing (Plan 07-02 COMPLETE)
+
+## Key Decisions (Phase 07 Plan 02)
+
+- CSM-01: Single 2D array image with 4 layers (not 4 separate images) for cleaner descriptor binding
+- CSM-02: Comparison sampler (LESS_OR_EQUAL) enables hardware PCF via sampler2DArrayShadow
+- CSM-03: Practical split scheme with λ=0.5 (blend linear/logarithmic) for cascade partitioning
+- CSM-04: Texel grid snapping to prevent shadow shimmer during camera movement
+- CSM-05: Depth bias constant=1.25, slope=1.75 for shadow acne prevention (adjustable via egui)
+- CSM-06: 10% transition zone for cascade blending — flicker-free boundaries
+- CSM-07: Border color FLOAT_OPAQUE_WHITE — out-of-bounds samples read as fully lit
+- CSM-08: Z range extended 2x behind camera to catch shadow casters not in view
+- CSM-09: Shadow passes reuse visible meshlet indirect buffer from cull pass
+- CSM-10: cascade_matrices/splits written to LightingParams SSBO via direct mapped pointer write
 
 ## Key Decisions (Phase 07 Plan 01)
 
@@ -174,3 +187,4 @@ See: .planning/PROJECT.md
 - 2026-03-28: Executed 06.1-07 — Camera smoothing + chunk fade-in + dead code cleanup (POLISH-08, POLISH-09, MED-12, REFAC-06~07)
 - 2026-03-28: Executed 06.1-08 — Architecture refactoring (REFAC-01~05, REFAC-08) — Phase 06.1 COMPLETE
 - 2026-03-29: Executed 07-01 — Directional light + PBR lighting model (LGHT-01) — Cook-Torrance BRDF, 25 bindless bindings, 32B BlockMaterial, LightingState, PointLightManager
+- 2026-03-29: Executed 07-02 — 4-cascade CSM (LGHT-02) — D32_SFLOAT depth array, comparison sampler, PCF 3x3, cascade blending, texel snapping, egui controls
