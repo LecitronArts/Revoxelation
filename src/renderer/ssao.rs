@@ -207,17 +207,12 @@ impl SsaoPass {
                 vk::ImageLayout::GENERAL,
             );
             // Binding 24: blur intermediate as STORAGE_IMAGE (for compute write).
-            let image_info = [vk::DescriptorImageInfo::default()
-                .image_view(self.blur_view)
-                .image_layout(vk::ImageLayout::GENERAL)];
-            let writes = [vk::WriteDescriptorSet::default()
-                .dst_set(bindless.descriptor_set)
-                .dst_binding(BINDING_SSAO_BLUR_INTERMEDIATE)
-                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                .image_info(&image_info)];
-            unsafe {
-                renderer.device_ctx.device.update_descriptor_sets(&writes, &[]);
-            }
+            bindless.register_storage_image(
+                &renderer.device_ctx.device,
+                BINDING_SSAO_BLUR_INTERMEDIATE,
+                self.blur_view,
+                vk::ImageLayout::GENERAL,
+            );
         }
     }
 

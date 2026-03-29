@@ -45,6 +45,9 @@ layout(set = 0, binding = 9) uniform sampler2DArray tex_array;
 // CSM shadow maps at binding 16 (LGHT-02).
 layout(set = 0, binding = 16) uniform sampler2DArrayShadow csm_shadow_maps;
 
+// SSAO texture at binding 17 (LGHT-03).
+layout(set = 0, binding = 17) uniform sampler2D ssao_texture;
+
 // Lighting params SSBO at binding 18 (LGHT-01).
 layout(std430, set = 0, binding = 18) readonly buffer LightingBuffer {
     LightingParams lighting;
@@ -127,9 +130,12 @@ void main() {
 
     vec3 lit_color = apply_directional_light_shadowed(N, V, v_world_pos, texel.rgb, metallic, roughness, lp, shadow_factor);
 
-    // Voxel AO (LGHT-04): apply per-vertex AO to ambient term only.
-    // TODO(07-03): final_ao = v_voxel_ao * ssao_sample;
-    float final_ao = v_voxel_ao;
+    // Voxel AO (LGHT-04) combined with SSAO (LGHT-03): apply to ambient term only.
+    // Sample SSAO from binding 17 (screen-space AO computed by SSAO pass).
+    vec2 ssao_size = vec2(textureSize(ssao_texture, 0));
+    vec2 screen_uv = gl_FragCoord.xy / ssao_size;
+    float ssao = texture(ssao_texture, screen_uv).r;
+    float final_ao = v_voxel_ao * ssao;
     // Subtract unmodulated ambient, re-add with AO applied.
     vec3 ambient_raw = lp.ambient_color * lp.ambient_intensity * texel.rgb;
     lit_color = lit_color - ambient_raw + ambient_raw * final_ao;

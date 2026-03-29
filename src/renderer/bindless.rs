@@ -401,6 +401,27 @@ impl BindlessTable {
         }
     }
 
+    /// Write a STORAGE_IMAGE descriptor to the given binding (LGHT-03).
+    pub fn register_storage_image(
+        &self,
+        device: &ash::Device,
+        binding: u32,
+        view: vk::ImageView,
+        layout: vk::ImageLayout,
+    ) {
+        let image_info = [vk::DescriptorImageInfo::default()
+            .image_view(view)
+            .image_layout(layout)];
+        let writes = [vk::WriteDescriptorSet::default()
+            .dst_set(self.descriptor_set)
+            .dst_binding(binding)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .image_info(&image_info)];
+        unsafe {
+            device.update_descriptor_sets(&writes, &[]);
+        }
+    }
+
     /// Clean up descriptor pool and layout.
     pub fn destroy(&self, device: &ash::Device) {
         unsafe {

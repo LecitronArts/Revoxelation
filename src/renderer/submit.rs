@@ -20,6 +20,7 @@ pub fn submit_frame_sequence() -> &'static [&'static str] {
         "meshlet_draw_or_chunk_draw",
         "egui",
         "hiz_generate",
+        "ssao_compute",
     ]
 }
 
@@ -497,6 +498,30 @@ unsafe fn generate_hiz(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
     );
 }
 
+/// Record SSAO compute + bilateral blur passes (LGHT-03).
+///
+/// Runs after Hi-Z generation — reads the resolved depth via binding 7 (Hi-Z mip 0).
+/// Writes blurred AO to binding 17 for fragment shader consumption on this or next frame.
+unsafe fn record_ssao_pass(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
+    let Some(ssao) = &renderer.ssao_pass else { return };
+    if !renderer.ssao_config.enabled {
+        return;
+    }
+
+    let bindless_set = renderer
+        .bindless
+        .as_ref()
+        .map(|b| b.descriptor_set)
+        .unwrap_or(vk::DescriptorSet::null());
+
+    ssao.record_dispatch(
+        &renderer.device_ctx.device,
+        command_buffer,
+        bindless_set,
+        &renderer.ssao_config,
+    );
+}
+
 /// Submit command buffer and queue present. Returns true if swapchain needs recreation.
 unsafe fn present(renderer: &Renderer, command_buffer: vk::CommandBuffer, image_index: u32) -> Result<bool> {
     let current_frame = renderer.current_frame;
@@ -813,7 +838,12 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         // 11. Generate Hi-Z pyramid.
         generate_hiz(renderer, command_buffer);
 
-        // 11.5. Transition CSM shadow maps back to attachment for next frame (LGHT-02).
+        // 11.5. SSAO compute + bilateral blur (LGHT-03).
+        // Runs after Hi-Z generation — reads the resolved depth at binding 7 (Hi-Z mip 0).
+        // AO result written to binding 17 for next frame's fragment shader consumption.
+        record_ssao_pass(renderer, command_buffer);
+
+        // 11.6. Transition CSM shadow maps back to attachment for next frame (LGHT-02).
         if renderer.shadow_config.enabled {
             if let Some(shadow_map) = &renderer.shadow_map {
                 shadow_map.transition_to_attachment(&renderer.device_ctx.device, command_buffer);
