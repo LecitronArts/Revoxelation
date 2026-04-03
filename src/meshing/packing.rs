@@ -154,14 +154,14 @@ pub fn pack_quad(
     let diag_a = u16::from(ao[0]) + u16::from(ao[2]);
     let diag_b = u16::from(ao[1]) + u16::from(ao[3]);
     if diag_a < diag_b {
-        // Flipped diagonal: triangles (0,1,3) and (1,2,3)
+        // Flipped diagonal: triangles (0,3,1) and (1,3,2) — maintains CCW winding (H6 fix)
         indices.extend_from_slice(&[
             base_index,
-            base_index + 1,
             base_index + 3,
             base_index + 1,
+            base_index + 1,
+            base_index + 3,
             base_index + 2,
-            base_index + 3,
         ]);
     } else {
         // Default diagonal: triangles (0,1,2) and (0,2,3)

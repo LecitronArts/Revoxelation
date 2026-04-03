@@ -492,7 +492,7 @@ impl HiZPyramid {
             mip_height = (mip_height / 2).max(1);
         }
 
-        // Transition the last written mip (and any still-GENERAL mips) to SHADER_READ_ONLY_OPTIMAL.
+        // Transition ALL mips to SHADER_READ_ONLY_OPTIMAL for subsequent reads.
         let final_barrier = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::GENERAL)
             .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
@@ -502,8 +502,8 @@ impl HiZPyramid {
             .subresource_range(
                 vk::ImageSubresourceRange::default()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_mip_level(self.mip_count.saturating_sub(1))
-                    .level_count(1)
+                    .base_mip_level(0)
+                    .level_count(self.mip_count)
                     .layer_count(1),
             );
         unsafe {

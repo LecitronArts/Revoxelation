@@ -76,6 +76,8 @@ vec3 preetham_sky_color(vec3 view_dir, vec3 sun_dir, float turbidity) {
 
     // Zenith luminance (approximate)
     float chi = (4.0 / 9.0 - T / 120.0) * (PI - 2.0 * sun_theta);
+    // Clamp chi away from ±π/2 to prevent tan() singularity (M2 fix).
+    chi = clamp(chi, -1.5, 1.5);
     float Yz = (4.0453 * T - 4.9710) * tan(chi) - 0.2155 * T + 2.4192;
     Yz = max(Yz, 0.0);
 

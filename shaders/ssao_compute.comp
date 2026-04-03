@@ -29,12 +29,12 @@ float interleaved_gradient_noise(vec2 pos) {
 }
 
 // -----------------------------------------------------------------------
-// Linearize reverse-Z depth to view-space Z distance
+// Linearize depth to view-space Z distance (forward-Z, Vulkan [0,1])
 // -----------------------------------------------------------------------
 float linearize_depth(float d) {
-    // Vulkan depth [0,1], perspective projection
-    return params.near_plane * params.far_plane /
-           (params.far_plane - d * (params.far_plane - params.near_plane));
+    // Standard forward-Z: near→0, far→1 (glam::perspective_rh convention)
+    float denom = params.far_plane - d * (params.far_plane - params.near_plane);
+    return params.near_plane * params.far_plane / max(denom, 1e-6);
 }
 
 // -----------------------------------------------------------------------

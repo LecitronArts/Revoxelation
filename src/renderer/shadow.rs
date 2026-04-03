@@ -533,8 +533,8 @@ pub fn compute_cascade_matrices(
             max_z = max_z.max(lc.z);
         }
 
-        // Extend Z range to catch shadow casters behind the camera.
-        let z_extra = (max_z - min_z) * 2.0;
+        // Extend Z range to catch shadow casters behind the camera (M6: reduced from 2.0 to 0.5).
+        let z_extra = (max_z - min_z) * 0.5;
         min_z -= z_extra;
 
         // Texel grid snapping to prevent shadow shimmer.

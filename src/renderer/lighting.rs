@@ -36,9 +36,11 @@ pub struct LightingParams {
     pub fog_density: f32,
     pub fog_start: f32,
     pub fog_end: f32,
+    pub _pad_align: [f32; 2],    // std430 padding: vec4 render_params needs 16-byte alignment
     pub render_params: [f32; 4], // x=screen_width, y=screen_height, z=shadow_resolution
     pub fog_type: u32,           // 0=linear, 1=exp, 2=exp2, 3=height
     pub _pad: u32,
+    pub _pad2: [u32; 2],        // pad to match GLSL struct total size (376 bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +411,7 @@ impl LightingState {
             },
             fog_start: self.fog_config.start,
             fog_end: self.fog_config.end,
+            _pad_align: [0.0; 2],
             render_params: [
                 extent.width as f32,
                 extent.height as f32,
@@ -421,6 +424,7 @@ impl LightingState {
                 u32::MAX
             },
             _pad: 0,
+            _pad2: [0; 2],
         }
     }
 

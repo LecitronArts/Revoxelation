@@ -282,6 +282,9 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
         spawned.push((key, flag));
     }
     for (key, flag) in spawned {
+        // H3 fix: If re-enqueuing a key that has a stale cancel flag, drop the old one.
+        // The old job's result will be discarded in handle_job_result when it can't find
+        // a matching cancel flag (already removed by insert overwrite).
         ss.cancel_flags.insert(key, flag);
     }
 }

@@ -146,9 +146,13 @@ struct LightingParams {
     float fog_density;
     float fog_start;
     float fog_end;
+    float _pad_align0;
+    float _pad_align1;
     vec4 render_params; // x=screen_width, y=screen_height, z=shadow_resolution
     uint fog_type;
     uint _lp_pad;
+    uint _lp_pad2;
+    uint _lp_pad3;
 };
 
 const uint FOG_DISABLED = 0xFFFFFFFFu;
@@ -188,7 +192,12 @@ vec3 fresnel_schlick(float cos_theta, vec3 F0) {
 // Full Cook-Torrance BRDF evaluation
 // Returns combined diffuse + specular for a single light direction.
 vec3 cook_torrance_brdf(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughness) {
-    vec3 H = normalize(V + L);
+    // Guard against NaN when V and L are nearly opposite (V+L ≈ 0).
+    vec3 H_raw = V + L;
+    float H_len = length(H_raw);
+    if (H_len < 1e-6) return albedo * (1.0 - metallic) / PI; // fallback to diffuse only
+    vec3 H = H_raw / H_len;
+
     float NdotH = max(dot(N, H), 0.0);
     float NdotV = max(dot(N, V), 0.0);
     float NdotL = max(dot(N, L), 0.0);
@@ -334,15 +343,19 @@ float sample_shadow_csm(sampler2DArrayShadow csm, LightingParams lp,
         float dist_to_edge = split_far - view_depth;
 
         if (dist_to_edge < blend_zone && blend_zone > 0.0) {
-            // Sample next cascade.
+            // Sample next cascade — only blend if coords are in bounds.
             uint next_cascade = cascade + 1u;
             vec4 next_shadow_pos = lp.shadow_matrices[next_cascade] * vec4(world_pos, 1.0);
             vec3 next_coord = next_shadow_pos.xyz / next_shadow_pos.w;
             next_coord.xy = next_coord.xy * 0.5 + 0.5;
 
-            float next_shadow = shadow_sample_pcf(csm, next_coord, next_cascade, texel_size);
-            float blend_factor = dist_to_edge / blend_zone;
-            shadow = mix(next_shadow, shadow, blend_factor);
+            if (next_coord.x >= 0.0 && next_coord.x <= 1.0 &&
+                next_coord.y >= 0.0 && next_coord.y <= 1.0 &&
+                next_coord.z >= 0.0 && next_coord.z <= 1.0) {
+                float next_shadow = shadow_sample_pcf(csm, next_coord, next_cascade, texel_size);
+                float blend_factor = dist_to_edge / blend_zone;
+                shadow = mix(next_shadow, shadow, blend_factor);
+            }
         }
     }
 
@@ -355,6 +368,8 @@ float sample_shadow_csm(sampler2DArrayShadow csm, LightingParams lp,
 // fog_type: 0=linear, 1=exponential, 2=exponential squared, 3=height
 vec3 apply_distance_fog(vec3 color, vec3 fog_color, float dist, float fog_start, float fog_end,
                         float fog_density, uint fog_type, vec3 world_pos) {
+    // Guard: invalid fog_type means fog is disabled (H5 fix).
+    if (fog_type > 3u) return color;
     float fog_factor;
     if (fog_type == 0u) {
         // Linear fog
