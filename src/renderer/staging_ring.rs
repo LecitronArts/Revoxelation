@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
 use ash::vk;
-use gpu_allocator::{MemoryLocation, vulkan::{Allocation, AllocationScheme}};
+use gpu_allocator::{
+    MemoryLocation,
+    vulkan::{Allocation, AllocationScheme},
+};
 
 use super::Renderer;
 use super::helpers::{create_allocated_buffer, destroy_allocated_buffer};

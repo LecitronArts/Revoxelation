@@ -44,9 +44,7 @@ pub fn resolve_debug_instance_config(
             .iter()
             .any(|name| name == DEBUG_UTILS_EXTENSION_NAME);
     if validation_layer_enabled && !debug_utils_enabled {
-        eprintln!(
-            "VK_EXT_debug_utils not available; continuing without Vulkan debug messenger."
-        );
+        eprintln!("VK_EXT_debug_utils not available; continuing without Vulkan debug messenger.");
     }
 
     InstanceDebugConfig {

@@ -9,12 +9,12 @@
 
 use anyhow::Result;
 use ash::vk;
-use gpu_allocator::vulkan::Allocation;
 use gpu_allocator::MemoryLocation;
+use gpu_allocator::vulkan::Allocation;
 
 use super::Renderer;
-use super::helpers::create_allocated_buffer;
 use super::bindless::BINDING_LIGHTING_UBO;
+use super::helpers::create_allocated_buffer;
 
 /// GPU-side lighting parameters (uploaded to binding 18 SSBO).
 ///
@@ -22,12 +22,12 @@ use super::bindless::BINDING_LIGHTING_UBO;
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightingParams {
-    pub sun_direction: [f32; 3],    // normalized world-space
+    pub sun_direction: [f32; 3], // normalized world-space
     pub sun_intensity: f32,
-    pub sun_color: [f32; 3],        // linear RGB
+    pub sun_color: [f32; 3], // linear RGB
     pub ambient_intensity: f32,
-    pub ambient_color: [f32; 3],    // linear RGB
-    pub time_of_day: f32,           // 0.0-1.0 (0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset)
+    pub ambient_color: [f32; 3], // linear RGB
+    pub time_of_day: f32,        // 0.0-1.0 (0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset)
     // CSM shadow matrices (4 cascades) — filled by Plan 07-02
     pub shadow_matrices: [[f32; 16]; 4], // mat4 x 4
     pub cascade_splits: [f32; 4],
@@ -36,7 +36,8 @@ pub struct LightingParams {
     pub fog_density: f32,
     pub fog_start: f32,
     pub fog_end: f32,
-    pub fog_type: u32,              // 0=linear, 1=exp, 2=exp2, 3=height
+    pub render_params: [f32; 4], // x=screen_width, y=screen_height, z=shadow_resolution
+    pub fog_type: u32,           // 0=linear, 1=exp, 2=exp2, 3=height
     pub _pad: u32,
 }
 
@@ -65,7 +66,12 @@ impl FogType {
     }
 
     pub fn all() -> &'static [FogType] {
-        &[FogType::Linear, FogType::Exponential, FogType::ExponentialSquared, FogType::Height]
+        &[
+            FogType::Linear,
+            FogType::Exponential,
+            FogType::ExponentialSquared,
+            FogType::Height,
+        ]
     }
 }
 
@@ -74,9 +80,9 @@ impl FogType {
 pub struct FogConfig {
     pub enabled: bool,
     pub fog_type: FogType,
-    pub density: f32,       // 0.001-0.1
-    pub start: f32,         // linear fog start distance
-    pub end: f32,           // linear fog end distance
+    pub density: f32, // 0.001-0.1
+    pub start: f32,   // linear fog start distance
+    pub end: f32,     // linear fog end distance
 }
 
 impl Default for FogConfig {
@@ -108,7 +114,7 @@ pub struct DayNightCycle {
 impl Default for DayNightCycle {
     fn default() -> Self {
         Self {
-            time_of_day: 0.5, // noon
+            time_of_day: 0.375, // ~9:00 AM — lower sun angle for more visible directional lighting
             day_speed: 600.0,
             paused: true, // start paused so user controls first
         }
@@ -132,8 +138,8 @@ impl DayNightCycle {
     /// sets at 0.75 (west). Night: sun is below the horizon.
     pub fn sun_direction(&self) -> [f32; 3] {
         let angle = (self.time_of_day - 0.25) * std::f32::consts::TAU;
-        let y = angle.sin();  // height
-        let x = angle.cos();  // horizontal
+        let y = angle.sin(); // height
+        let x = angle.cos(); // horizontal
         let dir = glam::Vec3::new(x, y, 0.3).normalize();
         dir.into()
     }
@@ -301,10 +307,10 @@ impl LightingState {
             sun_color: [1.0, 0.95, 0.9],
             ambient_intensity: 0.3,
             ambient_color: [0.15, 0.18, 0.25],
-            time_of_day: 0.5, // noon
+            time_of_day: 0.375, // ~9:00 AM
             day_night: DayNightCycle::default(),
             fog_config: FogConfig::default(),
-            use_day_night_cycle: true,
+            use_day_night_cycle: false, // default OFF so manual sun controls work
         };
 
         Ok(state)
@@ -364,8 +370,14 @@ impl LightingState {
     }
 
     /// Build current LightingParams from CPU state.
-    fn build_params(&self) -> LightingParams {
+    fn build_params(&self, renderer: &Renderer) -> LightingParams {
         let sun_direction = self.compute_sun_direction();
+        let extent = renderer.swapchain_ctx.extent;
+        let shadow_resolution = renderer
+            .shadow_map
+            .as_ref()
+            .map(|shadow| shadow.resolution as f32)
+            .unwrap_or(renderer.shadow_config.resolution as f32);
 
         // Fog color tracks sky horizon color when day-night cycle is active.
         let fog_color = if self.use_day_night_cycle {
@@ -385,11 +397,29 @@ impl LightingState {
             shadow_matrices: [[0.0; 16]; 4],
             cascade_splits: [0.0; 4],
             // Fog params (LGHT-05).
-            fog_color: if self.fog_config.enabled { fog_color } else { [0.0; 3] },
-            fog_density: if self.fog_config.enabled { self.fog_config.density } else { 0.0 },
+            fog_color: if self.fog_config.enabled {
+                fog_color
+            } else {
+                [0.0; 3]
+            },
+            fog_density: if self.fog_config.enabled {
+                self.fog_config.density
+            } else {
+                0.0
+            },
             fog_start: self.fog_config.start,
             fog_end: self.fog_config.end,
-            fog_type: if self.fog_config.enabled { self.fog_config.fog_type as u32 } else { 0 },
+            render_params: [
+                extent.width as f32,
+                extent.height as f32,
+                shadow_resolution,
+                0.0,
+            ],
+            fog_type: if self.fog_config.enabled {
+                self.fog_config.fog_type as u32
+            } else {
+                u32::MAX
+            },
             _pad: 0,
         }
     }
@@ -397,7 +427,7 @@ impl LightingState {
     /// Upload current lighting parameters to the current frame's SSBO and
     /// register it at binding 18.
     pub fn update(&self, renderer: &Renderer, current_frame: usize) {
-        let params = self.build_params();
+        let params = self.build_params(renderer);
         let data = bytemuck::bytes_of(&params);
 
         let alloc = &self.ssbo_allocs[current_frame];
@@ -425,11 +455,7 @@ impl LightingState {
     pub fn destroy(mut self, renderer: &mut Renderer) -> Result<()> {
         for i in 0..2 {
             if let Some(alloc) = self.ssbo_allocs[i].take() {
-                super::helpers::destroy_allocated_buffer(
-                    renderer,
-                    self.ssbo_buffers[i],
-                    alloc,
-                )?;
+                super::helpers::destroy_allocated_buffer(renderer, self.ssbo_buffers[i], alloc)?;
             }
         }
         Ok(())

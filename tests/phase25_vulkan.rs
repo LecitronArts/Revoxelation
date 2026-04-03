@@ -14,15 +14,22 @@ fn renderer_module_types_compile() {
 
 #[test]
 fn submit_frame_fn_exists() {
-    let _: fn(&mut revoxelation::renderer::Renderer, u64, &revoxelation::renderer::camera::CameraUniforms, f32) -> anyhow::Result<revoxelation::renderer::FrameOutcome> =
+    let _: fn(
+        &mut revoxelation::renderer::Renderer,
+        u64,
+        &revoxelation::renderer::camera::CameraUniforms,
+        f32,
+    ) -> anyhow::Result<revoxelation::renderer::FrameOutcome> =
         revoxelation::renderer::submit_frame;
 }
 
 #[test]
 fn staging_buffer_api_compiles() {
-    let _: fn(&mut revoxelation::renderer::Renderer, u64) -> anyhow::Result<
-        revoxelation::renderer::StagingBuffer,
-    > = revoxelation::renderer::StagingBuffer::new;
+    let _: fn(
+        &mut revoxelation::renderer::Renderer,
+        u64,
+    ) -> anyhow::Result<revoxelation::renderer::StagingBuffer> =
+        revoxelation::renderer::StagingBuffer::new;
 
     let _: fn(&mut revoxelation::renderer::StagingBuffer, &[u8]) -> anyhow::Result<()> =
         revoxelation::renderer::StagingBuffer::write;

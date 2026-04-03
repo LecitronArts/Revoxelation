@@ -5,7 +5,10 @@ use ash::{ext, khr, vk};
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 
 #[allow(unused_imports)]
-use crate::{meshing::{MeshletMesh, PackedMesh}, streaming::types::ChunkKey};
+use crate::{
+    meshing::{MeshletMesh, PackedMesh},
+    streaming::types::ChunkKey,
+};
 
 pub mod bindless;
 pub mod camera;
@@ -87,9 +90,9 @@ pub fn shader_source_files() -> &'static [&'static str] {
 // ---------------------------------------------------------------------------
 
 // Re-export sub-struct types at renderer level for convenient access.
-pub use vulkan_core::VulkanCore;
 pub use pipeline_set::PipelineSet;
 pub use pool_manager::PoolManager;
+pub use vulkan_core::VulkanCore;
 
 pub struct Renderer {
     pub entry: ash::Entry,
@@ -286,72 +289,84 @@ impl Drop for Renderer {
             }
 
             if let Some(egui_backend) = self.egui_backend.take()
-                && let Err(e) = egui_backend.destroy(self) {
-                    log::warn!("failed to cleanup egui backend: {e}");
-                }
+                && let Err(e) = egui_backend.destroy(self)
+            {
+                log::warn!("failed to cleanup egui backend: {e}");
+            }
 
             // Clean up readback counters before other GPU resources.
             if let Some(readback) = self.readback_counters.take()
-                && let Err(e) = readback.destroy(self) {
-                    log::warn!("failed to cleanup readback counters: {e}");
-                }
+                && let Err(e) = readback.destroy(self)
+            {
+                log::warn!("failed to cleanup readback counters: {e}");
+            }
 
             // Clean up sky renderer before bindless table (LGHT-05).
             if let Some(sky) = self.sky_renderer.take()
-                && let Err(e) = sky.destroy(self) {
-                    log::warn!("failed to cleanup sky renderer: {e}");
-                }
+                && let Err(e) = sky.destroy(self)
+            {
+                log::warn!("failed to cleanup sky renderer: {e}");
+            }
 
             // Clean up SSAO pass before bindless table (LGHT-03).
             if let Some(ssao) = self.ssao_pass.take()
-                && let Err(e) = ssao.destroy(self) {
-                    log::warn!("failed to cleanup SSAO pass: {e}");
-                }
+                && let Err(e) = ssao.destroy(self)
+            {
+                log::warn!("failed to cleanup SSAO pass: {e}");
+            }
 
             // Clean up CSM shadow map before bindless table (LGHT-02).
             if let Some(sm) = self.shadow_map.take()
-                && let Err(e) = sm.destroy(self) {
-                    log::warn!("failed to cleanup shadow map: {e}");
-                }
+                && let Err(e) = sm.destroy(self)
+            {
+                log::warn!("failed to cleanup shadow map: {e}");
+            }
 
             // Clean up point light manager before bindless table.
             if let Some(plm) = self.point_light_manager.take()
-                && let Err(e) = plm.destroy(self) {
-                    log::warn!("failed to cleanup point light manager: {e}");
-                }
+                && let Err(e) = plm.destroy(self)
+            {
+                log::warn!("failed to cleanup point light manager: {e}");
+            }
 
             // Clean up lighting state before bindless table.
             if let Some(ls) = self.lighting_state.take()
-                && let Err(e) = ls.destroy(self) {
-                    log::warn!("failed to cleanup lighting state: {e}");
-                }
+                && let Err(e) = ls.destroy(self)
+            {
+                log::warn!("failed to cleanup lighting state: {e}");
+            }
 
             // Clean up PBR texture arrays before bindless table.
             if let Some(ta) = self.emissive_texture_array.take()
-                && let Err(e) = ta.destroy(self) {
-                    log::warn!("failed to cleanup emissive texture array: {e}");
-                }
+                && let Err(e) = ta.destroy(self)
+            {
+                log::warn!("failed to cleanup emissive texture array: {e}");
+            }
             if let Some(ta) = self.normal_texture_array.take()
-                && let Err(e) = ta.destroy(self) {
-                    log::warn!("failed to cleanup normal texture array: {e}");
-                }
+                && let Err(e) = ta.destroy(self)
+            {
+                log::warn!("failed to cleanup normal texture array: {e}");
+            }
             if let Some(ta) = self.mr_texture_array.take()
-                && let Err(e) = ta.destroy(self) {
-                    log::warn!("failed to cleanup MR texture array: {e}");
-                }
+                && let Err(e) = ta.destroy(self)
+            {
+                log::warn!("failed to cleanup MR texture array: {e}");
+            }
 
             // Clean up texture array before bindless table.
             if let Some(texture_array) = self.texture_array.take()
-                && let Err(e) = texture_array.destroy(self) {
-                    log::warn!("failed to cleanup texture array: {e}");
-                }
+                && let Err(e) = texture_array.destroy(self)
+            {
+                log::warn!("failed to cleanup texture array: {e}");
+            }
 
             // Clean up material buffer before bindless table.
             if let Some(alloc) = self.material_allocation.take()
                 && let Some(buf) = self.material_buffer.take()
-                    && let Err(e) = destroy_allocated_buffer(self, buf, alloc) {
-                        log::warn!("failed to free material buffer: {e}");
-                    }
+                && let Err(e) = destroy_allocated_buffer(self, buf, alloc)
+            {
+                log::warn!("failed to free material buffer: {e}");
+            }
 
             // Save and destroy pipeline cache before pipelines are torn down.
             if let Some(pipeline_cache) = self.pipeline_cache.take() {
@@ -362,19 +377,22 @@ impl Drop for Renderer {
             }
 
             if let Some(staging_ring) = self.staging_ring.take()
-                && let Err(e) = staging_ring.destroy(self) {
-                    log::warn!("failed to cleanup staging ring: {e}");
-                }
+                && let Err(e) = staging_ring.destroy(self)
+            {
+                log::warn!("failed to cleanup staging ring: {e}");
+            }
 
             if let Some(chunk_pool) = self.chunk_pool.take()
-                && let Err(e) = chunk_pool.destroy(self) {
-                    log::warn!("failed to cleanup chunk pool: {e}");
-                }
+                && let Err(e) = chunk_pool.destroy(self)
+            {
+                log::warn!("failed to cleanup chunk pool: {e}");
+            }
 
             if let Some(meshlet_pool) = self.meshlet_pool.take()
-                && let Err(e) = meshlet_pool.destroy(self) {
-                    log::warn!("failed to cleanup meshlet pool: {e}");
-                }
+                && let Err(e) = meshlet_pool.destroy(self)
+            {
+                log::warn!("failed to cleanup meshlet pool: {e}");
+            }
 
             if let Some(mesh_pipeline) = self.mesh_pipeline.take() {
                 mesh_pipeline.destroy(self);
@@ -420,37 +438,40 @@ impl Drop for Renderer {
             self.device_ctx
                 .device
                 .destroy_image_view(self.swapchain_ctx.depth_image_view, None);
-            if let Some(alloc) = self.swapchain_ctx.depth_allocation.take()
-                && let Err(e) = self.allocator.free(alloc) {
-                    log::warn!("failed to free depth allocation: {e}");
-                }
             self.device_ctx
                 .device
                 .destroy_image(self.swapchain_ctx.depth_image, None);
+            if let Some(alloc) = self.swapchain_ctx.depth_allocation.take()
+                && let Err(e) = self.allocator.free(alloc)
+            {
+                log::warn!("failed to free depth allocation: {e}");
+            }
 
             // Destroy MSAA color image.
             self.device_ctx
                 .device
                 .destroy_image_view(self.swapchain_ctx.msaa_color_view, None);
-            if let Some(alloc) = self.swapchain_ctx.msaa_color_allocation.take()
-                && let Err(e) = self.allocator.free(alloc) {
-                    log::warn!("failed to free MSAA color allocation: {e}");
-                }
             self.device_ctx
                 .device
                 .destroy_image(self.swapchain_ctx.msaa_color_image, None);
+            if let Some(alloc) = self.swapchain_ctx.msaa_color_allocation.take()
+                && let Err(e) = self.allocator.free(alloc)
+            {
+                log::warn!("failed to free MSAA color allocation: {e}");
+            }
 
             // Destroy MSAA depth image.
             self.device_ctx
                 .device
                 .destroy_image_view(self.swapchain_ctx.msaa_depth_view, None);
-            if let Some(alloc) = self.swapchain_ctx.msaa_depth_allocation.take()
-                && let Err(e) = self.allocator.free(alloc) {
-                    log::warn!("failed to free MSAA depth allocation: {e}");
-                }
             self.device_ctx
                 .device
                 .destroy_image(self.swapchain_ctx.msaa_depth_image, None);
+            if let Some(alloc) = self.swapchain_ctx.msaa_depth_allocation.take()
+                && let Err(e) = self.allocator.free(alloc)
+            {
+                log::warn!("failed to free MSAA depth allocation: {e}");
+            }
 
             if self.swapchain_ctx.render_pass != vk::RenderPass::null() {
                 self.device_ctx
@@ -486,9 +507,10 @@ impl Drop for Renderer {
             }
 
             if let Some(debug_messenger) = self.debug_messenger.take()
-                && let Some(debug_utils_loader) = &self.debug_utils_loader {
-                    debug_utils_loader.destroy_debug_utils_messenger(debug_messenger, None);
-                }
+                && let Some(debug_utils_loader) = &self.debug_utils_loader
+            {
+                debug_utils_loader.destroy_debug_utils_messenger(debug_messenger, None);
+            }
 
             self.instance.destroy_instance(None);
         }
@@ -549,8 +571,62 @@ impl Renderer {
         };
 
         let device = self.device_ctx.device.clone();
-        chunk_pool.record_uploads(&device, cmd, staging_ring, &mut self.pending_chunk_deltas)?;
+        while let Some(delta) = self.pending_chunk_deltas.pop_front() {
+            let result: Result<()> = match &delta {
+                RenderDelta::Upsert { key, mesh } => {
+                    let packed = mesh.to_packed_mesh();
+                    let upload = chunk_pool.prepare_upload(*key, &packed)?;
+                    let chunk_slot = upload.slot_id;
+                    chunk_pool.record_upload(&device, cmd, staging_ring, upload)?;
+
+                    if let Some(meshlet_pool) = self.meshlet_pool.as_mut() {
+                        meshlet_pool.record_upload(
+                            &device,
+                            cmd,
+                            staging_ring,
+                            *key,
+                            mesh,
+                            chunk_slot,
+                        )?;
+                    }
+
+                    Ok(())
+                }
+                RenderDelta::Remove { key } => {
+                    if let Some(remove) = chunk_pool.prepare_remove(*key) {
+                        chunk_pool.record_remove(&device, cmd, staging_ring, remove)?;
+                    }
+                    if let Some(meshlet_pool) = self.meshlet_pool.as_mut() {
+                        meshlet_pool.record_remove(*key);
+                    }
+                    Ok(())
+                }
+            };
+
+            if let Err(e) = result {
+                let remaining = self.pending_chunk_deltas.len() + 1;
+                log::warn!(
+                    "staging ring exhausted: deferred {} render deltas to next frame ({})",
+                    remaining,
+                    e,
+                );
+                self.pending_chunk_deltas.push_front(delta);
+                return Ok(());
+            }
+        }
 
         Ok(())
+    }
+
+    pub(crate) fn record_shadow_draw_setup(&mut self, cmd: vk::CommandBuffer) -> Result<()> {
+        let Some(meshlet_pool) = self.meshlet_pool.as_mut() else {
+            return Ok(());
+        };
+        let Some(staging_ring) = self.staging_ring.as_mut() else {
+            return Ok(());
+        };
+
+        let device = self.device_ctx.device.clone();
+        meshlet_pool.record_shadow_draw_setup(&device, cmd, staging_ring)
     }
 }

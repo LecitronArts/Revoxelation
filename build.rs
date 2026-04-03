@@ -1,4 +1,7 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn main() {
     for shader in shader_sources() {
@@ -44,7 +47,10 @@ fn compile_shader(compiler: &shaderc::Compiler, shader: &str, out_dir: &Path) {
     let mut options = shaderc::CompileOptions::new().expect("shaderc options should initialize");
     // Target SPIR-V 1.5 (Vulkan 1.2) to enable subgroup operations.
     options.set_target_spirv(shaderc::SpirvVersion::V1_5);
-    options.set_target_env(shaderc::TargetEnv::Vulkan, shaderc::EnvVersion::Vulkan1_2 as u32);
+    options.set_target_env(
+        shaderc::TargetEnv::Vulkan,
+        shaderc::EnvVersion::Vulkan1_2 as u32,
+    );
     // POLISH-07: Enable SPIR-V performance optimization.
     options.set_optimization_level(shaderc::OptimizationLevel::Performance);
     // POLISH-04: Include callback for #include "common.glsl" (relative to shaders/).
@@ -72,7 +78,10 @@ fn compile_shader(compiler: &shaderc::Compiler, shader: &str, out_dir: &Path) {
         .expect("shader source should have a file name");
     let output_path = out_dir.join(format!("{}.spv", file_name.to_string_lossy()));
     fs::write(&output_path, artifact.as_binary_u8()).unwrap_or_else(|err| {
-        panic!("failed to write compiled shader {}: {err}", output_path.display());
+        panic!(
+            "failed to write compiled shader {}: {err}",
+            output_path.display()
+        );
     });
 }
 

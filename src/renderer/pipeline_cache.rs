@@ -30,13 +30,15 @@ impl PipelineCache {
                 data
             }
             Err(_) => {
-                log::info!("No existing pipeline cache at {} — creating empty", CACHE_PATH);
+                log::info!(
+                    "No existing pipeline cache at {} — creating empty",
+                    CACHE_PATH
+                );
                 Vec::new()
             }
         };
 
-        let create_info =
-            vk::PipelineCacheCreateInfo::default().initial_data(&initial_data);
+        let create_info = vk::PipelineCacheCreateInfo::default().initial_data(&initial_data);
 
         let handle = unsafe {
             device

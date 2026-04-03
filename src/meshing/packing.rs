@@ -94,15 +94,20 @@ pub struct PackedMesh {
 ///
 /// Layout of word0: x(7) | y(7) | z(7) | face(3) | ao(2) | unused(6)
 /// Layout of word1: block_id(16) | u(8) | v(8)
-pub fn pack_vertex(local_xyz: [u8; 3], face: u8, block_id: u16, uv_local: [u8; 2], ao: u8) -> PackedVertex {
+pub fn pack_vertex(
+    local_xyz: [u8; 3],
+    face: u8,
+    block_id: u16,
+    uv_local: [u8; 2],
+    ao: u8,
+) -> PackedVertex {
     let word0 = u32::from(local_xyz[0])
         | (u32::from(local_xyz[1]) << 7)
         | (u32::from(local_xyz[2]) << 14)
         | (u32::from(face) << 21)
         | (u32::from(ao & 0x3) << 24); // LGHT-04: 2 bits AO (0=dark, 3=bright)
-    let word1 = u32::from(block_id)
-        | (u32::from(uv_local[0]) << 16)
-        | (u32::from(uv_local[1]) << 24);
+    let word1 =
+        u32::from(block_id) | (u32::from(uv_local[0]) << 16) | (u32::from(uv_local[1]) << 24);
 
     PackedVertex([word0, word1])
 }
@@ -114,7 +119,12 @@ pub fn pack_vertex(local_xyz: [u8; 3], face: u8, block_id: u16, uv_local: [u8; 2
 ///
 /// When opposite-corner AO sums differ, the quad diagonal is flipped to produce
 /// correct AO interpolation (Minecraft-style fix for interpolation anisotropy).
-pub fn pack_quad(quad: &GreedyQuad, ao: [u8; 4], vertices: &mut Vec<PackedVertex>, indices: &mut Vec<u32>) {
+pub fn pack_quad(
+    quad: &GreedyQuad,
+    ao: [u8; 4],
+    vertices: &mut Vec<PackedVertex>,
+    indices: &mut Vec<u32>,
+) {
     let base_index = vertices.len() as u32;
     let face = face_index(quad.axis, quad.positive_face);
     let corners = [
@@ -134,11 +144,7 @@ pub fn pack_quad(quad: &GreedyQuad, ao: [u8; 4], vertices: &mut Vec<PackedVertex
         //   X faces (axis 0): u_axis=Y, v_axis=Z → swap UV so V = du (Y).
         //   Z faces (axis 2): u_axis=X, v_axis=Y → V = dv (Y), already correct.
         //   Y faces (axis 1): top/bottom, UV orientation doesn't matter for Y-based lookup.
-        let uv = if quad.axis == 0 {
-            [dv, du]
-        } else {
-            [du, dv]
-        };
+        let uv = if quad.axis == 0 { [dv, du] } else { [du, dv] };
         let vertex = pack_vertex(pos, face, quad.block_id, uv, ao[i]);
         vertices.push(vertex);
     }
@@ -300,11 +306,7 @@ pub fn build_meshlets_from_packed(packed: &PackedMesh) -> MeshletMesh {
 
     // Small meshes (<4 meshlets) get LOD0 only — no simplification worthwhile.
     if lod0_count >= 4 {
-        build_lod1(
-            &mut out_meshlets,
-            &mut out_vertices,
-            &mut out_triangles,
-        );
+        build_lod1(&mut out_meshlets, &mut out_vertices, &mut out_triangles);
     }
 
     MeshletMesh {
@@ -321,12 +323,17 @@ pub fn build_meshlets_from_packed(packed: &PackedMesh) -> MeshletMesh {
 // ---------------------------------------------------------------------------
 
 /// Group LOD0 meshlets by spatial proximity. Returns vec of (group_id, member_indices).
-fn group_meshlets_spatially(meshlets: &[MeshletDescriptor], group_size: usize) -> Vec<(u32, Vec<usize>)> {
+fn group_meshlets_spatially(
+    meshlets: &[MeshletDescriptor],
+    group_size: usize,
+) -> Vec<(u32, Vec<usize>)> {
     let mut indices: Vec<usize> = (0..meshlets.len()).collect();
     indices.sort_by(|&a, &b| {
         let ca = meshlets[a].center;
         let cb = meshlets[b].center;
-        ca[0].partial_cmp(&cb[0]).unwrap_or(Ordering::Equal)
+        ca[0]
+            .partial_cmp(&cb[0])
+            .unwrap_or(Ordering::Equal)
             .then(ca[1].partial_cmp(&cb[1]).unwrap_or(Ordering::Equal))
             .then(ca[2].partial_cmp(&cb[2]).unwrap_or(Ordering::Equal))
     });
@@ -363,7 +370,8 @@ fn build_lod1(
 
     // Build a mapping of output-vertex-index → set of group_ids that use it,
     // to detect boundary vertices (vertices shared between groups).
-    let mut vertex_to_groups: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    let mut vertex_to_groups: std::collections::HashMap<u32, Vec<u32>> =
+        std::collections::HashMap::new();
     for (group_id, members) in &groups {
         for &mi in members {
             let m = &meshlets[mi];
@@ -372,7 +380,10 @@ fn build_lod1(
             let t_count = m.triangle_count as usize;
             for &local_idx in &out_triangles[t_off..t_off + t_count * 3] {
                 let global_idx = v_off as u32 + u32::from(local_idx);
-                vertex_to_groups.entry(global_idx).or_default().push(*group_id);
+                vertex_to_groups
+                    .entry(global_idx)
+                    .or_default()
+                    .push(*group_id);
             }
         }
     }
@@ -390,7 +401,8 @@ fn build_lod1(
 
         // Merge: remap all group triangles into a shared local vertex space.
         let mut merged_indices: Vec<u32> = Vec::new();
-        let mut global_to_local: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut global_to_local: std::collections::HashMap<u32, u32> =
+            std::collections::HashMap::new();
         let mut merged_positions: Vec<f32> = Vec::new();
         let mut merged_packed: Vec<PackedVertex> = Vec::new();
 
@@ -424,9 +436,10 @@ fn build_lod1(
         let mut vertex_lock = vec![false; merged_vertex_count];
         for (&global_idx, &local_idx) in &global_to_local {
             if let Some(glist) = vertex_to_groups.get(&global_idx)
-                && glist.len() > 1 {
-                    vertex_lock[local_idx as usize] = true;
-                }
+                && glist.len() > 1
+            {
+                vertex_lock[local_idx as usize] = true;
+            }
         }
 
         // Build VertexDataAdapter for meshopt.
@@ -478,13 +491,8 @@ fn build_lod1(
         }
 
         // Re-split simplified geometry into LOD1 meshlets.
-        let simplified_meshlets = meshopt::build_meshlets(
-            &simplified_indices,
-            &adapter,
-            64,
-            124,
-            0.5,
-        );
+        let simplified_meshlets =
+            meshopt::build_meshlets(&simplified_indices, &adapter, 64, 124, 0.5);
 
         // Append LOD1 meshlets' vertices and triangles to the output buffers.
         for (idx, sm) in simplified_meshlets.iter().enumerate() {

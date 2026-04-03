@@ -125,7 +125,9 @@ impl BindlessTable {
                 .binding(BINDING_SCENE)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
+                .stage_flags(
+                    vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra,
+                ),
             // binding 1: indirect templates — COMPUTE
             vk::DescriptorSetLayoutBinding::default()
                 .binding(BINDING_INDIRECT_TEMPLATES)
@@ -185,13 +187,17 @@ impl BindlessTable {
                 .binding(BINDING_MESHLET_META)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
+                .stage_flags(
+                    vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra,
+                ),
             // binding 11: meshlet_vertex SSBO — COMPUTE | VERTEX (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(BINDING_MESHLET_VERTEX)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
+                .stage_flags(
+                    vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra,
+                ),
             // binding 12: meshlet_tri SSBO — COMPUTE (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(BINDING_MESHLET_TRI)
@@ -203,7 +209,9 @@ impl BindlessTable {
                 .binding(BINDING_VISIBLE_MESHLET)
                 .descriptor_count(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra),
+                .stage_flags(
+                    vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX | mesh_extra,
+                ),
             // binding 14: meshlet_indirect SSBO — COMPUTE (+ TASK/MESH)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(BINDING_MESHLET_INDIRECT)
@@ -274,11 +282,11 @@ impl BindlessTable {
 
         // All bindings get PARTIALLY_BOUND | UPDATE_AFTER_BIND flags (D-02).
         let binding_flags = [vk::DescriptorBindingFlags::PARTIALLY_BOUND
-            | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND; BINDING_COUNT];
+            | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND;
+            BINDING_COUNT];
 
         let mut binding_flags_info =
-            vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
-                .binding_flags(&binding_flags);
+            vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
 
         // Layout created with UPDATE_AFTER_BIND_BIT.
         let descriptor_set_layout = unsafe {
@@ -348,12 +356,42 @@ impl BindlessTable {
         device: &ash::Device,
         meshlet_pool: &super::chunk_pool::MeshletPool,
     ) {
-        self.register_buffer(device, BINDING_MESHLET_META, meshlet_pool.meshlet_meta_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, BINDING_MESHLET_VERTEX, meshlet_pool.meshlet_vertex_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, BINDING_MESHLET_TRI, meshlet_pool.meshlet_tri_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, BINDING_VISIBLE_MESHLET, meshlet_pool.visible_meshlet_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, BINDING_MESHLET_INDIRECT, meshlet_pool.meshlet_indirect_buffer, vk::WHOLE_SIZE);
-        self.register_buffer(device, BINDING_MESHLET_COUNT, meshlet_pool.meshlet_count_buffer, vk::WHOLE_SIZE);
+        self.register_buffer(
+            device,
+            BINDING_MESHLET_META,
+            meshlet_pool.meshlet_meta_buffer,
+            vk::WHOLE_SIZE,
+        );
+        self.register_buffer(
+            device,
+            BINDING_MESHLET_VERTEX,
+            meshlet_pool.meshlet_vertex_buffer,
+            vk::WHOLE_SIZE,
+        );
+        self.register_buffer(
+            device,
+            BINDING_MESHLET_TRI,
+            meshlet_pool.meshlet_tri_buffer,
+            vk::WHOLE_SIZE,
+        );
+        self.register_buffer(
+            device,
+            BINDING_VISIBLE_MESHLET,
+            meshlet_pool.visible_meshlet_buffer,
+            vk::WHOLE_SIZE,
+        );
+        self.register_buffer(
+            device,
+            BINDING_MESHLET_INDIRECT,
+            meshlet_pool.meshlet_indirect_buffer,
+            vk::WHOLE_SIZE,
+        );
+        self.register_buffer(
+            device,
+            BINDING_MESHLET_COUNT,
+            meshlet_pool.meshlet_count_buffer,
+            vk::WHOLE_SIZE,
+        );
     }
 
     /// Write a STORAGE_BUFFER descriptor to the given binding (D-03).

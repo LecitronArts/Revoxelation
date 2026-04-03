@@ -104,7 +104,8 @@ pub fn create_swapchain_context(
         .iter()
         .map(|image| create_image_view(&device_ctx.device, *image, surface_format.format))
         .collect::<Result<Vec<_>>>()?;
-    let render_pass = create_render_pass_msaa(&device_ctx.device, surface_format.format, DEPTH_FORMAT)?;
+    let render_pass =
+        create_render_pass_msaa(&device_ctx.device, surface_format.format, DEPTH_FORMAT)?;
 
     // MSAA color + depth via shared helper (REFAC-03).
     let msaa = build_msaa_resources(&device_ctx.device, allocator, extent, surface_format.format)?;
@@ -163,7 +164,7 @@ pub fn recreate_swapchain_context(
     renderer: &mut super::Renderer,
     new_extent: vk::Extent2D,
 ) -> Result<()> {
-    let device = &renderer.device_ctx.device;
+    let device = renderer.device_ctx.device.clone();
 
     // Wait for all GPU work to complete before destroying resources.
     unsafe {
@@ -179,36 +180,35 @@ pub fn recreate_swapchain_context(
         }
     }
 
+    // Destroy Hi-Z before depth resources: it owns views into the old depth image.
+    if let Some(old_hiz) = renderer.hiz_pyramid.take() {
+        old_hiz.destroy(renderer);
+    }
+
     // 2. Destroy old MSAA images.
     unsafe {
         device.destroy_image_view(renderer.swapchain_ctx.msaa_color_view, None);
+        device.destroy_image(renderer.swapchain_ctx.msaa_color_image, None);
     }
     if let Some(alloc) = renderer.swapchain_ctx.msaa_color_allocation.take() {
         let _ = renderer.allocator.free(alloc);
     }
-    unsafe {
-        device.destroy_image(renderer.swapchain_ctx.msaa_color_image, None);
-    }
 
     unsafe {
         device.destroy_image_view(renderer.swapchain_ctx.msaa_depth_view, None);
+        device.destroy_image(renderer.swapchain_ctx.msaa_depth_image, None);
     }
     if let Some(alloc) = renderer.swapchain_ctx.msaa_depth_allocation.take() {
         let _ = renderer.allocator.free(alloc);
-    }
-    unsafe {
-        device.destroy_image(renderer.swapchain_ctx.msaa_depth_image, None);
     }
 
     // 3. Destroy old resolved depth image/view.
     unsafe {
         device.destroy_image_view(renderer.swapchain_ctx.depth_image_view, None);
+        device.destroy_image(renderer.swapchain_ctx.depth_image, None);
     }
     if let Some(alloc) = renderer.swapchain_ctx.depth_allocation.take() {
         let _ = renderer.allocator.free(alloc);
-    }
-    unsafe {
-        device.destroy_image(renderer.swapchain_ctx.depth_image, None);
     }
 
     // 4. Destroy old color image views.
@@ -311,15 +311,20 @@ pub fn recreate_swapchain_context(
     // 9. Create new image views.
     let image_views = images
         .iter()
-        .map(|image| create_image_view(device, *image, surface_format.format))
+        .map(|image| create_image_view(&device, *image, surface_format.format))
         .collect::<Result<Vec<_>>>()?;
 
     // 10. Create new MSAA images + depth + framebuffers via shared helpers (REFAC-03).
-    let msaa = build_msaa_resources(device, &mut renderer.allocator, extent, surface_format.format)?;
+    let msaa = build_msaa_resources(
+        &device,
+        &mut renderer.allocator,
+        extent,
+        surface_format.format,
+    )?;
     let (depth_image, depth_allocation, depth_image_view) =
-        build_depth_resources(device, &mut renderer.allocator, extent)?;
+        build_depth_resources(&device, &mut renderer.allocator, extent)?;
     let framebuffers = build_framebuffers(
-        device,
+        &device,
         renderer.swapchain_ctx.render_pass,
         &image_views,
         msaa.color_view,
@@ -345,28 +350,23 @@ pub fn recreate_swapchain_context(
     renderer.swapchain_ctx.msaa_depth_allocation = Some(msaa.depth_allocation);
 
     // 14. Recreate Hi-Z pyramid for the new swapchain dimensions (FIX-01).
-    // Sequence per D-04: take -> destroy old -> create new -> re-register bindless -> store.
-    if let Some(old_hiz) = renderer.hiz_pyramid.take() {
-        old_hiz.destroy(renderer);
-        let new_hiz = super::hiz::HiZPyramid::new(renderer, extent.width, extent.height)?;
-        // Re-register the new Hi-Z full_view + sampler at bindless binding 7.
-        if let Some(bindless) = &renderer.bindless {
-            bindless.register_image(
-                &renderer.device_ctx.device,
-                super::bindless::BINDING_HIZ_PYRAMID,
-                new_hiz.full_view,
-                new_hiz.sampler,
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            );
-        }
-        log::info!(
-            "Hi-Z pyramid recreated: {}x{} ({} mips)",
-            extent.width,
-            extent.height,
-            super::hiz::hiz_mip_count(extent.width, extent.height),
+    let new_hiz = super::hiz::HiZPyramid::new(renderer, extent.width, extent.height)?;
+    if let Some(bindless) = &renderer.bindless {
+        bindless.register_image(
+            &renderer.device_ctx.device,
+            super::bindless::BINDING_HIZ_PYRAMID,
+            new_hiz.full_view,
+            new_hiz.sampler,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
-        renderer.hiz_pyramid = Some(new_hiz);
     }
+    log::info!(
+        "Hi-Z pyramid recreated: {}x{} ({} mips)",
+        extent.width,
+        extent.height,
+        super::hiz::hiz_mip_count(extent.width, extent.height),
+    );
+    renderer.hiz_pyramid = Some(new_hiz);
 
     log::info!(
         "Swapchain recreated with MSAA {}x: {}x{}",
@@ -826,7 +826,12 @@ fn create_framebuffer_msaa(
     resolve_depth_view: vk::ImageView,
     extent: vk::Extent2D,
 ) -> Result<vk::Framebuffer> {
-    let attachments = [msaa_color_view, msaa_depth_view, resolve_color_view, resolve_depth_view];
+    let attachments = [
+        msaa_color_view,
+        msaa_depth_view,
+        resolve_color_view,
+        resolve_depth_view,
+    ];
     let create_info = vk::FramebufferCreateInfo::default()
         .render_pass(render_pass)
         .attachments(&attachments)

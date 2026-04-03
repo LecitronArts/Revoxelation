@@ -1,12 +1,22 @@
 use revoxelation::meshing::MeshingState;
-use revoxelation::runtime::{RuntimeHudOverlay, STAGE_ORDER, Stage, StreamingState, TransitionKind, run_frame};
+use revoxelation::runtime::{
+    RuntimeHudOverlay, STAGE_ORDER, Stage, StreamingState, TransitionKind, run_frame,
+};
 
 #[test]
 fn structured_logs_include_frame_stage_event() {
     let frame_index = 42;
     let mut streaming = StreamingState::new();
     let mut meshing = MeshingState::default();
-    let execution = run_frame(&mut streaming, &mut meshing, None, frame_index, [0.0, 0.0, 0.0], 720.0, std::f32::consts::FRAC_PI_3);
+    let execution = run_frame(
+        &mut streaming,
+        &mut meshing,
+        None,
+        frame_index,
+        [0.0, 0.0, 0.0],
+        720.0,
+        std::f32::consts::FRAC_PI_3,
+    );
 
     assert_eq!(execution.frame_index, frame_index);
     assert_eq!(execution.executed_stages, STAGE_ORDER);
@@ -65,7 +75,15 @@ fn hud_overlay_exposes_stage_progress() {
     let frame_index = 17;
     let mut streaming = StreamingState::new();
     let mut meshing = MeshingState::default();
-    let execution = run_frame(&mut streaming, &mut meshing, None, frame_index, [0.0, 0.0, 0.0], 720.0, std::f32::consts::FRAC_PI_3);
+    let execution = run_frame(
+        &mut streaming,
+        &mut meshing,
+        None,
+        frame_index,
+        [0.0, 0.0, 0.0],
+        720.0,
+        std::f32::consts::FRAC_PI_3,
+    );
     let overlay = &execution.overlay;
 
     assert_eq!(overlay.stage_progress.last_frame_index, Some(frame_index));

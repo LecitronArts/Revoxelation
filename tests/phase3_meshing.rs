@@ -13,7 +13,12 @@ use revoxelation::{
     },
     renderer::{RenderDelta, chunk_pool::SlotAllocator},
     runtime::scheduler::debug_deactivate_active_chunk_for_tests,
-    streaming::{octree::StreamingOctree, types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkState, ChunkVoxels}},
+    streaming::{
+        octree::StreamingOctree,
+        types::{
+            CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkState, ChunkVoxels,
+        },
+    },
 };
 
 fn filled_chunk(fill: u8) -> ChunkVoxels {
@@ -66,7 +71,9 @@ fn sample_packed_mesh(index_count: usize, quad_count: u32) -> PackedMesh {
     let vertex_count = (index_count / 6) * 4;
     PackedMesh {
         vertices: vec![PackedVertex([0, 0]); vertex_count].into_boxed_slice(),
-        indices: (0..index_count as u32).collect::<Vec<_>>().into_boxed_slice(),
+        indices: (0..index_count as u32)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
         quad_count,
         aabb_min: [1.0, 2.0, 3.0],
         aabb_max: [4.0, 5.0, 6.0],
@@ -91,7 +98,10 @@ fn mesh_01_chunk_voxels_contract_and_packed_layout() {
     assert_eq!(size_of::<PackedVertex>(), 8);
 
     let packed = pack_vertex([1, 2, 3], 4, 513, [5, 6], 3);
-    assert_eq!(packed.0[0], 1 | (2 << 7) | (3 << 14) | (4 << 21) | (3 << 24));
+    assert_eq!(
+        packed.0[0],
+        1 | (2 << 7) | (3 << 14) | (4 << 21) | (3 << 24)
+    );
     assert_eq!(packed.0[1], 513 | (5 << 16) | (6 << 24));
 }
 
@@ -190,12 +200,7 @@ fn mesh_02_finer_neighbor_face_mask_updates_coarse_chunk() {
     );
 
     let mut meshing = MeshingState::default();
-    meshing.mark_coarse_lod_neighbors_dirty(
-        fine_key,
-        fine_chunk_boundary_mask(fine_key),
-        true,
-        21,
-    );
+    meshing.mark_coarse_lod_neighbors_dirty(fine_key, fine_chunk_boundary_mask(fine_key), true, 21);
 
     let coarse_x = chunk_key(-1, 0, 0, 1);
     let coarse_y = chunk_key(0, -1, 0, 1);
@@ -273,7 +278,10 @@ fn mesh_01_greedy_meshing_emits_expected_quads() {
         &revoxelation::meshing::ChunkNeighborSet::default(),
         &clean_dirty_record(),
     );
-    assert_eq!(slab_mesh.quad_count, 6, "2x2x1 slab should merge into 6 quads");
+    assert_eq!(
+        slab_mesh.quad_count, 6,
+        "2x2x1 slab should merge into 6 quads"
+    );
     assert!(
         slab_mesh.quad_count < 16,
         "greedy meshing should beat the naive visible-face count"
@@ -435,7 +443,9 @@ fn mesh_03_delta_sync_updates_only_dirty_slots() {
         .prepare_upload(second, &sample_packed_mesh(6, 1))
         .expect("second upload should succeed");
 
-    let second_slot = allocator.slot_for(second).expect("second chunk slot exists") as usize;
+    let second_slot = allocator
+        .slot_for(second)
+        .expect("second chunk slot exists") as usize;
     let second_instance_before = allocator.instance_shadow()[second_slot];
     let second_indirect_before = allocator.indirect_shadow()[second_slot];
 
@@ -443,7 +453,10 @@ fn mesh_03_delta_sync_updates_only_dirty_slots() {
         .prepare_upload(first, &sample_packed_mesh(12, 2))
         .expect("remeshing first chunk should overwrite its own slot only");
 
-    assert_eq!(allocator.instance_shadow()[second_slot], second_instance_before);
+    assert_eq!(
+        allocator.instance_shadow()[second_slot],
+        second_instance_before
+    );
     assert_eq!(
         allocator.indirect_shadow()[second_slot].index_count,
         second_indirect_before.index_count
@@ -502,8 +515,7 @@ fn mesh_03_unload_clears_slot_and_indirect_entry() {
 fn mesh_03_build_script_and_indirect_submit_contract() {
     // INITIAL_CAPACITY replaces MAX_RENDER_CHUNKS; verify it's >= octree size.
     assert!(
-        revoxelation::renderer::chunk_pool::INITIAL_CAPACITY
-            >= StreamingOctree::build(4, 3).len(),
+        revoxelation::renderer::chunk_pool::INITIAL_CAPACITY >= StreamingOctree::build(4, 3).len(),
         "INITIAL_CAPACITY must be at least as large as the streaming octree"
     );
 

@@ -66,15 +66,42 @@ unsafe fn wait_fence_and_prepare(renderer: &mut Renderer) -> Result<()> {
 
     // D-05: Check if ChunkPool needs capacity growth (after fence wait, before recording).
     {
-        let needs = renderer.chunk_pool.as_ref().is_some_and(|cp| cp.needs_grow());
+        let needs = renderer
+            .chunk_pool
+            .as_ref()
+            .is_some_and(|cp| cp.needs_grow());
         if needs {
             let mut chunk_pool = renderer.chunk_pool.take().unwrap();
-            let bindless = renderer.bindless.take().expect("bindless must exist for growth");
+            let bindless = renderer
+                .bindless
+                .take()
+                .expect("bindless must exist for growth");
             if let Err(e) = chunk_pool.grow_capacity(renderer, &bindless) {
                 log::error!("ChunkPool growth failed: {e:#}");
             }
             renderer.bindless = Some(bindless);
             renderer.chunk_pool = Some(chunk_pool);
+        }
+    }
+
+    // Grow meshlet storage at the same safe point: after fence wait and before
+    // any command recording touches the buffers for this frame.
+    {
+        let needs = renderer
+            .meshlet_pool
+            .as_ref()
+            .is_some_and(|mp| mp.needs_grow());
+        if needs {
+            let mut meshlet_pool = renderer.meshlet_pool.take().unwrap();
+            let bindless = renderer
+                .bindless
+                .take()
+                .expect("bindless must exist for growth");
+            if let Err(e) = meshlet_pool.grow_capacity(renderer, &bindless) {
+                log::error!("MeshletPool growth failed: {e:#}");
+            }
+            renderer.bindless = Some(bindless);
+            renderer.meshlet_pool = Some(meshlet_pool);
         }
     }
 
@@ -86,22 +113,25 @@ unsafe fn acquire_image(renderer: &Renderer) -> Result<Option<(u32, bool)>> {
     let current_frame = renderer.current_frame;
     let image_available = renderer.frames[current_frame].image_available;
 
-    let acquire_result = renderer
-        .swapchain_ctx
-        .swapchain_loader
-        .acquire_next_image(
+    let acquire_result = unsafe {
+        renderer.swapchain_ctx.swapchain_loader.acquire_next_image(
             renderer.swapchain_ctx.swapchain,
             u64::MAX,
             image_available,
             vk::Fence::null(),
-        );
+        )
+    };
     match acquire_result {
         Ok((idx, sub)) => Ok(Some((idx, sub))),
         Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-            log::info!("acquire_next_image returned ERROR_OUT_OF_DATE_KHR — requesting swapchain recreation");
+            log::info!(
+                "acquire_next_image returned ERROR_OUT_OF_DATE_KHR — requesting swapchain recreation"
+            );
             Ok(None)
         }
-        Err(e) => Err(anyhow::anyhow!("failed to acquire Vulkan swapchain image: {e}")),
+        Err(e) => Err(anyhow::anyhow!(
+            "failed to acquire Vulkan swapchain image: {e}"
+        )),
     }
 }
 
@@ -111,33 +141,43 @@ unsafe fn begin_command_buffer(renderer: &mut Renderer) -> Result<vk::CommandBuf
     let command_buffer = renderer.frames[current_frame].command_buffer;
     let in_flight = renderer.frames[current_frame].in_flight;
 
-    renderer
-        .device_ctx
-        .device
-        .reset_fences(&[in_flight])
-        .context("failed to reset Vulkan in-flight fence")?;
-    renderer
-        .device_ctx
-        .device
-        .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
-        .context("failed to reset Vulkan command buffer")?;
-    renderer
-        .device_ctx
-        .device
-        .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
-        .context("failed to begin Vulkan command buffer")?;
+    unsafe {
+        renderer
+            .device_ctx
+            .device
+            .reset_fences(&[in_flight])
+            .context("failed to reset Vulkan in-flight fence")?;
+        renderer
+            .device_ctx
+            .device
+            .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
+            .context("failed to reset Vulkan command buffer")?;
+        renderer
+            .device_ctx
+            .device
+            .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
+            .context("failed to begin Vulkan command buffer")?;
+    }
 
     Ok(command_buffer)
 }
 
+/// Submit order note: `record_csm_shadow_passes` must run before
+/// `dispatch_chunk_cull` so shadow casters are built from their own draw list
+/// before the main-view cull overwrites the shared meshlet buffers.
+///
 /// Dispatch chunk-level and meshlet-level culling compute passes.
 unsafe fn dispatch_chunk_cull(
     renderer: &mut Renderer,
     command_buffer: vk::CommandBuffer,
     camera_uniforms: &CameraUniforms,
 ) {
-    let Some(cull_pipeline) = &renderer.cull_pipeline else { return };
-    let Some(chunk_pool) = &renderer.chunk_pool else { return };
+    let Some(cull_pipeline) = &renderer.cull_pipeline else {
+        return;
+    };
+    let Some(chunk_pool) = &renderer.chunk_pool else {
+        return;
+    };
 
     let view_proj = Mat4::from_cols_array_2d(&camera_uniforms.view_proj);
     let frustum_planes = extract_frustum_planes(&view_proj);
@@ -178,15 +218,17 @@ unsafe fn dispatch_chunk_cull(
     let chunk_to_meshlet_barrier = vk::MemoryBarrier::default()
         .src_access_mask(vk::AccessFlags::SHADER_WRITE)
         .dst_access_mask(vk::AccessFlags::SHADER_READ);
-    renderer.device_ctx.device.cmd_pipeline_barrier(
-        command_buffer,
-        vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::DependencyFlags::empty(),
-        &[chunk_to_meshlet_barrier],
-        &[],
-        &[],
-    );
+    unsafe {
+        renderer.device_ctx.device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::DependencyFlags::empty(),
+            &[chunk_to_meshlet_barrier],
+            &[],
+            &[],
+        );
+    }
 
     // ---- Level 2: Meshlet-level backface + frustum + Hi-Z culling ----
     // Skipped when mesh shader path is active (task shader does the culling).
@@ -229,8 +271,7 @@ unsafe fn dispatch_chunk_cull(
             let meshlet_count_barrier = vk::BufferMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(
-                    vk::AccessFlags::SHADER_READ
-                        | vk::AccessFlags::INDIRECT_COMMAND_READ,
+                    vk::AccessFlags::SHADER_READ | vk::AccessFlags::INDIRECT_COMMAND_READ,
                 )
                 .buffer(meshlet_pool.meshlet_count_buffer)
                 .offset(0)
@@ -241,18 +282,24 @@ unsafe fn dispatch_chunk_cull(
                 .buffer(meshlet_pool.meshlet_indirect_buffer)
                 .offset(0)
                 .size(vk::WHOLE_SIZE);
-            renderer.device_ctx.device.cmd_pipeline_barrier(
-                command_buffer,
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::PipelineStageFlags::COMPUTE_SHADER
-                    | vk::PipelineStageFlags::DRAW_INDIRECT
-                    | vk::PipelineStageFlags::VERTEX_INPUT
-                    | vk::PipelineStageFlags::VERTEX_SHADER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[meshlet_visible_barrier, meshlet_count_barrier, meshlet_indirect_barrier],
-                &[],
-            );
+            unsafe {
+                renderer.device_ctx.device.cmd_pipeline_barrier(
+                    command_buffer,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::PipelineStageFlags::COMPUTE_SHADER
+                        | vk::PipelineStageFlags::DRAW_INDIRECT
+                        | vk::PipelineStageFlags::VERTEX_INPUT
+                        | vk::PipelineStageFlags::VERTEX_SHADER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[
+                        meshlet_visible_barrier,
+                        meshlet_count_barrier,
+                        meshlet_indirect_barrier,
+                    ],
+                    &[],
+                );
+            }
         }
     }
 
@@ -282,15 +329,17 @@ unsafe fn dispatch_chunk_cull(
         .buffer(cull_pipeline.draw_count_buffer())
         .offset(0)
         .size(vk::WHOLE_SIZE);
-    renderer.device_ctx.device.cmd_pipeline_barrier(
-        command_buffer,
-        vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::PipelineStageFlags::DRAW_INDIRECT,
-        vk::DependencyFlags::empty(),
-        &[],
-        &[dense_barrier, draw_count_barrier],
-        &[],
-    );
+    unsafe {
+        renderer.device_ctx.device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::PipelineStageFlags::DRAW_INDIRECT,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[dense_barrier, draw_count_barrier],
+            &[],
+        );
+    }
 }
 
 /// Begin the MSAA render pass with clear values.
@@ -352,11 +401,13 @@ unsafe fn begin_render_pass(
         })
         .clear_values(&clear_values);
 
-    renderer.device_ctx.device.cmd_begin_render_pass(
-        command_buffer,
-        &render_pass_begin,
-        vk::SubpassContents::INLINE,
-    );
+    unsafe {
+        renderer.device_ctx.device.cmd_begin_render_pass(
+            command_buffer,
+            &render_pass_begin,
+            vk::SubpassContents::INLINE,
+        );
+    }
 }
 
 /// Draw meshlets (or legacy per-chunk path).
@@ -476,15 +527,17 @@ unsafe fn generate_hiz(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
                 .level_count(1)
                 .layer_count(1),
         );
-    renderer.device_ctx.device.cmd_pipeline_barrier(
-        command_buffer,
-        vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-        vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::DependencyFlags::empty(),
-        &[],
-        &[],
-        &[depth_to_read],
-    );
+    unsafe {
+        renderer.device_ctx.device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[depth_to_read],
+        );
+    }
 
     // Dispatch Hi-Z generation.
     if let Some(hiz) = &renderer.hiz_pyramid {
@@ -496,7 +549,10 @@ unsafe fn generate_hiz(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
         .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
         .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
         .src_access_mask(vk::AccessFlags::SHADER_READ)
-        .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ)
+        .dst_access_mask(
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
+        )
         .image(renderer.swapchain_ctx.depth_image)
         .subresource_range(
             vk::ImageSubresourceRange::default()
@@ -504,15 +560,17 @@ unsafe fn generate_hiz(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
                 .level_count(1)
                 .layer_count(1),
         );
-    renderer.device_ctx.device.cmd_pipeline_barrier(
-        command_buffer,
-        vk::PipelineStageFlags::COMPUTE_SHADER,
-        vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-        vk::DependencyFlags::empty(),
-        &[],
-        &[],
-        &[depth_to_attach],
-    );
+    unsafe {
+        renderer.device_ctx.device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[depth_to_attach],
+        );
+    }
 }
 
 /// Record SSAO compute + bilateral blur passes (LGHT-03).
@@ -520,27 +578,31 @@ unsafe fn generate_hiz(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
 /// Runs after Hi-Z generation — reads the resolved depth via binding 7 (Hi-Z mip 0).
 /// Writes blurred AO to binding 17 for fragment shader consumption on this or next frame.
 unsafe fn record_ssao_pass(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
-    let Some(ssao) = &renderer.ssao_pass else { return };
+    let Some(ssao) = &renderer.ssao_pass else {
+        return;
+    };
     if !renderer.ssao_config.enabled {
         return;
     }
 
-    let bindless_set = renderer
-        .bindless
-        .as_ref()
-        .map(|b| b.descriptor_set)
-        .unwrap_or(vk::DescriptorSet::null());
+    if let Err(e) = ssao.refresh_descriptor_sets(renderer) {
+        log::error!("failed to refresh SSAO descriptors: {e:#}");
+        return;
+    }
 
     ssao.record_dispatch(
         &renderer.device_ctx.device,
         command_buffer,
-        bindless_set,
         &renderer.ssao_config,
     );
 }
 
 /// Submit command buffer and queue present. Returns true if swapchain needs recreation.
-unsafe fn present(renderer: &Renderer, command_buffer: vk::CommandBuffer, image_index: u32) -> Result<bool> {
+unsafe fn present(
+    renderer: &Renderer,
+    command_buffer: vk::CommandBuffer,
+    image_index: u32,
+) -> Result<bool> {
     let current_frame = renderer.current_frame;
     let image_available = renderer.frames[current_frame].image_available;
     let render_finished = renderer.frames[current_frame].render_finished;
@@ -550,39 +612,38 @@ unsafe fn present(renderer: &Renderer, command_buffer: vk::CommandBuffer, image_
     let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
     let command_buffers = [command_buffer];
 
-    renderer
-        .device_ctx
-        .device
-        .end_command_buffer(command_buffer)
-        .context("failed to end Vulkan command buffer")?;
+    unsafe {
+        renderer
+            .device_ctx
+            .device
+            .end_command_buffer(command_buffer)
+            .context("failed to end Vulkan command buffer")?;
+    }
 
     let submit_infos = [vk::SubmitInfo::default()
         .wait_semaphores(&wait_semaphores)
         .wait_dst_stage_mask(&wait_stages)
         .command_buffers(&command_buffers)
         .signal_semaphores(&signal_semaphores)];
-    renderer
-        .device_ctx
-        .device
-        .queue_submit(
-            renderer.device_ctx.graphics_queue,
-            &submit_infos,
-            in_flight,
-        )
-        .context("failed to submit Vulkan graphics queue")?;
+    unsafe {
+        renderer
+            .device_ctx
+            .device
+            .queue_submit(renderer.device_ctx.graphics_queue, &submit_infos, in_flight)
+            .context("failed to submit Vulkan graphics queue")?;
+    }
 
     let swapchains = [renderer.swapchain_ctx.swapchain];
     let image_indices = [image_index];
-    let present_result = renderer
-        .swapchain_ctx
-        .swapchain_loader
-        .queue_present(
+    let present_result = unsafe {
+        renderer.swapchain_ctx.swapchain_loader.queue_present(
             renderer.device_ctx.present_queue,
             &vk::PresentInfoKHR::default()
                 .wait_semaphores(&signal_semaphores)
                 .swapchains(&swapchains)
                 .image_indices(&image_indices),
-        );
+        )
+    };
 
     match present_result {
         Ok(false) => Ok(false),
@@ -591,10 +652,14 @@ unsafe fn present(renderer: &Renderer, command_buffer: vk::CommandBuffer, image_
             Ok(true)
         }
         Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-            log::info!("queue_present returned ERROR_OUT_OF_DATE_KHR — requesting swapchain recreation");
+            log::info!(
+                "queue_present returned ERROR_OUT_OF_DATE_KHR — requesting swapchain recreation"
+            );
             Ok(true)
         }
-        Err(e) => Err(anyhow::anyhow!("failed to present Vulkan swapchain image: {e}")),
+        Err(e) => Err(anyhow::anyhow!(
+            "failed to present Vulkan swapchain image: {e}"
+        )),
     }
 }
 
@@ -611,19 +676,17 @@ unsafe fn record_csm_shadow_passes(
     if !renderer.shadow_config.enabled {
         return;
     }
-    let Some(shadow_map) = &renderer.shadow_map else { return };
+    let Some(shadow_map) = &renderer.shadow_map else {
+        return;
+    };
 
     // Get sun direction from lighting state.
     let sun_direction = if let Some(ls) = &renderer.lighting_state {
         let elev = ls.sun_elevation.to_radians();
         let azim = ls.sun_azimuth.to_radians();
         let cos_elev = elev.cos();
-        glam::Vec3::new(
-            cos_elev * azim.sin(),
-            elev.sin(),
-            cos_elev * azim.cos(),
-        )
-        .normalize_or_zero()
+        glam::Vec3::new(cos_elev * azim.sin(), elev.sin(), cos_elev * azim.cos())
+            .normalize_or_zero()
     } else {
         glam::Vec3::new(0.0, 1.0, 0.0)
     };
@@ -661,19 +724,23 @@ unsafe fn record_csm_shadow_passes(
                     cascade_matrices[3].to_cols_array(),
                 ];
                 let matrix_bytes = bytemuck::bytes_of(&shadow_matrices_data);
-                std::ptr::copy_nonoverlapping(
-                    matrix_bytes.as_ptr(),
-                    ptr.add(shadow_matrices_offset),
-                    matrix_bytes.len(),
-                );
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        matrix_bytes.as_ptr(),
+                        ptr.add(shadow_matrices_offset),
+                        matrix_bytes.len(),
+                    );
+                }
                 // cascade_splits at offset 48 + 256 = 304
                 let splits_offset = shadow_matrices_offset + std::mem::size_of::<[[f32; 16]; 4]>();
                 let splits_bytes = bytemuck::bytes_of(&cascade_splits);
-                std::ptr::copy_nonoverlapping(
-                    splits_bytes.as_ptr(),
-                    ptr.add(splits_offset),
-                    splits_bytes.len(),
-                );
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        splits_bytes.as_ptr(),
+                        ptr.add(splits_offset),
+                        splits_bytes.len(),
+                    );
+                }
             }
         }
     }
@@ -688,7 +755,9 @@ unsafe fn record_csm_shadow_passes(
     // Record shadow depth passes for all 4 cascades.
     // Need to bind bindless set inside each cascade render pass.
     let meshlet_pool = renderer.meshlet_pool.as_ref();
-    let total_meshlets = meshlet_pool.map(|mp| mp.active_meshlet_count()).unwrap_or(0);
+    let total_meshlets = meshlet_pool
+        .map(|mp| mp.active_meshlet_count())
+        .unwrap_or(0);
     if total_meshlets == 0 {
         return;
     }
@@ -704,7 +773,10 @@ unsafe fn record_csm_shadow_passes(
     };
     let scissor = vk::Rect2D {
         offset: vk::Offset2D { x: 0, y: 0 },
-        extent: vk::Extent2D { width: resolution, height: resolution },
+        extent: vk::Extent2D {
+            width: resolution,
+            height: resolution,
+        },
     };
     let vertex_buffers = [meshlet_pool.meshlet_vertex_buffer];
     let vertex_offsets: [vk::DeviceSize; 1] = [0];
@@ -712,14 +784,20 @@ unsafe fn record_csm_shadow_passes(
 
     for cascade in 0..super::shadow::CASCADE_COUNT as usize {
         let clear_values = [vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
         }];
         let render_pass_begin = vk::RenderPassBeginInfo::default()
             .render_pass(shadow_map.render_pass)
             .framebuffer(shadow_map.framebuffers[cascade])
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D { width: resolution, height: resolution },
+                extent: vk::Extent2D {
+                    width: resolution,
+                    height: resolution,
+                },
             })
             .clear_values(&clear_values);
 
@@ -727,48 +805,72 @@ unsafe fn record_csm_shadow_passes(
             light_view_proj: cascade_matrices[cascade].to_cols_array_2d(),
         };
 
-        renderer.device_ctx.device.cmd_begin_render_pass(
-            command_buffer, &render_pass_begin, vk::SubpassContents::INLINE,
-        );
-        renderer.device_ctx.device.cmd_bind_pipeline(
-            command_buffer, vk::PipelineBindPoint::GRAPHICS, shadow_map.pipeline,
-        );
-        renderer.device_ctx.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
-        renderer.device_ctx.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
-        renderer.device_ctx.device.cmd_push_constants(
-            command_buffer,
-            shadow_map.pipeline_layout,
-            vk::ShaderStageFlags::VERTEX,
-            0,
-            bytemuck::bytes_of(&shadow_pc),
-        );
-        renderer.device_ctx.device.cmd_bind_descriptor_sets(
-            command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            shadow_map.pipeline_layout,
-            0,
-            &[bindless_set],
-            &[],
-        );
-        renderer.device_ctx.device.cmd_bind_vertex_buffers(
-            command_buffer, 0, &vertex_buffers, &vertex_offsets,
-        );
-        renderer.device_ctx.device.cmd_bind_index_buffer(
-            command_buffer,
-            meshlet_pool.meshlet_tri_buffer,
-            0,
-            vk::IndexType::UINT32,
-        );
-        renderer.device_ctx.device.cmd_draw_indexed_indirect_count(
-            command_buffer,
-            meshlet_pool.meshlet_indirect_buffer,
-            0,
-            meshlet_pool.meshlet_count_buffer,
-            0,
-            max_draw_count,
-            std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
-        );
-        renderer.device_ctx.device.cmd_end_render_pass(command_buffer);
+        unsafe {
+            renderer.device_ctx.device.cmd_begin_render_pass(
+                command_buffer,
+                &render_pass_begin,
+                vk::SubpassContents::INLINE,
+            );
+            renderer.device_ctx.device.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                shadow_map.pipeline,
+            );
+            renderer
+                .device_ctx
+                .device
+                .cmd_set_viewport(command_buffer, 0, &[viewport]);
+            renderer
+                .device_ctx
+                .device
+                .cmd_set_scissor(command_buffer, 0, &[scissor]);
+            renderer.device_ctx.device.cmd_set_depth_bias(
+                command_buffer,
+                renderer.shadow_config.bias_constant,
+                0.0,
+                renderer.shadow_config.bias_slope,
+            );
+            renderer.device_ctx.device.cmd_push_constants(
+                command_buffer,
+                shadow_map.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                bytemuck::bytes_of(&shadow_pc),
+            );
+            renderer.device_ctx.device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                shadow_map.pipeline_layout,
+                0,
+                &[bindless_set],
+                &[],
+            );
+            renderer.device_ctx.device.cmd_bind_vertex_buffers(
+                command_buffer,
+                0,
+                &vertex_buffers,
+                &vertex_offsets,
+            );
+            renderer.device_ctx.device.cmd_bind_index_buffer(
+                command_buffer,
+                meshlet_pool.meshlet_tri_buffer,
+                0,
+                vk::IndexType::UINT32,
+            );
+            renderer.device_ctx.device.cmd_draw_indexed_indirect_count(
+                command_buffer,
+                meshlet_pool.meshlet_indirect_buffer,
+                0,
+                meshlet_pool.meshlet_count_buffer,
+                0,
+                max_draw_count,
+                std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
+            );
+            renderer
+                .device_ctx
+                .device
+                .cmd_end_render_pass(command_buffer);
+        }
     }
 
     // Transition shadow depth images to read-only for fragment shader sampling.
@@ -779,7 +881,12 @@ unsafe fn record_csm_shadow_passes(
 // Main submit_frame — orchestrator calling the named sub-functions above.
 // ---------------------------------------------------------------------------
 
-pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms: &CameraUniforms, current_time: f32) -> Result<FrameOutcome> {
+pub fn submit_frame(
+    renderer: &mut Renderer,
+    _frame_index: u64,
+    camera_uniforms: &CameraUniforms,
+    current_time: f32,
+) -> Result<FrameOutcome> {
     unsafe {
         // 1. Wait for previous frame's fence and prepare.
         wait_fence_and_prepare(renderer)?;
@@ -808,23 +915,35 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         // Must happen after lighting_state.update() so sun direction is current.
         {
             let current_frame = renderer.current_frame;
-            let sun_direction = renderer.lighting_state.as_ref()
+            let sun_direction = renderer
+                .lighting_state
+                .as_ref()
                 .map(|ls| ls.compute_sun_direction_pub())
                 .unwrap_or([0.0, 1.0, 0.0]);
-            let sun_color = renderer.lighting_state.as_ref()
+            let sun_color = renderer
+                .lighting_state
+                .as_ref()
                 .map(|ls| ls.sun_color)
                 .unwrap_or([1.0, 1.0, 1.0]);
             if let Some(sky) = &renderer.sky_renderer {
-                sky.update(renderer, current_frame, sun_direction, sun_color, camera_uniforms);
+                sky.update(
+                    renderer,
+                    current_frame,
+                    sun_direction,
+                    sun_color,
+                    camera_uniforms,
+                );
             }
         }
 
         // 4. Record staging→GPU copy commands for pending chunk deltas.
         renderer.record_chunk_delta_uploads(command_buffer)?;
+        renderer.record_shadow_draw_setup(command_buffer)?;
 
         // 5. Transfer→compute barrier.
         if renderer.chunk_pool.is_some() && renderer.staging_ring.is_some() {
             let mut dst_stages = vk::PipelineStageFlags::COMPUTE_SHADER
+                | vk::PipelineStageFlags::DRAW_INDIRECT
                 | vk::PipelineStageFlags::VERTEX_INPUT
                 | vk::PipelineStageFlags::VERTEX_SHADER;
             if renderer.use_mesh_shader_path {
@@ -835,6 +954,7 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .dst_access_mask(
                     vk::AccessFlags::SHADER_READ
+                        | vk::AccessFlags::INDIRECT_COMMAND_READ
                         | vk::AccessFlags::VERTEX_ATTRIBUTE_READ
                         | vk::AccessFlags::INDEX_READ,
                 );
@@ -849,11 +969,12 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
             );
         }
 
-        // 6. Dispatch chunk + meshlet culling.
-        dispatch_chunk_cull(renderer, command_buffer, camera_uniforms);
-
-        // 6.5: Record CSM shadow depth passes (LGHT-02).
+        // 6. Record CSM shadow depth passes before main-view culling overwrites
+        // the shared visible/indirect meshlet buffers.
         record_csm_shadow_passes(renderer, command_buffer, camera_uniforms);
+
+        // 6.5. Dispatch chunk + meshlet culling for the main camera view.
+        dispatch_chunk_cull(renderer, command_buffer, camera_uniforms);
 
         // 7. Begin render pass.
         begin_render_pass(renderer, command_buffer, image_index);
@@ -882,7 +1003,10 @@ pub fn submit_frame(renderer: &mut Renderer, _frame_index: u64, camera_uniforms:
         draw_egui(renderer, command_buffer)?;
 
         // 10. End render pass.
-        renderer.device_ctx.device.cmd_end_render_pass(command_buffer);
+        renderer
+            .device_ctx
+            .device
+            .cmd_end_render_pass(command_buffer);
 
         // 11. Generate Hi-Z pyramid.
         generate_hiz(renderer, command_buffer);

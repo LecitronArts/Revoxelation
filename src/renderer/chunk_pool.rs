@@ -2,8 +2,11 @@ use std::{collections::HashMap, mem::size_of};
 
 use anyhow::{Result, anyhow};
 use ash::vk;
-use bytemuck::{cast_slice, Pod, Zeroable};
-use gpu_allocator::{MemoryLocation, vulkan::{Allocation, AllocationScheme}};
+use bytemuck::{Pod, Zeroable, cast_slice};
+use gpu_allocator::{
+    MemoryLocation,
+    vulkan::{Allocation, AllocationScheme},
+};
 
 #[allow(unused_imports)]
 use crate::{
@@ -11,8 +14,8 @@ use crate::{
     streaming::types::{CHUNK_EDGE, ChunkKey},
 };
 
-use super::{Renderer, create_allocated_buffer, destroy_allocated_buffer};
 use super::staging_ring::StagingRing;
+use super::{Renderer, create_allocated_buffer, destroy_allocated_buffer};
 
 pub const INITIAL_CAPACITY: usize = 1024;
 
@@ -181,10 +184,9 @@ impl SlotAllocator {
                 (slot_id, draw_index, None)
             }
             None => {
-                let slot_id = self
-                    .free_slots
-                    .pop()
-                    .ok_or_else(|| anyhow!("chunk pool exhausted at {} slots", self.slot_to_chunk.len()))?;
+                let slot_id = self.free_slots.pop().ok_or_else(|| {
+                    anyhow!("chunk pool exhausted at {} slots", self.slot_to_chunk.len())
+                })?;
                 self.chunk_to_slot.insert(key, slot_id);
                 self.slot_to_chunk[slot_id as usize] = Some(key);
                 let draw_index = self.draw_index_to_slot.len() as u32;
@@ -228,8 +230,12 @@ impl SlotAllocator {
         self.instance_shadow[slot_id as usize] = instance;
         self.indirect_shadow[slot_id as usize] = indirect;
 
-        let vertex_bytes = cast_slice(mesh.vertices.as_ref()).to_vec().into_boxed_slice();
-        let index_bytes = cast_slice(mesh.indices.as_ref()).to_vec().into_boxed_slice();
+        let vertex_bytes = cast_slice(mesh.vertices.as_ref())
+            .to_vec()
+            .into_boxed_slice();
+        let index_bytes = cast_slice(mesh.indices.as_ref())
+            .to_vec()
+            .into_boxed_slice();
 
         Ok(SlotUpload {
             slot_id,
@@ -288,7 +294,10 @@ impl SlotAllocator {
     }
 
     pub fn draw_index_for_slot(&self, slot_id: u32) -> Option<u32> {
-        self.slot_to_draw_index.get(slot_id as usize).copied().flatten()
+        self.slot_to_draw_index
+            .get(slot_id as usize)
+            .copied()
+            .flatten()
     }
 
     /// Current capacity of this allocator.
@@ -306,8 +315,10 @@ impl SlotAllocator {
         }
         self.slot_to_chunk.resize(new_capacity, None);
         self.slot_to_draw_index.resize(new_capacity, None);
-        self.instance_shadow.resize(new_capacity, GpuChunkInstance::default());
-        self.indirect_shadow.resize(new_capacity, vk::DrawIndexedIndirectCommand::default());
+        self.instance_shadow
+            .resize(new_capacity, GpuChunkInstance::default());
+        self.indirect_shadow
+            .resize(new_capacity, vk::DrawIndexedIndirectCommand::default());
         // Add new free slots in reverse order so that the lowest new slot is popped first.
         for slot in (old_capacity as u32..new_capacity as u32).rev() {
             self.free_slots.push(slot);
@@ -519,7 +530,9 @@ impl ChunkPool {
         let (new_vertex_buffer, new_vertex_allocation) = create_allocated_buffer(
             renderer,
             (vertex_slot_stride_bytes() * new_capacity) as u64,
-            vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::VERTEX_BUFFER,
+            vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::VERTEX_BUFFER,
             MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-vertex",
@@ -529,7 +542,9 @@ impl ChunkPool {
         let (new_index_buffer, new_index_allocation) = create_allocated_buffer(
             renderer,
             (index_slot_stride_bytes() * new_capacity) as u64,
-            vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::INDEX_BUFFER,
+            vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::INDEX_BUFFER,
             MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "chunk-pool-index",
@@ -627,13 +642,19 @@ impl ChunkPool {
         self.scene_buffer = new_scene_buffer;
         self.scene_allocation = Some(new_scene_allocation);
         self.capacity = new_capacity;
-        self.dense_indirect_shadow.resize(new_capacity, vk::DrawIndexedIndirectCommand::default());
+        self.dense_indirect_shadow
+            .resize(new_capacity, vk::DrawIndexedIndirectCommand::default());
 
         // Grow slot allocator
         self.slot_allocator.grow(new_capacity)?;
 
         // Update BindlessTable binding 0 to point to the new scene_buffer (D-05)
-        bindless.register_buffer(&renderer.device_ctx.device, super::bindless::BINDING_SCENE, self.scene_buffer, vk::WHOLE_SIZE);
+        bindless.register_buffer(
+            &renderer.device_ctx.device,
+            super::bindless::BINDING_SCENE,
+            self.scene_buffer,
+            vk::WHOLE_SIZE,
+        );
 
         log::info!("ChunkPool: growth complete, new capacity = {new_capacity}");
         Ok(())
@@ -665,17 +686,41 @@ impl ChunkPool {
             scene_buffer_region_offsets(self.capacity);
 
         // Copy vertex data via staging
-        stage_and_copy(staging_ring, device, cmd, &vertex_bytes, 16, self.vertex_buffer, vertex_offset_bytes)?;
+        stage_and_copy(
+            staging_ring,
+            device,
+            cmd,
+            &vertex_bytes,
+            16,
+            self.vertex_buffer,
+            vertex_offset_bytes,
+        )?;
 
         // Copy index data via staging
-        stage_and_copy(staging_ring, device, cmd, &index_bytes, 4, self.index_buffer, index_offset_bytes)?;
+        stage_and_copy(
+            staging_ring,
+            device,
+            cmd,
+            &index_bytes,
+            4,
+            self.index_buffer,
+            index_offset_bytes,
+        )?;
 
         // Copy GpuChunkInstance to scene_buffer instance region (region 0)
         {
             let instance_arr = [instance];
             let instance_bytes = cast_slice(&instance_arr);
             let dst_offset = inst_off + slot_id as u64 * size_of::<GpuChunkInstance>() as u64;
-            stage_and_copy(staging_ring, device, cmd, instance_bytes, 16, self.scene_buffer, dst_offset)?;
+            stage_and_copy(
+                staging_ring,
+                device,
+                cmd,
+                instance_bytes,
+                16,
+                self.scene_buffer,
+                dst_offset,
+            )?;
         }
 
         // Copy indirect template to scene_buffer indirect template region (region 1)
@@ -684,7 +729,15 @@ impl ChunkPool {
             let indirect_bytes = bytemuck::bytes_of(&pod);
             let dst_offset =
                 indirect_off + slot_id as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64;
-            stage_and_copy(staging_ring, device, cmd, indirect_bytes, 4, self.scene_buffer, dst_offset)?;
+            stage_and_copy(
+                staging_ring,
+                device,
+                cmd,
+                indirect_bytes,
+                4,
+                self.scene_buffer,
+                dst_offset,
+            )?;
         }
 
         // Copy draw slot mapping via staging (region 2)
@@ -693,7 +746,13 @@ impl ChunkPool {
         }
 
         // Copy dense indirect entry via staging (region 3)
-        self.record_dense_indirect_copy(device, cmd, staging_ring, dense_off, dense_indirect_write)?;
+        self.record_dense_indirect_copy(
+            device,
+            cmd,
+            staging_ring,
+            dense_off,
+            dense_indirect_write,
+        )?;
 
         Ok(())
     }
@@ -715,14 +774,30 @@ impl ChunkPool {
         {
             let zero_bytes = vec![0_u8; vertex_slot_stride_bytes()];
             let dst_offset = remove.slot_id as u64 * vertex_slot_stride_bytes() as u64;
-            stage_and_copy(staging_ring, device, cmd, &zero_bytes, 16, self.vertex_buffer, dst_offset)?;
+            stage_and_copy(
+                staging_ring,
+                device,
+                cmd,
+                &zero_bytes,
+                16,
+                self.vertex_buffer,
+                dst_offset,
+            )?;
         }
 
         // Zero out the slot's index data
         {
             let zero_bytes = vec![0_u8; index_slot_stride_bytes()];
             let dst_offset = remove.slot_id as u64 * index_slot_stride_bytes() as u64;
-            stage_and_copy(staging_ring, device, cmd, &zero_bytes, 4, self.index_buffer, dst_offset)?;
+            stage_and_copy(
+                staging_ring,
+                device,
+                cmd,
+                &zero_bytes,
+                4,
+                self.index_buffer,
+                dst_offset,
+            )?;
         }
 
         // Zero out GpuChunkInstance in scene_buffer (region 0)
@@ -731,7 +806,15 @@ impl ChunkPool {
             let instance_bytes = cast_slice(&zero_instance);
             let dst_offset =
                 inst_off + remove.slot_id as u64 * size_of::<GpuChunkInstance>() as u64;
-            stage_and_copy(staging_ring, device, cmd, instance_bytes, 16, self.scene_buffer, dst_offset)?;
+            stage_and_copy(
+                staging_ring,
+                device,
+                cmd,
+                instance_bytes,
+                16,
+                self.scene_buffer,
+                dst_offset,
+            )?;
         }
 
         // Zero out indirect template in scene_buffer (region 1)
@@ -741,7 +824,15 @@ impl ChunkPool {
             let indirect_bytes = bytemuck::bytes_of(&pod);
             let dst_offset = indirect_off
                 + remove.slot_id as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64;
-            stage_and_copy(staging_ring, device, cmd, indirect_bytes, 4, self.scene_buffer, dst_offset)?;
+            stage_and_copy(
+                staging_ring,
+                device,
+                cmd,
+                indirect_bytes,
+                4,
+                self.scene_buffer,
+                dst_offset,
+            )?;
         }
 
         // Update draw slot and dense indirect mappings (regions 2 & 3)
@@ -812,7 +903,15 @@ impl ChunkPool {
         let draw_slot = [write.slot_id];
         let slot_bytes = cast_slice(&draw_slot);
         let dst_offset = slot_region_offset + write.draw_index as u64 * size_of::<u32>() as u64;
-        stage_and_copy(staging_ring, device, cmd, slot_bytes, 4, self.scene_buffer, dst_offset)
+        stage_and_copy(
+            staging_ring,
+            device,
+            cmd,
+            slot_bytes,
+            4,
+            self.scene_buffer,
+            dst_offset,
+        )
     }
 
     fn record_dense_indirect_copy(
@@ -834,7 +933,15 @@ impl ChunkPool {
         let indirect_bytes = bytemuck::bytes_of(&pod);
         let dst_offset = dense_region_offset
             + write.draw_index as u64 * size_of::<vk::DrawIndexedIndirectCommand>() as u64;
-        stage_and_copy(staging_ring, device, cmd, indirect_bytes, 4, self.scene_buffer, dst_offset)
+        stage_and_copy(
+            staging_ring,
+            device,
+            cmd,
+            indirect_bytes,
+            4,
+            self.scene_buffer,
+            dst_offset,
+        )
     }
 
     pub fn destroy(mut self, renderer: &mut Renderer) -> Result<()> {
@@ -1002,6 +1109,8 @@ pub struct MeshletPool {
     meshlet_indirect_allocation: Option<Allocation>,
     pub meshlet_count_buffer: vk::Buffer,
     meshlet_count_allocation: Option<Allocation>,
+    shadow_visible_meshlets: Vec<u32>,
+    shadow_draw_commands: Vec<vk::DrawIndexedIndirectCommand>,
 
     /// Per-chunk meshlet range tracking for removal + reclamation (D-09, CRIT-04).
     chunk_ranges: HashMap<ChunkKey, MeshletRange>,
@@ -1012,10 +1121,8 @@ pub struct MeshletPool {
     /// Current meshlet capacity.
     meshlet_capacity: usize,
     /// Current meshlet vertex capacity.
-    #[allow(dead_code)]
     vertex_capacity: usize,
     /// Current meshlet triangle index (u32) capacity.
-    #[allow(dead_code)]
     tri_capacity: usize,
     /// Number of active meshlets.
     active_meshlet_count: u32,
@@ -1023,6 +1130,12 @@ pub struct MeshletPool {
     active_vertex_count: u32,
     /// Running offset into meshlet_tri_buffer (u32 indices).
     active_tri_count: u32,
+    /// Append-only tail for new meshlet metadata ranges.
+    meshlet_tail: u32,
+    /// Append-only tail for meshlet vertex storage.
+    vertex_tail: u32,
+    /// Append-only tail for widened triangle index storage.
+    tri_tail: u32,
 }
 
 impl MeshletPool {
@@ -1032,7 +1145,9 @@ impl MeshletPool {
         let vertex_capacity = INITIAL_MESHLET_VERTEX_CAPACITY;
         let tri_capacity = INITIAL_MESHLET_TRI_CAPACITY;
 
-        let usage = vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::STORAGE_BUFFER;
+        let usage = vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::TRANSFER_SRC
+            | vk::BufferUsageFlags::STORAGE_BUFFER;
 
         let (meshlet_meta_buffer, meshlet_meta_allocation) = create_allocated_buffer(
             renderer,
@@ -1103,6 +1218,8 @@ impl MeshletPool {
             meshlet_indirect_allocation: Some(meshlet_indirect_allocation),
             meshlet_count_buffer,
             meshlet_count_allocation: Some(meshlet_count_allocation),
+            shadow_visible_meshlets: vec![0; meshlet_capacity],
+            shadow_draw_commands: vec![vk::DrawIndexedIndirectCommand::default(); meshlet_capacity],
             chunk_ranges: HashMap::new(),
             free_ranges: Vec::new(),
             meshlet_capacity,
@@ -1111,7 +1228,102 @@ impl MeshletPool {
             active_meshlet_count: 0,
             active_vertex_count: 0,
             active_tri_count: 0,
+            meshlet_tail: 0,
+            vertex_tail: 0,
+            tri_tail: 0,
         })
+    }
+
+    fn clear_shadow_range(&mut self, range: MeshletRange) {
+        let start = range.meshlet_start as usize;
+        let end = (range.meshlet_start + range.meshlet_count) as usize;
+        for command in &mut self.shadow_draw_commands[start..end] {
+            *command = vk::DrawIndexedIndirectCommand::default();
+        }
+    }
+
+    fn reserve_range(
+        &mut self,
+        key: ChunkKey,
+        meshlet_count: u32,
+        vertex_count: u32,
+        tri_count: u32,
+    ) -> Result<MeshletRange> {
+        if let Some(old_range) = self.chunk_ranges.remove(&key) {
+            self.active_meshlet_count -= old_range.meshlet_count;
+            self.active_vertex_count -= old_range.vertex_count;
+            self.active_tri_count -= old_range.tri_count;
+            self.clear_shadow_range(old_range);
+            self.free_ranges.push(old_range);
+        }
+
+        let reuse_idx = self.free_ranges.iter().position(|r| {
+            r.meshlet_count >= meshlet_count
+                && r.vertex_count >= vertex_count
+                && r.tri_count >= tri_count
+        });
+
+        let range = if let Some(idx) = reuse_idx {
+            let free = self.free_ranges.swap_remove(idx);
+            MeshletRange {
+                meshlet_start: free.meshlet_start,
+                meshlet_count,
+                vertex_start: free.vertex_start,
+                vertex_count,
+                tri_start: free.tri_start,
+                tri_count,
+            }
+        } else {
+            let meshlet_end = self
+                .meshlet_tail
+                .checked_add(meshlet_count)
+                .ok_or_else(|| anyhow!("meshlet append exceeds capacity"))?;
+            let vertex_end = self
+                .vertex_tail
+                .checked_add(vertex_count)
+                .ok_or_else(|| anyhow!("meshlet append exceeds capacity"))?;
+            let tri_end = self
+                .tri_tail
+                .checked_add(tri_count)
+                .ok_or_else(|| anyhow!("meshlet append exceeds capacity"))?;
+
+            if meshlet_end as usize > self.meshlet_capacity
+                || vertex_end as usize > self.vertex_capacity
+                || tri_end as usize > self.tri_capacity
+            {
+                return Err(anyhow!(
+                    "meshlet pool exhausted: need meshlets={}, vertices={}, triangles={} with tails ({}, {}, {}) and capacities ({}, {}, {})",
+                    meshlet_count,
+                    vertex_count,
+                    tri_count,
+                    self.meshlet_tail,
+                    self.vertex_tail,
+                    self.tri_tail,
+                    self.meshlet_capacity,
+                    self.vertex_capacity,
+                    self.tri_capacity,
+                ));
+            }
+
+            let range = MeshletRange {
+                meshlet_start: self.meshlet_tail,
+                meshlet_count,
+                vertex_start: self.vertex_tail,
+                vertex_count,
+                tri_start: self.tri_tail,
+                tri_count,
+            };
+            self.meshlet_tail = meshlet_end;
+            self.vertex_tail = vertex_end;
+            self.tri_tail = tri_end;
+            range
+        };
+
+        self.chunk_ranges.insert(key, range);
+        self.active_meshlet_count += meshlet_count;
+        self.active_vertex_count += vertex_count;
+        self.active_tri_count += tri_count;
+        Ok(range)
     }
 
     /// Upload a MeshletMesh for a chunk, converting MeshletDescriptors to GpuMeshlets
@@ -1132,28 +1344,10 @@ impl MeshletPool {
         let meshlet_count = mesh.meshlets.len() as u32;
         let vertex_count = mesh.vertices.len() as u32;
         let tri_count = widened_tris.len() as u32;
-
-        // If this chunk already has meshlets, remove the old range first (reclaim).
-        if let Some(old_range) = self.chunk_ranges.remove(&key) {
-            self.active_meshlet_count -= old_range.meshlet_count;
-            self.active_vertex_count -= old_range.vertex_count;
-            self.active_tri_count -= old_range.tri_count;
-            self.free_ranges.push(old_range);
-        }
-
-        // Try to reuse a freed range if one fits (CRIT-04).
-        let reuse_idx = self.free_ranges.iter().position(|r| {
-            r.meshlet_count >= meshlet_count
-                && r.vertex_count >= vertex_count
-                && r.tri_count >= tri_count
-        });
-
-        let (meshlet_start, vertex_start, tri_start) = if let Some(idx) = reuse_idx {
-            let free = self.free_ranges.swap_remove(idx);
-            (free.meshlet_start, free.vertex_start, free.tri_start)
-        } else {
-            (self.active_meshlet_count, self.active_vertex_count, self.active_tri_count)
-        };
+        let range = self.reserve_range(key, meshlet_count, vertex_count, tri_count)?;
+        let meshlet_start = range.meshlet_start;
+        let vertex_start = range.vertex_start;
+        let tri_start = range.tri_start;
 
         // Build GpuMeshlet array.
         let gpu_meshlets: Vec<GpuMeshlet> = mesh
@@ -1174,40 +1368,61 @@ impl MeshletPool {
                 group_id: desc.group_id,
             })
             .collect();
+        for (local_index, desc) in mesh.meshlets.iter().enumerate() {
+            let meshlet_id = meshlet_start as usize + local_index;
+            self.shadow_draw_commands[meshlet_id] = vk::DrawIndexedIndirectCommand {
+                index_count: desc.triangle_count * 3,
+                instance_count: 1,
+                first_index: tri_start + desc.triangle_offset,
+                vertex_offset: (vertex_start + desc.vertex_offset) as i32,
+                first_instance: 0,
+            };
+        }
 
         // Upload meshlet metadata via staging.
         {
             let meta_bytes = cast_slice::<GpuMeshlet, u8>(&gpu_meshlets);
             let dst_offset = meshlet_start as u64 * size_of::<GpuMeshlet>() as u64;
-            stage_and_copy(staging_ring, device, cmd, meta_bytes, 16, self.meshlet_meta_buffer, dst_offset)?;
+            stage_and_copy(
+                staging_ring,
+                device,
+                cmd,
+                meta_bytes,
+                16,
+                self.meshlet_meta_buffer,
+                dst_offset,
+            )?;
         }
 
         // Upload vertex data via staging.
         {
             let vertex_bytes = cast_slice::<PackedVertex, u8>(&mesh.vertices);
             let dst_offset = vertex_start as u64 * size_of::<PackedVertex>() as u64;
-            stage_and_copy(staging_ring, device, cmd, vertex_bytes, 16, self.meshlet_vertex_buffer, dst_offset)?;
+            stage_and_copy(
+                staging_ring,
+                device,
+                cmd,
+                vertex_bytes,
+                16,
+                self.meshlet_vertex_buffer,
+                dst_offset,
+            )?;
         }
 
         // Upload widened triangle indices via staging.
         {
             let tri_bytes = cast_slice::<u32, u8>(&widened_tris);
             let dst_offset = tri_start as u64 * size_of::<u32>() as u64;
-            stage_and_copy(staging_ring, device, cmd, tri_bytes, 4, self.meshlet_tri_buffer, dst_offset)?;
+            stage_and_copy(
+                staging_ring,
+                device,
+                cmd,
+                tri_bytes,
+                4,
+                self.meshlet_tri_buffer,
+                dst_offset,
+            )?;
         }
-
-        // Track chunk meshlet range (CRIT-04).
-        self.chunk_ranges.insert(key, MeshletRange {
-            meshlet_start,
-            meshlet_count,
-            vertex_start,
-            vertex_count,
-            tri_start,
-            tri_count,
-        });
-        self.active_meshlet_count += meshlet_count;
-        self.active_vertex_count += vertex_count;
-        self.active_tri_count += tri_count;
 
         Ok(())
     }
@@ -1219,15 +1434,197 @@ impl MeshletPool {
             self.active_meshlet_count -= range.meshlet_count;
             self.active_vertex_count -= range.vertex_count;
             self.active_tri_count -= range.tri_count;
+            self.clear_shadow_range(range);
             self.free_ranges.push(range);
         }
     }
 
     /// Returns true when active meshlets exceed 90% of capacity (D-06).
     pub fn needs_grow(&self) -> bool {
-        let active = self.active_meshlet_count as f64;
-        let threshold = self.meshlet_capacity as f64 * MESHLET_GROW_THRESHOLD;
-        active > threshold
+        let meshlet_threshold = self.meshlet_capacity as f64 * MESHLET_GROW_THRESHOLD;
+        let vertex_threshold = self.vertex_capacity as f64 * MESHLET_GROW_THRESHOLD;
+        let tri_threshold = self.tri_capacity as f64 * MESHLET_GROW_THRESHOLD;
+        self.meshlet_tail as f64 > meshlet_threshold
+            || self.vertex_tail as f64 > vertex_threshold
+            || self.tri_tail as f64 > tri_threshold
+    }
+
+    /// Grow meshlet storage by 2x between frames, preserving uploaded geometry
+    /// and rebinding the new buffers into the global bindless table.
+    pub fn grow_capacity(
+        &mut self,
+        renderer: &mut Renderer,
+        bindless: &super::bindless::BindlessTable,
+    ) -> Result<()> {
+        let old_meshlet_capacity = self.meshlet_capacity;
+        let old_vertex_capacity = self.vertex_capacity;
+        let old_tri_capacity = self.tri_capacity;
+        let new_meshlet_capacity = old_meshlet_capacity * 2;
+        let new_vertex_capacity = old_vertex_capacity * 2;
+        let new_tri_capacity = old_tri_capacity * 2;
+        log::info!(
+            "MeshletPool: growing meshlets {old_meshlet_capacity}->{new_meshlet_capacity}, vertices {old_vertex_capacity}->{new_vertex_capacity}, triangles {old_tri_capacity}->{new_tri_capacity}"
+        );
+
+        let storage_usage = vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::TRANSFER_SRC
+            | vk::BufferUsageFlags::STORAGE_BUFFER;
+
+        let (new_meshlet_meta_buffer, new_meshlet_meta_allocation) = create_allocated_buffer(
+            renderer,
+            (new_meshlet_capacity * size_of::<GpuMeshlet>()) as u64,
+            storage_usage,
+            MemoryLocation::GpuOnly,
+            AllocationScheme::GpuAllocatorManaged,
+            "meshlet-pool-meta",
+        )?;
+        let (new_meshlet_vertex_buffer, new_meshlet_vertex_allocation) = create_allocated_buffer(
+            renderer,
+            (new_vertex_capacity * size_of::<PackedVertex>()) as u64,
+            storage_usage,
+            MemoryLocation::GpuOnly,
+            AllocationScheme::GpuAllocatorManaged,
+            "meshlet-pool-vertex",
+        )?;
+        let (new_meshlet_tri_buffer, new_meshlet_tri_allocation) = create_allocated_buffer(
+            renderer,
+            (new_tri_capacity * size_of::<u32>()) as u64,
+            storage_usage,
+            MemoryLocation::GpuOnly,
+            AllocationScheme::GpuAllocatorManaged,
+            "meshlet-pool-tri",
+        )?;
+        let (new_visible_meshlet_buffer, new_visible_meshlet_allocation) = create_allocated_buffer(
+            renderer,
+            (new_meshlet_capacity * size_of::<u32>()) as u64,
+            storage_usage,
+            MemoryLocation::GpuOnly,
+            AllocationScheme::GpuAllocatorManaged,
+            "meshlet-pool-visible",
+        )?;
+        let (new_meshlet_indirect_buffer, new_meshlet_indirect_allocation) =
+            create_allocated_buffer(
+                renderer,
+                (new_meshlet_capacity * size_of::<DrawCmdPod>()) as u64,
+                storage_usage | vk::BufferUsageFlags::INDIRECT_BUFFER,
+                MemoryLocation::GpuOnly,
+                AllocationScheme::GpuAllocatorManaged,
+                "meshlet-pool-indirect",
+            )?;
+        let (new_meshlet_count_buffer, new_meshlet_count_allocation) = create_allocated_buffer(
+            renderer,
+            size_of::<u32>() as u64,
+            storage_usage,
+            MemoryLocation::GpuOnly,
+            AllocationScheme::GpuAllocatorManaged,
+            "meshlet-pool-count",
+        )?;
+
+        let old_meshlet_meta_buffer = self.meshlet_meta_buffer;
+        let old_meshlet_vertex_buffer = self.meshlet_vertex_buffer;
+        let old_meshlet_tri_buffer = self.meshlet_tri_buffer;
+        let old_visible_meshlet_buffer = self.visible_meshlet_buffer;
+        let old_meshlet_indirect_buffer = self.meshlet_indirect_buffer;
+        let old_meshlet_count_buffer = self.meshlet_count_buffer;
+
+        let meshlet_meta_copy_size = self.meshlet_tail as u64 * size_of::<GpuMeshlet>() as u64;
+        let meshlet_vertex_copy_size = self.vertex_tail as u64 * size_of::<PackedVertex>() as u64;
+        let meshlet_tri_copy_size = self.tri_tail as u64 * size_of::<u32>() as u64;
+        let visible_meshlet_copy_size = old_meshlet_capacity as u64 * size_of::<u32>() as u64;
+        let meshlet_indirect_copy_size =
+            old_meshlet_capacity as u64 * size_of::<DrawCmdPod>() as u64;
+        let meshlet_count_copy_size = size_of::<u32>() as u64;
+
+        super::helpers::submit_one_shot_commands(renderer, |device, cmd| {
+            let copy = |src: vk::Buffer, dst: vk::Buffer, size: u64| unsafe {
+                if size > 0 {
+                    let region = vk::BufferCopy::default().size(size);
+                    device.cmd_copy_buffer(cmd, src, dst, &[region]);
+                }
+            };
+
+            copy(
+                old_meshlet_meta_buffer,
+                new_meshlet_meta_buffer,
+                meshlet_meta_copy_size,
+            );
+            copy(
+                old_meshlet_vertex_buffer,
+                new_meshlet_vertex_buffer,
+                meshlet_vertex_copy_size,
+            );
+            copy(
+                old_meshlet_tri_buffer,
+                new_meshlet_tri_buffer,
+                meshlet_tri_copy_size,
+            );
+            copy(
+                old_visible_meshlet_buffer,
+                new_visible_meshlet_buffer,
+                visible_meshlet_copy_size,
+            );
+            copy(
+                old_meshlet_indirect_buffer,
+                new_meshlet_indirect_buffer,
+                meshlet_indirect_copy_size,
+            );
+            copy(
+                old_meshlet_count_buffer,
+                new_meshlet_count_buffer,
+                meshlet_count_copy_size,
+            );
+            Ok(())
+        })?;
+
+        if let Some(allocation) = self.meshlet_count_allocation.take() {
+            destroy_allocated_buffer(renderer, self.meshlet_count_buffer, allocation)?;
+        }
+        if let Some(allocation) = self.meshlet_indirect_allocation.take() {
+            destroy_allocated_buffer(renderer, self.meshlet_indirect_buffer, allocation)?;
+        }
+        if let Some(allocation) = self.visible_meshlet_allocation.take() {
+            destroy_allocated_buffer(renderer, self.visible_meshlet_buffer, allocation)?;
+        }
+        if let Some(allocation) = self.meshlet_tri_allocation.take() {
+            destroy_allocated_buffer(renderer, self.meshlet_tri_buffer, allocation)?;
+        }
+        if let Some(allocation) = self.meshlet_vertex_allocation.take() {
+            destroy_allocated_buffer(renderer, self.meshlet_vertex_buffer, allocation)?;
+        }
+        if let Some(allocation) = self.meshlet_meta_allocation.take() {
+            destroy_allocated_buffer(renderer, self.meshlet_meta_buffer, allocation)?;
+        }
+
+        self.meshlet_meta_buffer = new_meshlet_meta_buffer;
+        self.meshlet_meta_allocation = Some(new_meshlet_meta_allocation);
+        self.meshlet_vertex_buffer = new_meshlet_vertex_buffer;
+        self.meshlet_vertex_allocation = Some(new_meshlet_vertex_allocation);
+        self.meshlet_tri_buffer = new_meshlet_tri_buffer;
+        self.meshlet_tri_allocation = Some(new_meshlet_tri_allocation);
+        self.visible_meshlet_buffer = new_visible_meshlet_buffer;
+        self.visible_meshlet_allocation = Some(new_visible_meshlet_allocation);
+        self.meshlet_indirect_buffer = new_meshlet_indirect_buffer;
+        self.meshlet_indirect_allocation = Some(new_meshlet_indirect_allocation);
+        self.meshlet_count_buffer = new_meshlet_count_buffer;
+        self.meshlet_count_allocation = Some(new_meshlet_count_allocation);
+        self.meshlet_capacity = new_meshlet_capacity;
+        self.vertex_capacity = new_vertex_capacity;
+        self.tri_capacity = new_tri_capacity;
+        self.shadow_visible_meshlets.resize(new_meshlet_capacity, 0);
+        self.shadow_draw_commands.resize(
+            new_meshlet_capacity,
+            vk::DrawIndexedIndirectCommand::default(),
+        );
+
+        bindless.register_meshlet_buffers(&renderer.device_ctx.device, self);
+
+        log::info!(
+            "MeshletPool: growth complete, new capacities = meshlets {}, vertices {}, triangles {}",
+            self.meshlet_capacity,
+            self.vertex_capacity,
+            self.tri_capacity,
+        );
+        Ok(())
     }
 
     /// Active meshlet count.
@@ -1243,7 +1640,75 @@ impl MeshletPool {
 
     /// Meshlet range for a chunk.
     pub fn chunk_range(&self, key: ChunkKey) -> Option<(u32, u32)> {
-        self.chunk_ranges.get(&key).map(|r| (r.meshlet_start, r.meshlet_count))
+        self.chunk_ranges
+            .get(&key)
+            .map(|r| (r.meshlet_start, r.meshlet_count))
+    }
+
+    pub fn record_shadow_draw_setup(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        staging_ring: &mut StagingRing,
+    ) -> Result<()> {
+        let mut ranges: Vec<MeshletRange> = self.chunk_ranges.values().copied().collect();
+        ranges.sort_by_key(|range| range.meshlet_start);
+
+        let mut shadow_draw_count = 0usize;
+        for range in ranges {
+            for meshlet_id in range.meshlet_start..range.meshlet_start + range.meshlet_count {
+                let command = self.shadow_draw_commands[meshlet_id as usize];
+                if command.index_count == 0 {
+                    continue;
+                }
+                self.shadow_visible_meshlets[shadow_draw_count] = meshlet_id;
+                shadow_draw_count += 1;
+            }
+        }
+
+        let shadow_draw_count_u32 = shadow_draw_count as u32;
+        stage_and_copy(
+            staging_ring,
+            device,
+            cmd,
+            bytemuck::bytes_of(&shadow_draw_count_u32),
+            4,
+            self.meshlet_count_buffer,
+            0,
+        )?;
+        if shadow_draw_count == 0 {
+            return Ok(());
+        }
+
+        let visible_bytes =
+            cast_slice::<u32, u8>(&self.shadow_visible_meshlets[..shadow_draw_count]);
+        stage_and_copy(
+            staging_ring,
+            device,
+            cmd,
+            visible_bytes,
+            4,
+            self.visible_meshlet_buffer,
+            0,
+        )?;
+
+        let dense_shadow_commands: Vec<DrawCmdPod> = self.shadow_visible_meshlets
+            [..shadow_draw_count]
+            .iter()
+            .map(|&meshlet_id| DrawCmdPod::from_vk(&self.shadow_draw_commands[meshlet_id as usize]))
+            .collect();
+        let dense_shadow_bytes = cast_slice::<DrawCmdPod, u8>(&dense_shadow_commands);
+        stage_and_copy(
+            staging_ring,
+            device,
+            cmd,
+            dense_shadow_bytes,
+            4,
+            self.meshlet_indirect_buffer,
+            0,
+        )?;
+
+        Ok(())
     }
 
     /// Destroy all GPU allocations.
@@ -1256,7 +1721,10 @@ impl MeshletPool {
             };
         }
         free_buf!(self.meshlet_count_buffer, self.meshlet_count_allocation);
-        free_buf!(self.meshlet_indirect_buffer, self.meshlet_indirect_allocation);
+        free_buf!(
+            self.meshlet_indirect_buffer,
+            self.meshlet_indirect_allocation
+        );
         free_buf!(self.visible_meshlet_buffer, self.visible_meshlet_allocation);
         free_buf!(self.meshlet_tri_buffer, self.meshlet_tri_allocation);
         free_buf!(self.meshlet_vertex_buffer, self.meshlet_vertex_allocation);
@@ -1265,3 +1733,79 @@ impl MeshletPool {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_meshlet_pool(
+        meshlet_capacity: usize,
+        vertex_capacity: usize,
+        tri_capacity: usize,
+    ) -> MeshletPool {
+        MeshletPool {
+            meshlet_meta_buffer: vk::Buffer::null(),
+            meshlet_meta_allocation: None,
+            meshlet_vertex_buffer: vk::Buffer::null(),
+            meshlet_vertex_allocation: None,
+            meshlet_tri_buffer: vk::Buffer::null(),
+            meshlet_tri_allocation: None,
+            visible_meshlet_buffer: vk::Buffer::null(),
+            visible_meshlet_allocation: None,
+            meshlet_indirect_buffer: vk::Buffer::null(),
+            meshlet_indirect_allocation: None,
+            meshlet_count_buffer: vk::Buffer::null(),
+            meshlet_count_allocation: None,
+            shadow_visible_meshlets: vec![0; meshlet_capacity],
+            shadow_draw_commands: vec![vk::DrawIndexedIndirectCommand::default(); meshlet_capacity],
+            chunk_ranges: HashMap::new(),
+            free_ranges: Vec::new(),
+            meshlet_capacity,
+            vertex_capacity,
+            tri_capacity,
+            active_meshlet_count: 0,
+            active_vertex_count: 0,
+            active_tri_count: 0,
+            meshlet_tail: 0,
+            vertex_tail: 0,
+            tri_tail: 0,
+        }
+    }
+
+    #[test]
+    fn meshlet_reserve_append_does_not_overlap_live_tail_after_non_tail_remove() {
+        let mut pool = test_meshlet_pool(64, 64, 64);
+        let a = pool
+            .reserve_range(ChunkKey::new(0, 0, 0, 0), 10, 10, 10)
+            .unwrap();
+        let b = pool
+            .reserve_range(ChunkKey::new(1, 0, 0, 0), 10, 10, 10)
+            .unwrap();
+
+        pool.record_remove(ChunkKey::new(0, 0, 0, 0));
+
+        let c = pool
+            .reserve_range(ChunkKey::new(2, 0, 0, 0), 15, 15, 15)
+            .unwrap();
+        assert_eq!(a.meshlet_start, 0);
+        assert_eq!(b.meshlet_start, 10);
+        assert_eq!(c.meshlet_start, 20);
+        assert!(c.meshlet_start >= b.meshlet_start + b.meshlet_count);
+        assert_eq!(c.vertex_start, 20);
+        assert_eq!(c.tri_start, 20);
+    }
+
+    #[test]
+    fn meshlet_reserve_errors_when_append_exceeds_capacity() {
+        let mut pool = test_meshlet_pool(20, 20, 20);
+        pool.reserve_range(ChunkKey::new(0, 0, 0, 0), 10, 10, 10)
+            .unwrap();
+        pool.reserve_range(ChunkKey::new(1, 0, 0, 0), 10, 10, 10)
+            .unwrap();
+        pool.record_remove(ChunkKey::new(0, 0, 0, 0));
+
+        let err = pool
+            .reserve_range(ChunkKey::new(2, 0, 0, 0), 15, 15, 15)
+            .unwrap_err();
+        assert!(err.to_string().contains("meshlet pool exhausted"));
+    }
+}

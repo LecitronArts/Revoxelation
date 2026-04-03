@@ -8,8 +8,8 @@ use std::{sync::mpsc, time::Duration};
 
 use revoxelation::{
     meshing::{
-        ChunkNeighborSet, GreedyQuad, MeshDirtyRecord, PackedMesh, PackedVertex,
-        build_greedy_mesh, pack_quad, pack_vertex,
+        ChunkNeighborSet, GreedyQuad, MeshDirtyRecord, PackedMesh, PackedVertex, build_greedy_mesh,
+        pack_quad, pack_vertex,
     },
     renderer::{
         chunk_pool::SlotAllocator,
@@ -44,7 +44,9 @@ fn sample_packed_mesh(index_count: usize, quad_count: u32) -> PackedMesh {
     let vertex_count = (index_count / 6) * 4;
     PackedMesh {
         vertices: vec![PackedVertex([0, 0]); vertex_count].into_boxed_slice(),
-        indices: (0..index_count as u32).collect::<Vec<_>>().into_boxed_slice(),
+        indices: (0..index_count as u32)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
         quad_count,
         aabb_min: [1.0, 2.0, 3.0],
         aabb_max: [4.0, 5.0, 6.0],
@@ -77,7 +79,10 @@ fn mesh_03_job_runner_emits_deterministic_non_empty_chunk_payload() {
 
     assert_eq!(first.len(), CHUNK_VOXEL_COUNT);
     assert_eq!(second.len(), CHUNK_VOXEL_COUNT);
-    assert_eq!(first, second, "same chunk key should produce the same payload");
+    assert_eq!(
+        first, second,
+        "same chunk key should produce the same payload"
+    );
     assert!(
         first.iter().any(|block_id| *block_id != 0),
         "generated payload should contain at least one non-air voxel"
@@ -110,7 +115,8 @@ fn mesh_03_dense_draw_list_swap_removes_sparse_slot_holes() {
     let third_slot_before_remove = allocator
         .slot_for(third)
         .expect("third chunk should have a stable slot");
-    let third_metadata_before_remove = allocator.instance_shadow()[third_slot_before_remove as usize];
+    let third_metadata_before_remove =
+        allocator.instance_shadow()[third_slot_before_remove as usize];
 
     let removed_slot = allocator
         .prepare_remove(second)
@@ -159,7 +165,10 @@ fn mesh_03_dense_draw_list_reuse_keeps_other_draw_indices_stable() {
         .prepare_upload(reused, &sample_packed_mesh(24, 4))
         .expect("reused upload should succeed");
 
-    assert_eq!(reused_upload.slot_id, 1, "the freed stable slot should be reused");
+    assert_eq!(
+        reused_upload.slot_id, 1,
+        "the freed stable slot should be reused"
+    );
     assert_eq!(allocator.active_chunk_count(), 3);
     assert_eq!(allocator.active_draw_count(), 3);
     assert_eq!(allocator.draw_slots_shadow(), &[0, 2, 1]);
@@ -224,7 +233,9 @@ fn mesh_03_mesh_pipeline_binds_metadata_storage_buffer() {
     let bindless_source = std::fs::read_to_string("src/renderer/bindless.rs")
         .expect("src/renderer/bindless.rs should exist");
     assert!(
-        bindless_source.contains("STORAGE_BUFFER") && (bindless_source.contains(".binding(0)") || bindless_source.contains("BINDING_SCENE")),
+        bindless_source.contains("STORAGE_BUFFER")
+            && (bindless_source.contains(".binding(0)")
+                || bindless_source.contains("BINDING_SCENE")),
         "bindless.rs must have binding 0 as STORAGE_BUFFER"
     );
 }
@@ -247,7 +258,8 @@ fn mesh_03_vertex_shader_uses_metadata_for_world_placement() {
         "vertex shader should place vertices in world space before projection"
     );
     assert!(
-        !shader.contains("vec3 centered = (local - vec3(32.0, 32.0, 32.0)) / vec3(32.0, 32.0, 96.0);"),
+        !shader
+            .contains("vec3 centered = (local - vec3(32.0, 32.0, 32.0)) / vec3(32.0, 32.0, 96.0);"),
         "vertex shader should no longer treat every chunk as local-only centered geometry"
     );
 }
@@ -295,10 +307,9 @@ fn mesh_03_cull_shader_consumes_metadata_and_dense_draw_slots() {
 
 #[test]
 fn mesh_03_submit_frame_uses_dense_indirect_draw_count() {
-    let renderer_source =
-        std::fs::read_to_string("src/renderer/submit.rs")
-            .or_else(|_| std::fs::read_to_string("src/renderer/mod.rs"))
-            .expect("renderer submit module should exist");
+    let renderer_source = std::fs::read_to_string("src/renderer/submit.rs")
+        .or_else(|_| std::fs::read_to_string("src/renderer/mod.rs"))
+        .expect("renderer submit module should exist");
     let mesh_source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
         .expect("chunk mesh pipeline source should exist");
 
@@ -403,7 +414,8 @@ fn mesh_01_renderer_new_uses_instance_debug_config_contract() {
         std::fs::read_to_string("src/renderer/mod.rs").expect("renderer module should exist");
 
     assert!(
-        renderer_source.contains("let bootstrap = instance::create_instance(&entry, display_handle)?;"),
+        renderer_source
+            .contains("let bootstrap = instance::create_instance(&entry, display_handle)?;"),
         "Renderer::new should receive the instance bootstrap contract"
     );
     assert!(
@@ -417,16 +429,16 @@ fn mesh_01_renderer_new_uses_instance_debug_config_contract() {
         "Renderer::new should require both validation and debug utils before creating a debug messenger"
     );
     assert!(
-        !renderer_source.contains("let debug_messenger = Some(instance::setup_debug_messenger(&entry, &instance)?);"),
+        !renderer_source.contains(
+            "let debug_messenger = Some(instance::setup_debug_messenger(&entry, &instance)?);"
+        ),
         "Renderer::new should no longer create the debug messenger unconditionally in debug builds"
     );
 }
 
 #[test]
 fn mesh_01_spirv_word_decoder_accepts_unaligned_byte_input() {
-    let bytes = [
-        0xFF, 0x03, 0x02, 0x01, 0x00, 0x0D, 0x0C, 0x0B, 0x0A,
-    ];
+    let bytes = [0xFF, 0x03, 0x02, 0x01, 0x00, 0x0D, 0x0C, 0x0B, 0x0A];
 
     let words = decode_spirv_words(&bytes[1..]).expect("unaligned SPIR-V bytes should decode");
 
@@ -435,11 +447,13 @@ fn mesh_01_spirv_word_decoder_accepts_unaligned_byte_input() {
 
 #[test]
 fn mesh_01_spirv_word_decoder_rejects_non_word_aligned_length() {
-    let err = decode_spirv_words(&[0x01, 0x02, 0x03]).expect_err(
-        "byte lengths that are not divisible by 4 should return an explicit error",
-    );
+    let err = decode_spirv_words(&[0x01, 0x02, 0x03])
+        .expect_err("byte lengths that are not divisible by 4 should return an explicit error");
 
-    assert_eq!(err.to_string(), "SPIR-V byte length must be a multiple of 4");
+    assert_eq!(
+        err.to_string(),
+        "SPIR-V byte length must be a multiple of 4"
+    );
 }
 
 #[test]
@@ -465,11 +479,12 @@ fn mesh_01_chunk_mesh_pipeline_uses_alignment_safe_spirv_decoder() {
     // which internally uses decode_spirv_words. Check both the call site and the shared impl.
     let mesh_source = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
         .expect("chunk mesh pipeline source should exist");
-    let spirv_source = std::fs::read_to_string("src/renderer/spirv.rs")
-        .expect("spirv module source should exist");
+    let spirv_source =
+        std::fs::read_to_string("src/renderer/spirv.rs").expect("spirv module source should exist");
 
     assert!(
-        mesh_source.contains("create_shader_module") || mesh_source.contains("decode_spirv_words(bytes)?"),
+        mesh_source.contains("create_shader_module")
+            || mesh_source.contains("decode_spirv_words(bytes)?"),
         "graphics shader-module creation should use alignment-safe SPIR-V decoding"
     );
     assert!(
@@ -488,11 +503,12 @@ fn mesh_01_chunk_cull_pipeline_uses_alignment_safe_spirv_decoder() {
     // which internally uses decode_spirv_words. Check both the call site and the shared impl.
     let cull_source = std::fs::read_to_string("src/renderer/cull_pipeline.rs")
         .expect("chunk cull pipeline source should exist");
-    let spirv_source = std::fs::read_to_string("src/renderer/spirv.rs")
-        .expect("spirv module source should exist");
+    let spirv_source =
+        std::fs::read_to_string("src/renderer/spirv.rs").expect("spirv module source should exist");
 
     assert!(
-        cull_source.contains("create_shader_module") || cull_source.contains("decode_spirv_words(bytes)?"),
+        cull_source.contains("create_shader_module")
+            || cull_source.contains("decode_spirv_words(bytes)?"),
         "compute shader-module creation should use alignment-safe SPIR-V decoding"
     );
     assert!(
@@ -508,7 +524,10 @@ fn mesh_01_chunk_cull_pipeline_uses_alignment_safe_spirv_decoder() {
 #[test]
 fn mesh_01_pack_vertex_uses_7_bit_coordinate_encoding() {
     let packed = pack_vertex([1, 2, 3], 4, 513, [5, 6], 3);
-    assert_eq!(packed.0[0], 1 | (2 << 7) | (3 << 14) | (4 << 21) | (3 << 24));
+    assert_eq!(
+        packed.0[0],
+        1 | (2 << 7) | (3 << 14) | (4 << 21) | (3 << 24)
+    );
     assert_eq!(packed.0[1], 513 | (5 << 16) | (6 << 24));
 }
 
@@ -535,15 +554,14 @@ fn mesh_01_pack_quad_produces_non_degenerate_quads() {
         "pack_quad must produce non-degenerate quads with distinct positions, got {distinct_positions:?}"
     );
     // Decode positions and verify span
-    let decode = |word0: u32| -> [u32; 3] {
-        [word0 & 0x7F, (word0 >> 7) & 0x7F, (word0 >> 14) & 0x7F]
-    };
+    let decode =
+        |word0: u32| -> [u32; 3] { [word0 & 0x7F, (word0 >> 7) & 0x7F, (word0 >> 14) & 0x7F] };
     let positions: Vec<[u32; 3]> = vertices.iter().map(|v| decode(v.0[0])).collect();
     // For axis=0, u_axis=Y(1), v_axis=Z(2); size=[3,4]
     let y_range = positions.iter().map(|p| p[1]).max().unwrap()
-                - positions.iter().map(|p| p[1]).min().unwrap();
+        - positions.iter().map(|p| p[1]).min().unwrap();
     let z_range = positions.iter().map(|p| p[2]).max().unwrap()
-                - positions.iter().map(|p| p[2]).min().unwrap();
+        - positions.iter().map(|p| p[2]).min().unwrap();
     assert_eq!(y_range, 3, "Y span should match size[0]=3");
     assert_eq!(z_range, 4, "Z span should match size[1]=4");
 }
@@ -571,9 +589,8 @@ fn mesh_01_greedy_mesh_single_block_has_nonzero_position_spread() {
         "single-block chunk should produce at least one vertex"
     );
 
-    let decode = |word0: u32| -> [u32; 3] {
-        [word0 & 0x7F, (word0 >> 7) & 0x7F, (word0 >> 14) & 0x7F]
-    };
+    let decode =
+        |word0: u32| -> [u32; 3] { [word0 & 0x7F, (word0 >> 7) & 0x7F, (word0 >> 14) & 0x7F] };
     let positions: Vec<[u32; 3]> = mesh.vertices.iter().map(|v| decode(v.0[0])).collect();
 
     for axis in 0..3 {
@@ -588,8 +605,8 @@ fn mesh_01_greedy_mesh_single_block_has_nonzero_position_spread() {
 
 #[test]
 fn mesh_01_vertex_shader_decodes_7_bit_positions_and_expands_face_offset() {
-    let shader = std::fs::read_to_string("shaders/chunk_mesh.vert")
-        .expect("chunk mesh shader should exist");
+    let shader =
+        std::fs::read_to_string("shaders/chunk_mesh.vert").expect("chunk mesh shader should exist");
     let common = std::fs::read_to_string("shaders/common.glsl").unwrap_or_default();
     let combined = format!("{}\n{}", shader, common);
     assert!(

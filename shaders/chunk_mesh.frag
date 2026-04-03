@@ -77,6 +77,10 @@ void main() {
 
     // Sample albedo texture
     vec4 texel = texture(tex_array, vec3(v_uv, float(nonuniformEXT(tex_index))));
+    bool is_transparent = (flags & 0x02u) != 0u;
+    if (is_transparent && texel.a < 0.5) {
+        discard;
+    }
 
     // PBR parameters: default metallic=0.0, roughness=0.8
     float metallic = 0.0;
@@ -93,7 +97,13 @@ void main() {
     float view_depth = length(camera.camera_pos - v_world_pos);
     float shadow_factor = 1.0;
     if (lp.cascade_splits.x > 0.0) {
-        shadow_factor = sample_shadow_csm(csm_shadow_maps, lp, v_world_pos, view_depth, 2048.0);
+        shadow_factor = sample_shadow_csm(
+            csm_shadow_maps,
+            lp,
+            v_world_pos,
+            view_depth,
+            max(lp.render_params.z, 1.0)
+        );
     }
 
     vec3 lit_color = apply_directional_light_shadowed(N, V, v_world_pos, texel.rgb, metallic, roughness, lp, shadow_factor);
@@ -101,8 +111,7 @@ void main() {
     // Voxel AO (LGHT-04) combined with SSAO (LGHT-03): apply to ambient term only.
     // Sample SSAO from binding 17 (screen-space AO computed by SSAO pass).
     // Use textureSize of ssao_texture to compute screen UV without needing screen_height in push constants.
-    vec2 ssao_size = vec2(textureSize(ssao_texture, 0));
-    vec2 screen_uv = gl_FragCoord.xy / ssao_size;
+    vec2 screen_uv = gl_FragCoord.xy / max(lp.render_params.xy, vec2(1.0));
     float ssao = texture(ssao_texture, screen_uv).r;
     float final_ao = v_voxel_ao * ssao;
     // Subtract unmodulated ambient, re-add with AO applied.
@@ -124,11 +133,11 @@ void main() {
     }
 
     // Distance fog — applied after all lighting (LGHT-05).
-    if (lp.fog_density > 0.0 || lp.fog_type == 0u) {
+    if (lp.fog_type != FOG_DISABLED) {
         float dist_to_camera = length(v_world_pos - camera.camera_pos);
         lit_color = apply_distance_fog(lit_color, lp.fog_color, dist_to_camera,
                                         lp.fog_start, lp.fog_end, lp.fog_density, lp.fog_type, v_world_pos);
     }
 
-    out_color = vec4(lit_color, texel.a);
+    out_color = vec4(lit_color, is_transparent ? texel.a : 1.0);
 }

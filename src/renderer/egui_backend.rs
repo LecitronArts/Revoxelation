@@ -1,20 +1,17 @@
 use anyhow::{Context, Result};
 use ash::vk;
 use egui::{
-    ClippedPrimitive, TexturesDelta,
-    epaint::{
-        self, ImageData, Primitive, TextureId,
-    },
-    TextureFilter, TextureOptions, TextureWrapMode,
+    ClippedPrimitive, TextureFilter, TextureOptions, TextureWrapMode, TexturesDelta,
+    epaint::{self, ImageData, Primitive, TextureId},
 };
 use gpu_allocator::vulkan::{Allocation, AllocationScheme};
 
-use crate::renderer::{
-    Renderer, create_allocated_buffer, create_allocated_image,
-    destroy_allocated_buffer, destroy_allocated_image,
-};
-use crate::renderer::staging::StagingBuffer;
 use crate::renderer::spirv::create_shader_module;
+use crate::renderer::staging::StagingBuffer;
+use crate::renderer::{
+    Renderer, create_allocated_buffer, create_allocated_image, destroy_allocated_buffer,
+    destroy_allocated_image,
+};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -362,7 +359,8 @@ impl EguiAshBackend {
             let clip_rect = clipped.clip_rect;
 
             if let Primitive::Mesh(mesh) = clipped.primitive {
-                let Some(scratch) = self.upload_mesh_scratch(renderer, current_frame, &mesh)? else {
+                let Some(scratch) = self.upload_mesh_scratch(renderer, current_frame, &mesh)?
+                else {
                     continue;
                 };
 
@@ -446,9 +444,7 @@ impl EguiAshBackend {
         let whole_update = delta.pos.is_none();
         let mut newly_created = false;
 
-        if whole_update
-            && self.font_extent != Some(extent)
-            && self.font_image != vk::Image::null()
+        if whole_update && self.font_extent != Some(extent) && self.font_image != vk::Image::null()
         {
             self.destroy_font_texture(renderer)?;
         }
@@ -542,8 +538,7 @@ impl EguiAshBackend {
     }
 
     fn write_font_descriptor(&self, renderer: &Renderer) -> Result<()> {
-        if self.font_image_view == vk::ImageView::null()
-            || self.font_sampler == vk::Sampler::null()
+        if self.font_image_view == vk::ImageView::null() || self.font_sampler == vk::Sampler::null()
         {
             return Ok(());
         }

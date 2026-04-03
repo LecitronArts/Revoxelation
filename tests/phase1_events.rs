@@ -174,7 +174,15 @@ fn invalid_command_rejected_with_reason() {
 fn one_frame_event_flow_is_monotonic() {
     let mut streaming = StreamingState::new();
     let mut meshing = MeshingState::default();
-    let frame = run_frame(&mut streaming, &mut meshing, None, 9, [0.0, 0.0, 0.0], 720.0, std::f32::consts::FRAC_PI_3);
+    let frame = run_frame(
+        &mut streaming,
+        &mut meshing,
+        None,
+        9,
+        [0.0, 0.0, 0.0],
+        720.0,
+        std::f32::consts::FRAC_PI_3,
+    );
     let event_bus = &frame.event_bus;
 
     assert_eq!(event_bus.frame_index, 9);

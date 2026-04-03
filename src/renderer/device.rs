@@ -54,8 +54,7 @@ fn missing_vulkan12_features(
     physical_device: vk::PhysicalDevice,
 ) -> Vec<&'static str> {
     let mut vulkan12_features = vk::PhysicalDeviceVulkan12Features::default();
-    let mut features2 =
-        vk::PhysicalDeviceFeatures2::default().push_next(&mut vulkan12_features);
+    let mut features2 = vk::PhysicalDeviceFeatures2::default().push_next(&mut vulkan12_features);
 
     unsafe {
         instance.get_physical_device_features2(physical_device, &mut features2);
@@ -225,10 +224,12 @@ pub fn pick_physical_device(
         unsafe {
             instance.get_physical_device_features2(physical_device, &mut features2_query);
         }
-        let supported =
-            mesh_shader_features.task_shader == vk::TRUE && mesh_shader_features.mesh_shader == vk::TRUE;
+        let supported = mesh_shader_features.task_shader == vk::TRUE
+            && mesh_shader_features.mesh_shader == vk::TRUE;
         if supported {
-            log::info!("VK_EXT_mesh_shader: taskShader + meshShader supported — enabling mesh shader path");
+            log::info!(
+                "VK_EXT_mesh_shader: taskShader + meshShader supported — enabling mesh shader path"
+            );
         } else {
             log::info!(
                 "VK_EXT_mesh_shader extension present but features missing (taskShader={}, meshShader={}) — using compute fallback",
@@ -244,7 +245,10 @@ pub fn pick_physical_device(
 
     // Build device extension list: always swapchain, optionally mesh_shader.
     let device_extensions: Vec<*const std::ffi::c_char> = if mesh_shader_supported {
-        vec![khr::swapchain::NAME.as_ptr(), ext::mesh_shader::NAME.as_ptr()]
+        vec![
+            khr::swapchain::NAME.as_ptr(),
+            ext::mesh_shader::NAME.as_ptr(),
+        ]
     } else {
         vec![khr::swapchain::NAME.as_ptr()]
     };

@@ -96,9 +96,7 @@ impl CascadedShadowMap {
             .array_layers(CASCADE_COUNT)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(
-                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
-            )
+            .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .initial_layout(vk::ImageLayout::UNDEFINED);
 
@@ -114,12 +112,18 @@ impl CascadedShadowMap {
                 requirements,
                 location: gpu_allocator::MemoryLocation::GpuOnly,
                 linear: false,
-                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::DedicatedImage(depth_image),
+                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::DedicatedImage(
+                    depth_image,
+                ),
             })
             .map_err(|e| anyhow::anyhow!("failed to allocate CSM depth image memory: {e}"))?;
         unsafe {
             device
-                .bind_image_memory(depth_image, depth_allocation.memory(), depth_allocation.offset())
+                .bind_image_memory(
+                    depth_image,
+                    depth_allocation.memory(),
+                    depth_allocation.offset(),
+                )
                 .context("failed to bind CSM depth image memory")?;
         }
 
@@ -280,7 +284,9 @@ impl CascadedShadowMap {
         meshlet_pool: Option<&super::chunk_pool::MeshletPool>,
         cascade_matrices: &[Mat4; 4],
     ) {
-        let Some(meshlet_pool) = meshlet_pool else { return };
+        let Some(meshlet_pool) = meshlet_pool else {
+            return;
+        };
         let total_meshlets = meshlet_pool.active_meshlet_count();
         if total_meshlets == 0 {
             return;
@@ -478,11 +484,21 @@ pub fn compute_cascade_matrices(
     let mut cascade_matrices = [Mat4::IDENTITY; 4];
 
     for i in 0..CASCADE_COUNT as usize {
-        let near_split = if i == 0 { camera_near } else { cascade_splits[i - 1] };
+        let near_split = if i == 0 {
+            camera_near
+        } else {
+            cascade_splits[i - 1]
+        };
         let far_split = cascade_splits[i];
 
         // Get frustum corners in world space for this cascade slice.
-        let corners = frustum_corners_world_space(camera_view_proj_inv, near_split, far_split, camera_near, camera_far);
+        let corners = frustum_corners_world_space(
+            camera_view_proj_inv,
+            near_split,
+            far_split,
+            camera_near,
+            camera_far,
+        );
 
         // Compute center of the frustum slice.
         let mut center = Vec3::ZERO;
@@ -553,13 +569,13 @@ fn frustum_corners_world_space(
     // NDC corners (Vulkan: z in [0, 1])
     let ndc_corners = [
         Vec4::new(-1.0, -1.0, 0.0, 1.0),
-        Vec4::new( 1.0, -1.0, 0.0, 1.0),
-        Vec4::new(-1.0,  1.0, 0.0, 1.0),
-        Vec4::new( 1.0,  1.0, 0.0, 1.0),
+        Vec4::new(1.0, -1.0, 0.0, 1.0),
+        Vec4::new(-1.0, 1.0, 0.0, 1.0),
+        Vec4::new(1.0, 1.0, 0.0, 1.0),
         Vec4::new(-1.0, -1.0, 1.0, 1.0),
-        Vec4::new( 1.0, -1.0, 1.0, 1.0),
-        Vec4::new(-1.0,  1.0, 1.0, 1.0),
-        Vec4::new( 1.0,  1.0, 1.0, 1.0),
+        Vec4::new(1.0, -1.0, 1.0, 1.0),
+        Vec4::new(-1.0, 1.0, 1.0, 1.0),
+        Vec4::new(1.0, 1.0, 1.0, 1.0),
     ];
 
     // Transform NDC to world space.
@@ -571,16 +587,24 @@ fn frustum_corners_world_space(
 
     // Interpolate between near plane corners (0-3) and far plane corners (4-7).
     let full_range = camera_far - camera_near;
-    let near_t = if full_range > 0.0 { (near_split - camera_near) / full_range } else { 0.0 };
-    let far_t = if full_range > 0.0 { (far_split - camera_near) / full_range } else { 1.0 };
+    let near_t = if full_range > 0.0 {
+        (near_split - camera_near) / full_range
+    } else {
+        0.0
+    };
+    let far_t = if full_range > 0.0 {
+        (far_split - camera_near) / full_range
+    } else {
+        1.0
+    };
 
     let mut result = [Vec3::ZERO; 8];
     for i in 0..4 {
         let near_world = world_corners[i];
         let far_world = world_corners[i + 4];
         let dir = far_world - near_world;
-        result[i] = near_world + dir * near_t;       // near plane
-        result[i + 4] = near_world + dir * far_t;    // far plane
+        result[i] = near_world + dir * near_t; // near plane
+        result[i + 4] = near_world + dir * far_t; // far plane
     }
 
     result
@@ -612,7 +636,10 @@ fn create_shadow_render_pass(device: &ash::Device) -> Result<vk::RenderPass> {
         .src_stage_mask(vk::PipelineStageFlags::LATE_FRAGMENT_TESTS)
         .dst_stage_mask(vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
         .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
-        .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)];
+        .dst_access_mask(
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        )];
 
     let create_info = vk::RenderPassCreateInfo::default()
         .attachments(&attachment)
@@ -690,17 +717,21 @@ fn create_shadow_pipeline(
     let viewport_state = vk::PipelineViewportStateCreateInfo::default()
         .viewport_count(1)
         .scissor_count(1);
-    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic_states = [
+        vk::DynamicState::VIEWPORT,
+        vk::DynamicState::SCISSOR,
+        vk::DynamicState::DEPTH_BIAS,
+    ];
     let dynamic_state_info =
         vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
     let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::NONE)  // No culling for shadow casters
+        .cull_mode(vk::CullModeFlags::NONE) // No culling for shadow casters
         .front_face(vk::FrontFace::CLOCKWISE)
         .depth_bias_enable(true)
-        .depth_bias_constant_factor(1.25)
-        .depth_bias_slope_factor(1.75)
+        .depth_bias_constant_factor(0.0)
+        .depth_bias_slope_factor(0.0)
         .depth_bias_clamp(0.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);

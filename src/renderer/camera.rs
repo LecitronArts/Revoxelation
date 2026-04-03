@@ -157,7 +157,12 @@ pub fn extract_frustum_planes(view_proj: &Mat4) -> FrustumPlanes {
     for (i, p) in raw_planes.iter().enumerate() {
         let normal_len = (p.x * p.x + p.y * p.y + p.z * p.z).sqrt();
         if normal_len > 1e-10 {
-            planes[i] = [p.x / normal_len, p.y / normal_len, p.z / normal_len, p.w / normal_len];
+            planes[i] = [
+                p.x / normal_len,
+                p.y / normal_len,
+                p.z / normal_len,
+                p.w / normal_len,
+            ];
         } else {
             planes[i] = [p.x, p.y, p.z, p.w];
         }

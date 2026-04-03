@@ -12,7 +12,9 @@ use std::sync::{
 
 use super::{
     job_queue::PrioritizedTask,
-    types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkVoxels},
+    types::{
+        CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkVoxels,
+    },
 };
 
 /// Spawn a background chunk job on `pool`.
@@ -51,7 +53,7 @@ fn generate_chunk_voxels(key: ChunkKey) -> ChunkVoxels {
     let seed = chunk_seed(key);
     let floor_y = (seed % 4) as u8;
     let floor_block = 1 + (seed % 5) as u8;
-    let pillar_block = 1 + ((seed >> 3) % 8) as u8; // range [1..8], must stay within MaterialTable (9 entries: 0=air + 8 blocks)
+    let pillar_block = 1 + ((seed >> 3) % 9) as u8; // range [1..9], must stay within MaterialTable
 
     for z in 0..CHUNK_EDGE as u8 {
         for x in 0..CHUNK_EDGE as u8 {

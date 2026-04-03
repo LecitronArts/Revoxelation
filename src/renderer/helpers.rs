@@ -189,7 +189,11 @@ where
         let command_buffers = [command_buffer];
         let submit_infos = [vk::SubmitInfo::default().command_buffers(&command_buffers)];
         device
-            .queue_submit(renderer.device_ctx.graphics_queue, &submit_infos, vk::Fence::null())
+            .queue_submit(
+                renderer.device_ctx.graphics_queue,
+                &submit_infos,
+                vk::Fence::null(),
+            )
             .context("failed to submit one-shot command buffer")?;
         device
             .queue_wait_idle(renderer.device_ctx.graphics_queue)
@@ -215,19 +219,13 @@ pub(crate) fn transition_image_layout(
                 vk::PipelineStageFlags::TOP_OF_PIPE,
                 vk::PipelineStageFlags::TRANSFER,
             ),
-            (
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            ) => (
+            (vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
                 vk::AccessFlags::SHADER_READ,
                 vk::AccessFlags::TRANSFER_WRITE,
                 vk::PipelineStageFlags::FRAGMENT_SHADER,
                 vk::PipelineStageFlags::TRANSFER,
             ),
-            (
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            ) => (
+            (vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) => (
                 vk::AccessFlags::TRANSFER_WRITE,
                 vk::AccessFlags::SHADER_READ,
                 vk::PipelineStageFlags::TRANSFER,

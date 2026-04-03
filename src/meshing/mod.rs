@@ -5,12 +5,15 @@ pub mod packing;
 use crate::streaming::types::ChunkKey;
 
 pub use crate::streaming::types::ChunkVoxels;
+pub use greedy::build_greedy_mesh;
 pub use invalidation::{
     ALL_FACE_MASK, FACE_NEG_X, FACE_NEG_Y, FACE_NEG_Z, FACE_POS_X, FACE_POS_Y, FACE_POS_Z,
     MeshDirtyCause, MeshDirtyRecord, MeshingState, fine_chunk_boundary_mask,
 };
-pub use greedy::build_greedy_mesh;
-pub use packing::{MeshletDescriptor, MeshletMesh, PackedMesh, PackedVertex, build_meshlets_from_packed, pack_quad, pack_vertex};
+pub use packing::{
+    MeshletDescriptor, MeshletMesh, PackedMesh, PackedVertex, build_meshlets_from_packed,
+    pack_quad, pack_vertex,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreedyQuad {

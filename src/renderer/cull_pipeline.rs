@@ -2,10 +2,15 @@ use std::mem::size_of;
 
 use anyhow::{Context, Result};
 use ash::vk;
-use gpu_allocator::{MemoryLocation, vulkan::{Allocation, AllocationScheme}};
+use gpu_allocator::{
+    MemoryLocation,
+    vulkan::{Allocation, AllocationScheme},
+};
 
-use super::{Renderer, create_allocated_buffer, destroy_allocated_buffer, spirv::create_shader_module};
 use super::camera::FrustumPlanes;
+use super::{
+    Renderer, create_allocated_buffer, destroy_allocated_buffer, spirv::create_shader_module,
+};
 
 /// Workgroup size matching the compute shader's `local_size_x`.
 const WORKGROUP_SIZE: u32 = 64;
@@ -142,7 +147,10 @@ impl ChunkCullPipeline {
         };
 
         unsafe {
-            renderer.device_ctx.device.destroy_shader_module(shader_module, None);
+            renderer
+                .device_ctx
+                .device
+                .destroy_shader_module(shader_module, None);
         }
 
         Ok(Self {
@@ -166,7 +174,11 @@ impl ChunkCullPipeline {
         }
         let src = planes as *const FrustumPlanes as *const u8;
         unsafe {
-            std::ptr::copy_nonoverlapping(src, self.frustum_planes_mapped, size_of::<FrustumPlanes>());
+            std::ptr::copy_nonoverlapping(
+                src,
+                self.frustum_planes_mapped,
+                size_of::<FrustumPlanes>(),
+            );
         }
     }
 
@@ -205,13 +217,7 @@ impl ChunkCullPipeline {
 
         // Reset draw count buffer to 0 via vkCmdFillBuffer.
         unsafe {
-            device.cmd_fill_buffer(
-                cmd,
-                self.draw_count_buffer,
-                0,
-                size_of::<u32>() as u64,
-                0,
-            );
+            device.cmd_fill_buffer(cmd, self.draw_count_buffer, 0, size_of::<u32>() as u64, 0);
 
             // Barrier: TRANSFER_WRITE → SHADER_READ|SHADER_WRITE for draw count buffer.
             let fill_barrier = vk::BufferMemoryBarrier::default()
@@ -249,7 +255,8 @@ impl ChunkCullPipeline {
                 self.pipeline_layout,
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                pc_bytes,            );
+                pc_bytes,
+            );
 
             // Dispatch ceil(active_draw_count / 64) workgroups.
             let group_count = active_draw_count.div_ceil(WORKGROUP_SIZE);
@@ -259,7 +266,10 @@ impl ChunkCullPipeline {
 
     pub fn destroy(mut self, renderer: &mut Renderer) {
         unsafe {
-            renderer.device_ctx.device.destroy_pipeline(self.pipeline, None);
+            renderer
+                .device_ctx
+                .device
+                .destroy_pipeline(self.pipeline, None);
             renderer
                 .device_ctx
                 .device
@@ -288,13 +298,13 @@ impl ChunkCullPipeline {
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MeshletCullPushConstants {
     pub total_meshlet_count: u32,
-    pub enable_backface: u32,   // 0 or 1
-    pub enable_frustum: u32,    // 0 or 1
-    pub enable_hiz: u32,        // 0 or 1
-    pub camera_pos: [f32; 3],   // world-space camera position
+    pub enable_backface: u32, // 0 or 1
+    pub enable_frustum: u32,  // 0 or 1
+    pub enable_hiz: u32,      // 0 or 1
+    pub camera_pos: [f32; 3], // world-space camera position
     pub _pad: u32,
-    pub sse_threshold: f32,     // SSE threshold in pixels (default 2.0)
-    pub screen_height: f32,     // screen height in pixels for SSE projection
+    pub sse_threshold: f32, // SSE threshold in pixels (default 2.0)
+    pub screen_height: f32, // screen height in pixels for SSE projection
 }
 
 /// Per-meshlet GPU culling compute pipeline (meshlet_cull.comp).
@@ -391,13 +401,7 @@ impl MeshletCullPipeline {
 
         unsafe {
             // Reset meshlet_count_buffer to 0 via vkCmdFillBuffer (D-08).
-            device.cmd_fill_buffer(
-                cmd,
-                meshlet_count_buffer,
-                0,
-                size_of::<u32>() as u64,
-                0,
-            );
+            device.cmd_fill_buffer(cmd, meshlet_count_buffer, 0, size_of::<u32>() as u64, 0);
 
             // Barrier: TRANSFER_WRITE → SHADER_READ|SHADER_WRITE for count buffer.
             let fill_barrier = vk::BufferMemoryBarrier::default()

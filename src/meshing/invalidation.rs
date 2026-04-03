@@ -50,14 +50,11 @@ pub struct MeshingState {
 impl MeshingState {
     pub fn mark_dirty(&mut self, key: ChunkKey, cause: MeshDirtyCause, source_revision: u64) {
         let should_queue = !self.queued_set.contains(&key); // MED-07: O(1) lookup
-        let entry = self
-            .dirty
-            .entry(key)
-            .or_insert_with(|| MeshDirtyRecord {
-                causes: Vec::new(),
-                source_revision,
-                finer_neighbor_face_mask: 0,
-            });
+        let entry = self.dirty.entry(key).or_insert_with(|| MeshDirtyRecord {
+            causes: Vec::new(),
+            source_revision,
+            finer_neighbor_face_mask: 0,
+        });
         if entry.source_revision != source_revision {
             entry.causes.push(MeshDirtyCause::RevisionMismatch);
             entry.source_revision = source_revision;
@@ -69,7 +66,12 @@ impl MeshingState {
         }
     }
 
-    pub fn mark_face_neighbors_dirty(&mut self, key: ChunkKey, face_mask: u8, source_revision: u64) {
+    pub fn mark_face_neighbors_dirty(
+        &mut self,
+        key: ChunkKey,
+        face_mask: u8,
+        source_revision: u64,
+    ) {
         for &(face, (dx, dy, dz)) in FACE_DIRECTIONS {
             if face_mask & face == 0 {
                 continue;
@@ -141,12 +143,36 @@ impl MeshingState {
         let parent_z = key.z.div_euclid(2);
 
         let mappings = [
-            (FACE_NEG_X, ChunkKey::new(parent_x - 1, parent_y, parent_z, coarse_lod), FACE_POS_X),
-            (FACE_POS_X, ChunkKey::new(parent_x + 1, parent_y, parent_z, coarse_lod), FACE_NEG_X),
-            (FACE_NEG_Y, ChunkKey::new(parent_x, parent_y - 1, parent_z, coarse_lod), FACE_POS_Y),
-            (FACE_POS_Y, ChunkKey::new(parent_x, parent_y + 1, parent_z, coarse_lod), FACE_NEG_Y),
-            (FACE_NEG_Z, ChunkKey::new(parent_x, parent_y, parent_z - 1, coarse_lod), FACE_POS_Z),
-            (FACE_POS_Z, ChunkKey::new(parent_x, parent_y, parent_z + 1, coarse_lod), FACE_NEG_Z),
+            (
+                FACE_NEG_X,
+                ChunkKey::new(parent_x - 1, parent_y, parent_z, coarse_lod),
+                FACE_POS_X,
+            ),
+            (
+                FACE_POS_X,
+                ChunkKey::new(parent_x + 1, parent_y, parent_z, coarse_lod),
+                FACE_NEG_X,
+            ),
+            (
+                FACE_NEG_Y,
+                ChunkKey::new(parent_x, parent_y - 1, parent_z, coarse_lod),
+                FACE_POS_Y,
+            ),
+            (
+                FACE_POS_Y,
+                ChunkKey::new(parent_x, parent_y + 1, parent_z, coarse_lod),
+                FACE_NEG_Y,
+            ),
+            (
+                FACE_NEG_Z,
+                ChunkKey::new(parent_x, parent_y, parent_z - 1, coarse_lod),
+                FACE_POS_Z,
+            ),
+            (
+                FACE_POS_Z,
+                ChunkKey::new(parent_x, parent_y, parent_z + 1, coarse_lod),
+                FACE_NEG_Z,
+            ),
         ];
 
         for (finer_face, coarse_key, coarse_face) in mappings {

@@ -5,8 +5,8 @@ use gpu_allocator::{
     vulkan::{Allocation, AllocationCreateDesc, AllocationScheme},
 };
 
-use super::spirv::create_shader_module;
 use super::Renderer;
+use super::spirv::create_shader_module;
 
 /// Compute the number of mip levels needed for a Hi-Z pyramid of the given resolution.
 ///
@@ -17,7 +17,7 @@ pub fn hiz_mip_count(width: u32, height: u32) -> u32 {
         return 1;
     }
     // floor(log2(max_dim)) + 1
-    u32::BITS - max_dim.leading_zeros() 
+    u32::BITS - max_dim.leading_zeros()
 }
 
 /// Hi-Z depth pyramid — R32_SFLOAT image with a full mip chain for GPU occlusion culling.
@@ -520,7 +520,12 @@ impl HiZPyramid {
     }
 
     /// Recreate the Hi-Z pyramid for a new swapchain size.
-    pub fn recreate(self, renderer: &mut Renderer, new_width: u32, new_height: u32) -> Result<Self> {
+    pub fn recreate(
+        self,
+        renderer: &mut Renderer,
+        new_width: u32,
+        new_height: u32,
+    ) -> Result<Self> {
         self.destroy(renderer);
         Self::new(renderer, new_width, new_height)
     }
@@ -541,13 +546,13 @@ impl HiZPyramid {
             }
         }
         if let Some(allocation) = self.allocation.take() {
+            unsafe {
+                device.destroy_image(self.image, None);
+            }
             let _ = renderer
                 .allocator
                 .free(allocation)
                 .map_err(|e| log::warn!("failed to free Hi-Z allocation: {e}"));
-            unsafe {
-                device.destroy_image(self.image, None);
-            }
         }
     }
 }

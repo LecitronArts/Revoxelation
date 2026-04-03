@@ -1,6 +1,5 @@
-use super::{
-    ChunkNeighborSet, ChunkVoxels, GreedyQuad, MeshDirtyRecord, PackedMesh, pack_quad,
-};
+use super::{ChunkNeighborSet, ChunkVoxels, GreedyQuad, MeshDirtyRecord, PackedMesh, pack_quad};
+use crate::renderer::material::{face_visible_against, is_transparent_block};
 
 // -----------------------------------------------------------------------
 // Voxel Ambient Occlusion (LGHT-04)
@@ -9,16 +8,9 @@ use super::{
 /// Check if a block at the given position is opaque for AO purposes.
 /// Air (block_id == 0) is non-occluding. Out-of-chunk positions are checked
 /// via neighbor chunks; if no neighbor data is available, treat as non-occluding.
-fn is_opaque_for_ao(
-    chunk: &ChunkVoxels,
-    neighbors: &ChunkNeighborSet<'_>,
-    pos: [i32; 3],
-) -> bool {
+fn is_opaque_for_ao(chunk: &ChunkVoxels, neighbors: &ChunkNeighborSet<'_>, pos: [i32; 3]) -> bool {
     let block = sample_with_halo(chunk, neighbors, pos[0], pos[1], pos[2]);
-    // block_id 0 = air, non-occluding.
-    // TODO: respect FLAG_TRANSPARENT — would require MaterialTable access here.
-    // For now, only air is non-occluding (sufficient for voxel AO).
-    block != 0
+    block != 0 && !is_transparent_block(block)
 }
 
 /// Compute voxel AO for a single vertex corner on a face.
@@ -203,7 +195,7 @@ fn emit_quads_for_axis(
                     _ => 0,
                 };
 
-                if neighbor_block == 0 {
+                if face_visible_against(current_block, neighbor_block) {
                     mask[(v * 64) + u] = Some(MergeKey {
                         axis,
                         positive_face,

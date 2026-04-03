@@ -61,8 +61,7 @@ fn phase6_meshlet_mesh_fields() {
 
 #[test]
 fn phase6_meshopt_dependency() {
-    let cargo_toml =
-        std::fs::read_to_string("Cargo.toml").expect("Cargo.toml should exist");
+    let cargo_toml = std::fs::read_to_string("Cargo.toml").expect("Cargo.toml should exist");
     assert!(
         cargo_toml.contains("meshopt"),
         "Cargo.toml must contain meshopt dependency"
@@ -100,7 +99,10 @@ fn phase6_build_meshlets_simple_quad() {
     // Total vertices and triangles across all meshlets must match input.
     let total_verts: u32 = meshlet_mesh.meshlets.iter().map(|m| m.vertex_count).sum();
     let total_tris: u32 = meshlet_mesh.meshlets.iter().map(|m| m.triangle_count).sum();
-    assert!(total_verts >= 3, "must have at least 3 vertices (one triangle worth)");
+    assert!(
+        total_verts >= 3,
+        "must have at least 3 vertices (one triangle worth)"
+    );
     assert_eq!(total_tris, 2, "input has 2 triangles");
 }
 
@@ -251,8 +253,8 @@ fn phase6_meshlet_pool_buffers() {
 
 #[test]
 fn phase6_render_delta_meshlet_mesh() {
-    let source = std::fs::read_to_string("src/renderer/mod.rs")
-        .expect("src/renderer/mod.rs should exist");
+    let source =
+        std::fs::read_to_string("src/renderer/mod.rs").expect("src/renderer/mod.rs should exist");
     assert!(
         source.contains("MeshletMesh"),
         "RenderDelta::Upsert must reference MeshletMesh in renderer/mod.rs"
@@ -397,7 +399,13 @@ fn make_large_packed_mesh() -> revoxelation::meshing::PackedMesh {
                 // +X face quad
                 vertices.push(pack_vertex([x * 2 + 1, y * 2, z * 2], 0, 1, [0, 0], 3));
                 vertices.push(pack_vertex([x * 2 + 1, y * 2 + 1, z * 2], 0, 1, [1, 0], 3));
-                vertices.push(pack_vertex([x * 2 + 1, y * 2 + 1, z * 2 + 1], 0, 1, [1, 1], 3));
+                vertices.push(pack_vertex(
+                    [x * 2 + 1, y * 2 + 1, z * 2 + 1],
+                    0,
+                    1,
+                    [1, 1],
+                    3,
+                ));
                 vertices.push(pack_vertex([x * 2 + 1, y * 2, z * 2 + 1], 0, 1, [0, 1], 3));
                 indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
@@ -436,11 +444,15 @@ fn phase6_lod1_fewer_triangles() {
     let packed = make_large_packed_mesh();
     let mesh = build_meshlets_from_packed(&packed);
 
-    let lod0_tris: u32 = mesh.meshlets.iter()
+    let lod0_tris: u32 = mesh
+        .meshlets
+        .iter()
         .filter(|m| m.lod_level == 0)
         .map(|m| m.triangle_count)
         .sum();
-    let lod1_tris: u32 = mesh.meshlets.iter()
+    let lod1_tris: u32 = mesh
+        .meshlets
+        .iter()
         .filter(|m| m.lod_level == 1)
         .map(|m| m.triangle_count)
         .sum();
@@ -462,7 +474,8 @@ fn phase6_lod_group_parent_error() {
         assert!(
             m.parent_error >= 0.0,
             "meshlet {i} (lod_level={}) parent_error must be >= 0.0, got {}",
-            m.lod_level, m.parent_error
+            m.lod_level,
+            m.parent_error
         );
     }
 }
@@ -498,5 +511,8 @@ fn phase6_lod_small_mesh_lod0_only() {
         assert_eq!(m.lod_level, 0, "small mesh should only have LOD0 meshlets");
     }
     let has_lod1 = mesh.meshlets.iter().any(|m| m.lod_level == 1);
-    assert!(!has_lod1, "small mesh (<4 meshlets) should NOT have LOD1 meshlets");
+    assert!(
+        !has_lod1,
+        "small mesh (<4 meshlets) should NOT have LOD1 meshlets"
+    );
 }

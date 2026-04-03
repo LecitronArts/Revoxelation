@@ -93,8 +93,8 @@ fn phase5_no_fallback_path() {
 /// BindlessTable module must be declared in renderer/mod.rs.
 #[test]
 fn phase5_bindless_table_module_exists() {
-    let source = std::fs::read_to_string("src/renderer/mod.rs")
-        .expect("src/renderer/mod.rs should exist");
+    let source =
+        std::fs::read_to_string("src/renderer/mod.rs").expect("src/renderer/mod.rs should exist");
     assert!(
         source.contains("pub mod bindless"),
         "src/renderer/mod.rs must contain 'pub mod bindless'"
@@ -287,7 +287,11 @@ fn phase5_scene_buffer_layout_regions() {
 
     // Region 1: DrawIndexedIndirectCommand[1024] starts after instances (1024*64 = 65536)
     assert_eq!(indirect_off, 65536, "indirect template region offset");
-    assert_eq!(indirect_off % 16, 0, "indirect template region must be 16-byte aligned");
+    assert_eq!(
+        indirect_off % 16,
+        0,
+        "indirect template region must be 16-byte aligned"
+    );
 
     // Region 2: u32[1024] starts after indirect templates (65536 + 1024*20 = 86016, aligned to 86016)
     let expected_slot = 65536 + 1024 * 20;
@@ -298,8 +302,15 @@ fn phase5_scene_buffer_layout_regions() {
     // Region 3: after draw slots
     let expected_dense = expected_slot_aligned + 1024 * 4;
     let expected_dense_aligned = (expected_dense + 15) & !15;
-    assert_eq!(dense_off, expected_dense_aligned, "dense indirect region offset");
-    assert_eq!(dense_off % 16, 0, "dense indirect region must be 16-byte aligned");
+    assert_eq!(
+        dense_off, expected_dense_aligned,
+        "dense indirect region offset"
+    );
+    assert_eq!(
+        dense_off % 16,
+        0,
+        "dense indirect region must be 16-byte aligned"
+    );
 
     // Total
     let expected_total = expected_dense_aligned + 1024 * 20;
@@ -395,7 +406,10 @@ fn phase5_uses_indirect_count() {
     // for the non-count call pattern: "cmd_draw_indexed_indirect(" NOT followed by "count")
     let lines: Vec<&str> = source
         .lines()
-        .filter(|l| l.contains("cmd_draw_indexed_indirect(") && !l.contains("cmd_draw_indexed_indirect_count"))
+        .filter(|l| {
+            l.contains("cmd_draw_indexed_indirect(")
+                && !l.contains("cmd_draw_indexed_indirect_count")
+        })
         .collect();
     assert!(
         lines.is_empty(),

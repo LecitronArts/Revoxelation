@@ -40,9 +40,10 @@ impl ShaderHotReload {
         let mut mod_times = HashMap::new();
         for path in super::shader_source_files() {
             if let Ok(metadata) = fs::metadata(path)
-                && let Ok(modified) = metadata.modified() {
-                    mod_times.insert(path.to_string(), modified);
-                }
+                && let Ok(modified) = metadata.modified()
+            {
+                mod_times.insert(path.to_string(), modified);
+            }
         }
         Self {
             mod_times,
@@ -80,7 +81,10 @@ impl ShaderHotReload {
             return Ok(false);
         }
 
-        log::info!("Shader hot-reload: detected changes in {:?}", changed_shaders);
+        log::info!(
+            "Shader hot-reload: detected changes in {:?}",
+            changed_shaders
+        );
 
         // Lazily create the compiler.
         if self.compiler.is_none() {
@@ -105,13 +109,8 @@ impl ShaderHotReload {
             .unwrap_or(vk::PipelineCache::null());
 
         for shader_path in &changed_shaders {
-            let result = self.reload_single_shader(
-                &device,
-                cache_handle,
-                renderer,
-                compiler,
-                shader_path,
-            );
+            let result =
+                self.reload_single_shader(&device, cache_handle, renderer, compiler, shader_path);
             match result {
                 Ok(()) => log::info!("Shader hot-reload: successfully reloaded {}", shader_path),
                 Err(e) => log::error!("Shader hot-reload: failed to reload {}: {e:#}", shader_path),
@@ -144,15 +143,15 @@ impl ShaderHotReload {
             .unwrap_or_default()
             .to_string_lossy();
 
-        
-
         if file_name.starts_with("chunk_mesh") {
             self.rebuild_mesh_pipeline(device, cache_handle, renderer, new_module, &file_name)
         } else if file_name.starts_with("chunk_cull") {
             self.rebuild_cull_pipeline(device, cache_handle, renderer, new_module)
         } else {
             // Shaders we don't hot-reload (hiz_generate, egui) — just log and skip.
-            unsafe { device.destroy_shader_module(new_module, None); }
+            unsafe {
+                device.destroy_shader_module(new_module, None);
+            }
             log::info!("Shader hot-reload: no pipeline rebuild for {}", shader_path);
             Ok(())
         }
@@ -167,15 +166,22 @@ impl ShaderHotReload {
         _file_name: &str,
     ) -> Result<()> {
         // For mesh pipeline, we need both vert and frag — just destroy and recreate via the normal path.
-        unsafe { device.destroy_shader_module(new_module, None); }
+        unsafe {
+            device.destroy_shader_module(new_module, None);
+        }
 
         if let Some(old_pipeline) = renderer.mesh_pipeline.take() {
             old_pipeline.destroy(renderer);
         }
-        let bindless_layout = renderer.bindless.as_ref()
+        let bindless_layout = renderer
+            .bindless
+            .as_ref()
             .expect("bindless must be initialized for hot-reload")
             .descriptor_set_layout;
-        renderer.mesh_pipeline = Some(super::mesh_pipeline::ChunkMeshPipeline::new(renderer, bindless_layout)?);
+        renderer.mesh_pipeline = Some(super::mesh_pipeline::ChunkMeshPipeline::new(
+            renderer,
+            bindless_layout,
+        )?);
         Ok(())
     }
 
@@ -186,15 +192,22 @@ impl ShaderHotReload {
         renderer: &mut Renderer,
         new_module: vk::ShaderModule,
     ) -> Result<()> {
-        unsafe { device.destroy_shader_module(new_module, None); }
+        unsafe {
+            device.destroy_shader_module(new_module, None);
+        }
 
         if let Some(old_pipeline) = renderer.cull_pipeline.take() {
             old_pipeline.destroy(renderer);
         }
-        let bindless_layout = renderer.bindless.as_ref()
+        let bindless_layout = renderer
+            .bindless
+            .as_ref()
             .expect("bindless must be initialized for hot-reload")
             .descriptor_set_layout;
-        renderer.cull_pipeline = Some(super::cull_pipeline::ChunkCullPipeline::new(renderer, bindless_layout)?);
+        renderer.cull_pipeline = Some(super::cull_pipeline::ChunkCullPipeline::new(
+            renderer,
+            bindless_layout,
+        )?);
         Ok(())
     }
 }

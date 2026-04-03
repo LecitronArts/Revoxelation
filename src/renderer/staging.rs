@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
 use ash::vk;
-use gpu_allocator::{MemoryLocation, vulkan::{Allocation, AllocationScheme}};
+use gpu_allocator::{
+    MemoryLocation,
+    vulkan::{Allocation, AllocationScheme},
+};
 
 use super::Renderer;
 use super::helpers::{
@@ -46,11 +49,19 @@ impl StagingBuffer {
             mapped[..data.len()].copy_from_slice(data);
             Ok(())
         } else {
-            Err(anyhow!("staging buffer memory is not mapped — cannot write {} bytes", data.len()))
+            Err(anyhow!(
+                "staging buffer memory is not mapped — cannot write {} bytes",
+                data.len()
+            ))
         }
     }
 
-    pub fn copy_to(&self, renderer: &Renderer, dst: vk::Buffer, size: vk::DeviceSize) -> Result<()> {
+    pub fn copy_to(
+        &self,
+        renderer: &Renderer,
+        dst: vk::Buffer,
+        size: vk::DeviceSize,
+    ) -> Result<()> {
         submit_one_shot_commands(renderer, |device, command_buffer| {
             let regions = [vk::BufferCopy::default().size(size)];
             unsafe {

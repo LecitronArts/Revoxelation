@@ -146,9 +146,12 @@ struct LightingParams {
     float fog_density;
     float fog_start;
     float fog_end;
+    vec4 render_params; // x=screen_width, y=screen_height, z=shadow_resolution
     uint fog_type;
     uint _lp_pad;
 };
+
+const uint FOG_DISABLED = 0xFFFFFFFFu;
 
 // Point light struct (matches Rust PointLight #[repr(C)])
 struct PointLight {

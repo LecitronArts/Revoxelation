@@ -2,14 +2,15 @@
 //!
 //! Supports three algorithms: GTAO (default), HBAO+, and classic SSAO.
 //! Uses compute shaders for AO calculation and bilateral blur.
-//! AO result texture at binding 17, blur intermediate at binding 24.
+//! AO result is exposed to fragment shaders via bindless binding 17, while the
+//! compute path uses dedicated SSAO descriptor sets.
 
 use anyhow::{Context, Result, anyhow};
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 
 use super::Renderer;
-use super::bindless::{BINDING_SSAO_TEXTURE, BINDING_SSAO_BLUR_INTERMEDIATE};
+use super::bindless::BINDING_SSAO_TEXTURE;
 use super::spirv::create_shader_module;
 
 /// SSAO algorithm selection.
@@ -106,6 +107,13 @@ pub struct SsaoPass {
     /// Bilateral blur compute pipeline.
     pub blur_pipeline: vk::Pipeline,
     pub blur_layout: vk::PipelineLayout,
+    /// Dedicated descriptor infrastructure for SSAO compute/blur passes.
+    pub compute_descriptor_set_layout: vk::DescriptorSetLayout,
+    pub blur_descriptor_set_layout: vk::DescriptorSetLayout,
+    pub descriptor_pool: vk::DescriptorPool,
+    pub compute_descriptor_set: vk::DescriptorSet,
+    pub blur_h_descriptor_set: vk::DescriptorSet,
+    pub blur_v_descriptor_set: vk::DescriptorSet,
     /// AO image dimensions.
     pub width: u32,
     pub height: u32,
@@ -113,7 +121,12 @@ pub struct SsaoPass {
 
 impl SsaoPass {
     /// Create SSAO pass resources.
-    pub fn new(renderer: &mut Renderer, width: u32, height: u32, config: &SsaoConfig) -> Result<Self> {
+    pub fn new(
+        renderer: &mut Renderer,
+        width: u32,
+        height: u32,
+        config: &SsaoConfig,
+    ) -> Result<Self> {
         let (ao_w, ao_h) = if config.half_resolution {
             (width / 2, height / 2)
         } else {
@@ -129,7 +142,8 @@ impl SsaoPass {
         let ao_view = create_r8_view(&device, ao_image)?;
 
         // Create R8_UNORM blur intermediate image.
-        let (blur_image, blur_allocation) = create_r8_image(renderer, ao_w, ao_h, "ssao-blur-intermediate")?;
+        let (blur_image, blur_allocation) =
+            create_r8_image(renderer, ao_w, ao_h, "ssao-blur-intermediate")?;
         let blur_view = create_r8_view(&device, blur_image)?;
 
         // Sampler for reading AO in fragment shader (linear filter for smooth sampling).
@@ -151,8 +165,16 @@ impl SsaoPass {
         // Transition both images to GENERAL for initial use.
         super::helpers::submit_one_shot_commands(renderer, |device, cmd| {
             let barriers = [
-                image_layout_barrier(ao_image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL),
-                image_layout_barrier(blur_image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL),
+                image_layout_barrier(
+                    ao_image,
+                    vk::ImageLayout::UNDEFINED,
+                    vk::ImageLayout::GENERAL,
+                ),
+                image_layout_barrier(
+                    blur_image,
+                    vk::ImageLayout::UNDEFINED,
+                    vk::ImageLayout::GENERAL,
+                ),
             ];
             unsafe {
                 device.cmd_pipeline_barrier(
@@ -168,17 +190,23 @@ impl SsaoPass {
             Ok(())
         })?;
 
-        // Create SSAO compute pipeline.
-        let bindless_layout = renderer
-            .bindless
-            .as_ref()
-            .expect("bindless must exist before SSAO")
-            .descriptor_set_layout;
+        let compute_descriptor_set_layout = create_ssao_descriptor_set_layout(&device)
+            .context("failed to create SSAO compute descriptor set layout")?;
+        let blur_descriptor_set_layout = create_ssao_descriptor_set_layout(&device)
+            .context("failed to create SSAO blur descriptor set layout")?;
+        let (descriptor_pool, compute_descriptor_set, blur_h_descriptor_set, blur_v_descriptor_set) =
+            allocate_ssao_descriptor_sets(
+                &device,
+                compute_descriptor_set_layout,
+                blur_descriptor_set_layout,
+            )?;
 
-        let (compute_pipeline, compute_layout) = create_ssao_compute_pipeline(renderer, bindless_layout)?;
-        let (blur_pipeline, blur_layout) = create_ssao_blur_pipeline(renderer, bindless_layout)?;
+        let (compute_pipeline, compute_layout) =
+            create_ssao_compute_pipeline(renderer, compute_descriptor_set_layout)?;
+        let (blur_pipeline, blur_layout) =
+            create_ssao_blur_pipeline(renderer, blur_descriptor_set_layout)?;
 
-        Ok(Self {
+        let pass = Self {
             ao_image,
             ao_view,
             ao_allocation: Some(ao_allocation),
@@ -190,9 +218,18 @@ impl SsaoPass {
             compute_layout,
             blur_pipeline,
             blur_layout,
+            compute_descriptor_set_layout,
+            blur_descriptor_set_layout,
+            descriptor_pool,
+            compute_descriptor_set,
+            blur_h_descriptor_set,
+            blur_v_descriptor_set,
             width: ao_w,
             height: ao_h,
-        })
+        };
+        pass.refresh_descriptor_sets(renderer)?;
+
+        Ok(pass)
     }
 
     /// Register AO textures with the bindless table.
@@ -206,14 +243,44 @@ impl SsaoPass {
                 self.sampler,
                 vk::ImageLayout::GENERAL,
             );
-            // Binding 24: blur intermediate as STORAGE_IMAGE (for compute write).
-            bindless.register_storage_image(
-                &renderer.device_ctx.device,
-                BINDING_SSAO_BLUR_INTERMEDIATE,
-                self.blur_view,
-                vk::ImageLayout::GENERAL,
-            );
         }
+    }
+
+    pub fn refresh_descriptor_sets(&self, renderer: &Renderer) -> Result<()> {
+        let hiz = renderer.hiz_pyramid.as_ref().ok_or_else(|| {
+            anyhow!("Hi-Z pyramid must exist before SSAO descriptors can be refreshed")
+        })?;
+        let device = &renderer.device_ctx.device;
+
+        write_ssao_descriptor_set(
+            device,
+            self.compute_descriptor_set,
+            hiz.full_view,
+            hiz.sampler,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            self.ao_view,
+            vk::ImageLayout::GENERAL,
+        );
+        write_ssao_descriptor_set(
+            device,
+            self.blur_h_descriptor_set,
+            self.ao_view,
+            self.sampler,
+            vk::ImageLayout::GENERAL,
+            self.blur_view,
+            vk::ImageLayout::GENERAL,
+        );
+        write_ssao_descriptor_set(
+            device,
+            self.blur_v_descriptor_set,
+            self.blur_view,
+            self.sampler,
+            vk::ImageLayout::GENERAL,
+            self.ao_view,
+            vk::ImageLayout::GENERAL,
+        );
+
+        Ok(())
     }
 
     /// Record SSAO compute dispatch + bilateral blur into the command buffer.
@@ -221,7 +288,6 @@ impl SsaoPass {
         &self,
         device: &ash::Device,
         cmd: vk::CommandBuffer,
-        bindless_set: vk::DescriptorSet,
         config: &SsaoConfig,
     ) {
         if !config.enabled {
@@ -249,7 +315,7 @@ impl SsaoPass {
                 vk::PipelineBindPoint::COMPUTE,
                 self.compute_layout,
                 0,
-                &[bindless_set],
+                &[self.compute_descriptor_set],
                 &[],
             );
             device.cmd_push_constants(
@@ -284,7 +350,7 @@ impl SsaoPass {
 
         let texel_size = [1.0 / self.width as f32, 1.0 / self.height as f32];
 
-        // ---- Horizontal blur: read binding 17 (ao_result) → write binding 24 (blur_intermediate) ----
+        // ---- Horizontal blur: read AO result → write blur intermediate ----
         let blur_h_pc = BlurPushConstants {
             direction: [1.0, 0.0],
             texel_size,
@@ -300,7 +366,7 @@ impl SsaoPass {
                 vk::PipelineBindPoint::COMPUTE,
                 self.blur_layout,
                 0,
-                &[bindless_set],
+                &[self.blur_h_descriptor_set],
                 &[],
             );
             device.cmd_push_constants(
@@ -313,7 +379,7 @@ impl SsaoPass {
             device.cmd_dispatch(cmd, group_x, group_y, 1);
         }
 
-        // ---- Barrier: horizontal blur write (binding 24) → vertical blur read ----
+        // ---- Barrier: horizontal blur write → vertical blur read ----
         let blur_barrier = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::GENERAL)
             .new_layout(vk::ImageLayout::GENERAL)
@@ -321,11 +387,10 @@ impl SsaoPass {
             .dst_access_mask(vk::AccessFlags::SHADER_READ)
             .image(self.blur_image)
             .subresource_range(color_subresource_range());
-        // Also need ao_image writable again for vertical pass output.
         let ao_write_barrier = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::GENERAL)
             .new_layout(vk::ImageLayout::GENERAL)
-            .src_access_mask(vk::AccessFlags::SHADER_READ)
+            .src_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
             .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
             .image(self.ao_image)
             .subresource_range(color_subresource_range());
@@ -342,55 +407,46 @@ impl SsaoPass {
         }
 
         // ---- Vertical blur pass ----
-        // The blur shader always reads binding 17 and writes binding 24.
-        // Rather than swapping descriptors mid-command-buffer, we use a simpler approach:
-        // horizontal blur writes to blur_intermediate (binding 24), then we copy the
-        // blurred result back to ao_result (binding 17) via vkCmdCopyImage.
-        // This gives us a single-pass blur which is adequate for noise reduction.
-
-        // Copy blur_intermediate (binding 24) → ao_result (binding 17) so fragment shaders
-        // read the blurred AO.
-        let copy_region = vk::ImageCopy::default()
-            .src_subresource(vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: 0,
-                base_array_layer: 0,
-                layer_count: 1,
-            })
-            .dst_subresource(vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: 0,
-                base_array_layer: 0,
-                layer_count: 1,
-            })
-            .extent(vk::Extent3D {
-                width: self.width,
-                height: self.height,
-                depth: 1,
-            });
+        let blur_v_pc = BlurPushConstants {
+            direction: [0.0, 1.0],
+            texel_size,
+            pass_index: 1,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
+        };
         unsafe {
-            device.cmd_copy_image(
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.blur_pipeline);
+            device.cmd_bind_descriptor_sets(
                 cmd,
-                self.blur_image,
-                vk::ImageLayout::GENERAL,
-                self.ao_image,
-                vk::ImageLayout::GENERAL,
-                &[copy_region],
+                vk::PipelineBindPoint::COMPUTE,
+                self.blur_layout,
+                0,
+                &[self.blur_v_descriptor_set],
+                &[],
             );
+            device.cmd_push_constants(
+                cmd,
+                self.blur_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                bytemuck::bytes_of(&blur_v_pc),
+            );
+            device.cmd_dispatch(cmd, group_x, group_y, 1);
         }
 
         // Final barrier: ao_image ready for fragment shader read.
         let final_barrier = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::GENERAL)
             .new_layout(vk::ImageLayout::GENERAL)
-            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
             .dst_access_mask(vk::AccessFlags::SHADER_READ)
             .image(self.ao_image)
             .subresource_range(color_subresource_range());
         unsafe {
             device.cmd_pipeline_barrier(
                 cmd,
-                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
                 vk::PipelineStageFlags::FRAGMENT_SHADER,
                 vk::DependencyFlags::empty(),
                 &[],
@@ -401,29 +457,14 @@ impl SsaoPass {
     }
 
     /// Recreate AO images for a new swapchain size.
-    pub fn recreate(self, renderer: &mut Renderer, new_width: u32, new_height: u32) -> Result<Self> {
+    pub fn recreate(
+        self,
+        renderer: &mut Renderer,
+        new_width: u32,
+        new_height: u32,
+    ) -> Result<Self> {
         let config = renderer.ssao_config.clone();
-        // Destroy old resources (except pipelines which can be reused).
-        let device = &renderer.device_ctx.device;
-        unsafe {
-            device.destroy_image_view(self.ao_view, None);
-            device.destroy_image_view(self.blur_view, None);
-        }
-        if let Some(alloc) = self.ao_allocation {
-            unsafe { device.destroy_image(self.ao_image, None); }
-            let _ = renderer.allocator.free(alloc);
-        }
-        if let Some(alloc) = self.blur_allocation {
-            unsafe { device.destroy_image(self.blur_image, None); }
-            let _ = renderer.allocator.free(alloc);
-        }
-        unsafe {
-            device.destroy_sampler(self.sampler, None);
-            device.destroy_pipeline(self.compute_pipeline, None);
-            device.destroy_pipeline_layout(self.compute_layout, None);
-            device.destroy_pipeline(self.blur_pipeline, None);
-            device.destroy_pipeline_layout(self.blur_layout, None);
-        }
+        self.destroy(renderer)?;
         Self::new(renderer, new_width, new_height, &config)
     }
 
@@ -435,18 +476,29 @@ impl SsaoPass {
             device.destroy_pipeline_layout(self.compute_layout, None);
             device.destroy_pipeline(self.blur_pipeline, None);
             device.destroy_pipeline_layout(self.blur_layout, None);
+            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            device.destroy_descriptor_set_layout(self.compute_descriptor_set_layout, None);
+            device.destroy_descriptor_set_layout(self.blur_descriptor_set_layout, None);
             device.destroy_sampler(self.sampler, None);
             device.destroy_image_view(self.ao_view, None);
             device.destroy_image_view(self.blur_view, None);
         }
         if let Some(alloc) = self.ao_allocation.take() {
-            unsafe { device.destroy_image(self.ao_image, None); }
-            renderer.allocator.free(alloc)
+            unsafe {
+                device.destroy_image(self.ao_image, None);
+            }
+            renderer
+                .allocator
+                .free(alloc)
                 .map_err(|e| anyhow!("failed to free SSAO AO allocation: {e}"))?;
         }
         if let Some(alloc) = self.blur_allocation.take() {
-            unsafe { device.destroy_image(self.blur_image, None); }
-            renderer.allocator.free(alloc)
+            unsafe {
+                device.destroy_image(self.blur_image, None);
+            }
+            renderer
+                .allocator
+                .free(alloc)
                 .map_err(|e| anyhow!("failed to free SSAO blur allocation: {e}"))?;
         }
         Ok(())
@@ -457,6 +509,129 @@ impl SsaoPass {
 // Helper functions
 // ---------------------------------------------------------------------------
 
+fn create_ssao_descriptor_set_layout(device: &ash::Device) -> Result<vk::DescriptorSetLayout> {
+    let bindings = [
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(1)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+    ];
+
+    unsafe {
+        device
+            .create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+                None,
+            )
+            .context("failed to create SSAO descriptor set layout")
+    }
+}
+
+fn allocate_ssao_descriptor_sets(
+    device: &ash::Device,
+    compute_layout: vk::DescriptorSetLayout,
+    blur_layout: vk::DescriptorSetLayout,
+) -> Result<(
+    vk::DescriptorPool,
+    vk::DescriptorSet,
+    vk::DescriptorSet,
+    vk::DescriptorSet,
+)> {
+    let pool_sizes = [
+        vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(3),
+        vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::STORAGE_IMAGE)
+            .descriptor_count(3),
+    ];
+
+    let descriptor_pool = unsafe {
+        device
+            .create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::default()
+                    .pool_sizes(&pool_sizes)
+                    .max_sets(3),
+                None,
+            )
+            .context("failed to create SSAO descriptor pool")?
+    };
+
+    let compute_descriptor_set = unsafe {
+        device
+            .allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(descriptor_pool)
+                    .set_layouts(&[compute_layout]),
+            )
+            .context("failed to allocate SSAO compute descriptor set")?
+            .into_iter()
+            .next()
+            .context("SSAO compute descriptor set allocation returned empty")?
+    };
+    let blur_sets = unsafe {
+        device
+            .allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(descriptor_pool)
+                    .set_layouts(&[blur_layout, blur_layout]),
+            )
+            .context("failed to allocate SSAO blur descriptor sets")?
+    };
+    let blur_h_descriptor_set = *blur_sets
+        .first()
+        .context("SSAO blur descriptor allocation returned no horizontal set")?;
+    let blur_v_descriptor_set = *blur_sets
+        .get(1)
+        .context("SSAO blur descriptor allocation returned no vertical set")?;
+
+    Ok((
+        descriptor_pool,
+        compute_descriptor_set,
+        blur_h_descriptor_set,
+        blur_v_descriptor_set,
+    ))
+}
+
+fn write_ssao_descriptor_set(
+    device: &ash::Device,
+    descriptor_set: vk::DescriptorSet,
+    input_view: vk::ImageView,
+    sampler: vk::Sampler,
+    input_layout: vk::ImageLayout,
+    output_view: vk::ImageView,
+    output_layout: vk::ImageLayout,
+) {
+    let input_info = [vk::DescriptorImageInfo::default()
+        .image_view(input_view)
+        .sampler(sampler)
+        .image_layout(input_layout)];
+    let output_info = [vk::DescriptorImageInfo::default()
+        .image_view(output_view)
+        .image_layout(output_layout)];
+    let writes = [
+        vk::WriteDescriptorSet::default()
+            .dst_set(descriptor_set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&input_info),
+        vk::WriteDescriptorSet::default()
+            .dst_set(descriptor_set)
+            .dst_binding(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .image_info(&output_info),
+    ];
+    unsafe {
+        device.update_descriptor_sets(&writes, &[]);
+    }
+}
+
 fn create_r8_image(
     renderer: &mut Renderer,
     width: u32,
@@ -465,7 +640,11 @@ fn create_r8_image(
 ) -> Result<(vk::Image, Allocation)> {
     super::helpers::create_allocated_image(
         renderer,
-        vk::Extent3D { width, height, depth: 1 },
+        vk::Extent3D {
+            width,
+            height,
+            depth: 1,
+        },
         vk::Format::R8_UNORM,
         vk::ImageUsageFlags::STORAGE
             | vk::ImageUsageFlags::SAMPLED
@@ -516,7 +695,7 @@ fn image_layout_barrier(
 
 fn create_ssao_compute_pipeline(
     renderer: &Renderer,
-    bindless_layout: vk::DescriptorSetLayout,
+    compute_descriptor_set_layout: vk::DescriptorSetLayout,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
     let device = &renderer.device_ctx.device;
 
@@ -525,7 +704,7 @@ fn create_ssao_compute_pipeline(
         offset: 0,
         size: std::mem::size_of::<SsaoPushConstants>() as u32,
     }];
-    let set_layouts = [bindless_layout];
+    let set_layouts = [compute_descriptor_set_layout];
     let pipeline_layout = unsafe {
         device
             .create_pipeline_layout(
@@ -577,7 +756,7 @@ fn create_ssao_compute_pipeline(
 
 fn create_ssao_blur_pipeline(
     renderer: &Renderer,
-    bindless_layout: vk::DescriptorSetLayout,
+    blur_descriptor_set_layout: vk::DescriptorSetLayout,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
     let device = &renderer.device_ctx.device;
 
@@ -586,7 +765,7 @@ fn create_ssao_blur_pipeline(
         offset: 0,
         size: std::mem::size_of::<BlurPushConstants>() as u32,
     }];
-    let set_layouts = [bindless_layout];
+    let set_layouts = [blur_descriptor_set_layout];
     let pipeline_layout = unsafe {
         device
             .create_pipeline_layout(

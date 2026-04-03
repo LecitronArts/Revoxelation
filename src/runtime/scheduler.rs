@@ -18,13 +18,13 @@ use crate::streaming::{
     octree::StreamingOctree,
     sse::{compute_sse, diff_active_set},
     state_store::ChunkStateStore,
-    types::{ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState, LodConfig, SseConfig, CHUNK_EDGE},
+    types::{
+        CHUNK_EDGE, ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState, LodConfig, SseConfig,
+    },
 };
 
 use super::{
-    events::{
-        EventBus, EventBusSnapshot,
-    },
+    events::{EventBus, EventBusSnapshot},
     observability::RuntimeHudOverlay,
     stages::{STAGE_ORDER, Stage},
     trace::{TraceEntry, TransitionKind},
@@ -213,7 +213,9 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
     if frame_index < 10 || frame_index.is_multiple_of(60) {
         log::debug!(
             "[DIAG-WU] frame={} to_activate={} to_deactivate={}",
-            frame_index, diff.to_activate.len(), diff.to_deactivate.len(),
+            frame_index,
+            diff.to_activate.len(),
+            diff.to_deactivate.len(),
         );
     }
 
@@ -228,27 +230,30 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
             ss.state_store.insert_inactive(*key);
         }
         let state = ss.state_store.get(key).map(|e| e.state);
-        if state == Some(ChunkState::Inactive) {
-            // Inactive -> Queued
-            if let Err(e) = ss.state_store.transition_to(*key, ChunkState::Queued) {
-                warn!("chunk {:?} transition to Queued failed: {e}", key);
+        let should_enqueue = match state {
+            Some(ChunkState::Inactive) => {
+                if let Err(e) = ss.state_store.transition_to(*key, ChunkState::Queued) {
+                    warn!("chunk {:?} transition to Queued failed: {e}", key);
+                    false
+                } else {
+                    true
+                }
             }
-            // Compute real SSE at enqueue time (MED-06, CRIT-05).
-            let lod_scale = (1_u32 << key.lod_level) as f32;
-            let chunk_edge_world = CHUNK_EDGE as f32 * BLOCK_SIZE * lod_scale;
-            let half_edge = chunk_edge_world * 0.5;
-            let wx = key.x as f32 * chunk_edge_world + half_edge;
-            let wy = key.y as f32 * chunk_edge_world + half_edge;
-            let wz = key.z as f32 * chunk_edge_world + half_edge;
-            let dx = wx - camera_pos[0];
-            let dy = wy - camera_pos[1];
-            let dz = wz - camera_pos[2];
-            let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(0.01);
-            let real_sse = ss.lod_configs
-                .get(key.lod_level as usize)
-                .map(|lod| compute_sse(lod, &ss.sse_config, dist))
-                .unwrap_or(1.0);
-            ss.job_queue.enqueue(PrioritizedTask::new(*key, key.lod_level, real_sse));
+            Some(ChunkState::Error {
+                next_retry_frame, ..
+            }) if next_retry_frame <= frame_index => {
+                if let Err(e) = ss.state_store.transition_to(*key, ChunkState::Queued) {
+                    warn!("chunk {:?} retry transition to Queued failed: {e}", key);
+                    false
+                } else {
+                    true
+                }
+            }
+            _ => false,
+        };
+
+        if should_enqueue {
+            enqueue_chunk_task(ss, *key, camera_pos);
         }
     }
 
@@ -261,9 +266,10 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
         let key = task.key;
         let entry_state = ss.state_store.get(&key).map(|e| e.state);
         if entry_state == Some(ChunkState::Queued)
-            && let Err(e) = ss.state_store.transition_to(key, ChunkState::Loading) {
-                warn!("chunk {key:?} transition to Loading failed: {e}");
-            }
+            && let Err(e) = ss.state_store.transition_to(key, ChunkState::Loading)
+        {
+            warn!("chunk {key:?} transition to Loading failed: {e}");
+        }
     }
 
     // Now borrow pool and spawn.
@@ -278,6 +284,27 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
     for (key, flag) in spawned {
         ss.cancel_flags.insert(key, flag);
     }
+}
+
+fn enqueue_chunk_task(ss: &StreamingState, key: ChunkKey, camera_pos: [f32; 3]) {
+    // Compute real SSE at enqueue time (MED-06, CRIT-05).
+    let lod_scale = (1_u32 << key.lod_level) as f32;
+    let chunk_edge_world = CHUNK_EDGE as f32 * BLOCK_SIZE * lod_scale;
+    let half_edge = chunk_edge_world * 0.5;
+    let wx = key.x as f32 * chunk_edge_world + half_edge;
+    let wy = key.y as f32 * chunk_edge_world + half_edge;
+    let wz = key.z as f32 * chunk_edge_world + half_edge;
+    let dx = wx - camera_pos[0];
+    let dy = wy - camera_pos[1];
+    let dz = wz - camera_pos[2];
+    let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(0.01);
+    let real_sse = ss
+        .lod_configs
+        .get(key.lod_level as usize)
+        .map(|lod| compute_sse(lod, &ss.sse_config, dist))
+        .unwrap_or(1.0);
+    ss.job_queue
+        .enqueue(PrioritizedTask::new(key, key.lod_level, real_sse));
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +337,9 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
         if frame_index < 10 || frame_index.is_multiple_of(60) {
             log::debug!(
                 "[DIAG-MS] frame={} results_received={} dirty_batch_size={} queued_remaining={} pending_render_deltas={}",
-                frame_index, recv_count, batch.len(),
+                frame_index,
+                recv_count,
+                batch.len(),
                 meshing.queued.len(),
                 ss.pending_render_deltas.len(),
             );
@@ -324,24 +353,42 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
                 Some(dirty_record) => match meshing.payloads.get(&key) {
                     Some(chunk) => {
                         let neighbors = ChunkNeighborSet {
-                            px: meshing
-                                .payloads
-                                .get(&ChunkKey::new(key.x + 1, key.y, key.z, key.lod_level)),
-                            nx: meshing
-                                .payloads
-                                .get(&ChunkKey::new(key.x - 1, key.y, key.z, key.lod_level)),
-                            py: meshing
-                                .payloads
-                                .get(&ChunkKey::new(key.x, key.y + 1, key.z, key.lod_level)),
-                            ny: meshing
-                                .payloads
-                                .get(&ChunkKey::new(key.x, key.y - 1, key.z, key.lod_level)),
-                            pz: meshing
-                                .payloads
-                                .get(&ChunkKey::new(key.x, key.y, key.z + 1, key.lod_level)),
-                            nz: meshing
-                                .payloads
-                                .get(&ChunkKey::new(key.x, key.y, key.z - 1, key.lod_level)),
+                            px: meshing.payloads.get(&ChunkKey::new(
+                                key.x + 1,
+                                key.y,
+                                key.z,
+                                key.lod_level,
+                            )),
+                            nx: meshing.payloads.get(&ChunkKey::new(
+                                key.x - 1,
+                                key.y,
+                                key.z,
+                                key.lod_level,
+                            )),
+                            py: meshing.payloads.get(&ChunkKey::new(
+                                key.x,
+                                key.y + 1,
+                                key.z,
+                                key.lod_level,
+                            )),
+                            ny: meshing.payloads.get(&ChunkKey::new(
+                                key.x,
+                                key.y - 1,
+                                key.z,
+                                key.lod_level,
+                            )),
+                            pz: meshing.payloads.get(&ChunkKey::new(
+                                key.x,
+                                key.y,
+                                key.z + 1,
+                                key.lod_level,
+                            )),
+                            nz: meshing.payloads.get(&ChunkKey::new(
+                                key.x,
+                                key.y,
+                                key.z - 1,
+                                key.lod_level,
+                            )),
                             finer_neighbor_face_mask: dirty_record.finer_neighbor_face_mask,
                         };
                         let packed = build_greedy_mesh(chunk, &neighbors, &dirty_record);
@@ -366,15 +413,19 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
             .state_store
             .get(&key)
             .map_or(dirty_record.source_revision, |entry| entry.revision);
-        meshing.completed_meshes.retain(|completed| completed.key != key);
+        meshing
+            .completed_meshes
+            .retain(|completed| completed.key != key);
         meshing.completed_meshes.push(MeshingJobResult {
             key,
             mesh: packed_mesh,
             source_revision,
         });
         meshing.dirty.remove(&key);
-        ss.pending_render_deltas
-            .push_back(RenderDelta::Upsert { key, mesh: meshlet_mesh });
+        ss.pending_render_deltas.push_back(RenderDelta::Upsert {
+            key,
+            mesh: meshlet_mesh,
+        });
     }
 }
 
@@ -407,10 +458,14 @@ fn handle_job_result(
                             next_retry_frame: frame_index,
                         },
                     ) {
-                        warn!("chunk {key:?} transition to Error (cancelled Generated) failed: {e}");
+                        warn!(
+                            "chunk {key:?} transition to Error (cancelled Generated) failed: {e}"
+                        );
                     }
                     if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
-                        warn!("chunk {key:?} transition to Inactive (cancelled Generated) failed: {e}");
+                        warn!(
+                            "chunk {key:?} transition to Inactive (cancelled Generated) failed: {e}"
+                        );
                     }
                     ss.state_store.remove(&key);
                 }
@@ -447,7 +502,9 @@ fn handle_job_result(
                         warn!("chunk {key:?} transition to Error (cancelled Loaded) failed: {e}");
                     }
                     if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
-                        warn!("chunk {key:?} transition to Inactive (cancelled Loaded) failed: {e}");
+                        warn!(
+                            "chunk {key:?} transition to Inactive (cancelled Loaded) failed: {e}"
+                        );
                     }
                     ss.state_store.remove(&key);
                 }
@@ -495,7 +552,8 @@ fn handle_job_result(
                     source_revision,
                 );
             }
-            ss.pending_render_deltas.push_back(RenderDelta::Remove { key });
+            ss.pending_render_deltas
+                .push_back(RenderDelta::Remove { key });
             ss.state_store.remove(&key); // HIGH-03: no unbounded growth
         }
         ChunkJobOutcome::Failed(_msg) => {
@@ -519,14 +577,14 @@ fn handle_job_result(
                 }
                 ss.state_store.remove(&key); // HIGH-03: cleanup after max retries
             } else if let Err(e) = ss.state_store.transition_to(
-                    key,
-                    ChunkState::Error {
-                        retry_count: current_retry + 1,
-                        next_retry_frame,
-                    },
-                ) {
-                    warn!("chunk {key:?} transition to Error (Failed) failed: {e}");
-                }
+                key,
+                ChunkState::Error {
+                    retry_count: current_retry + 1,
+                    next_retry_frame,
+                },
+            ) {
+                warn!("chunk {key:?} transition to Error (Failed) failed: {e}");
+            }
         }
     }
 }
@@ -584,14 +642,23 @@ pub fn drain_pending_render_deltas_into_renderer(
     }
 }
 
-pub fn debug_deactivate_active_chunk_for_tests(key: ChunkKey, frame_index: u64) -> Vec<RenderDelta> {
+pub fn debug_deactivate_active_chunk_for_tests(
+    key: ChunkKey,
+    frame_index: u64,
+) -> Vec<RenderDelta> {
     let mut ss = StreamingState::new();
     let mut meshing = MeshingState::default();
 
     ss.state_store.insert_inactive(key);
-    ss.state_store.transition_to(key, ChunkState::Queued).expect("test: Inactive→Queued");
-    ss.state_store.transition_to(key, ChunkState::Loading).expect("test: Queued→Loading");
-    ss.state_store.transition_to(key, ChunkState::Active).expect("test: Loading→Active");
+    ss.state_store
+        .transition_to(key, ChunkState::Queued)
+        .expect("test: Inactive→Queued");
+    ss.state_store
+        .transition_to(key, ChunkState::Loading)
+        .expect("test: Queued→Loading");
+    ss.state_store
+        .transition_to(key, ChunkState::Active)
+        .expect("test: Loading→Active");
     deactivate_chunk(&mut ss, key);
 
     run_mesh_sync(&mut ss, &mut meshing, frame_index);
@@ -634,7 +701,7 @@ fn seed_input_commands(_event_bus: &mut EventBus) {
 
 #[cfg(test)]
 mod tests {
-    use super::MAX_RETRIES;
+    use super::{MAX_RETRIES, StreamingState, run_world_update};
     use crate::streaming::{
         state_store::ChunkStateStore,
         types::{ChunkKey, ChunkState},
@@ -707,5 +774,42 @@ mod tests {
             }
             other => panic!("expected Error state, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn error_chunk_requeues_when_retry_frame_elapsed() {
+        let mut streaming = StreamingState::new();
+        let key = streaming.octree.nodes()[0].key;
+        streaming.state_store.insert_inactive(key);
+        streaming
+            .state_store
+            .transition_to(key, ChunkState::Queued)
+            .expect("Inactive->Queued should succeed");
+        streaming
+            .state_store
+            .transition_to(key, ChunkState::Loading)
+            .expect("Queued->Loading should succeed");
+        streaming
+            .state_store
+            .transition_to(
+                key,
+                ChunkState::Error {
+                    retry_count: 1,
+                    next_retry_frame: 0,
+                },
+            )
+            .expect("Loading->Error should succeed");
+
+        run_world_update(&mut streaming, 10, [0.0, 0.0, 0.0]);
+
+        let state = streaming.state_store.get(&key).map(|entry| entry.state);
+        assert!(
+            matches!(state, Some(ChunkState::Queued | ChunkState::Loading)),
+            "retry-ready Error chunks should re-enter the scheduling pipeline"
+        );
+        assert!(
+            streaming.job_queue.len() > 0 || streaming.cancel_flags.contains_key(&key),
+            "retry-ready Error chunk should be re-enqueued or immediately spawned"
+        );
     }
 }

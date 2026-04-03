@@ -15,10 +15,10 @@ layout(push_constant) uniform SsaoPushConstants {
     float far_plane;
 } params;
 
-// Read depth from Hi-Z mip 0 (binding 7) — already in SHADER_READ_ONLY after Hi-Z gen.
-layout(set = 0, binding = 7) uniform sampler2D depth_tex;
-// Output AO — binding 17 (R8_UNORM, writeonly image2D).
-layout(r8, set = 0, binding = 17) uniform writeonly image2D ao_output;
+// Read depth from Hi-Z mip 0 via the dedicated SSAO descriptor set.
+layout(set = 0, binding = 0) uniform sampler2D depth_tex;
+// Output AO result.
+layout(r8, set = 0, binding = 1) uniform writeonly image2D ao_output;
 
 // -----------------------------------------------------------------------
 // Pseudo-random noise using interleaved gradient noise (Jimenez 2014)
@@ -57,11 +57,11 @@ vec3 reconstruct_view_pos(vec2 uv, float depth) {
 // -----------------------------------------------------------------------
 vec3 reconstruct_normal(vec2 uv) {
     vec2 texel = 1.0 / params.screen_size;
-    float dc = texture(depth_tex, uv).r;
-    float dl = texture(depth_tex, uv - vec2(texel.x, 0.0)).r;
-    float dr = texture(depth_tex, uv + vec2(texel.x, 0.0)).r;
-    float db = texture(depth_tex, uv - vec2(0.0, texel.y)).r;
-    float dt = texture(depth_tex, uv + vec2(0.0, texel.y)).r;
+    float dc = textureLod(depth_tex, uv, 0.0).r;
+    float dl = textureLod(depth_tex, uv - vec2(texel.x, 0.0), 0.0).r;
+    float dr = textureLod(depth_tex, uv + vec2(texel.x, 0.0), 0.0).r;
+    float db = textureLod(depth_tex, uv - vec2(0.0, texel.y), 0.0).r;
+    float dt = textureLod(depth_tex, uv + vec2(0.0, texel.y), 0.0).r;
 
     vec3 pc = reconstruct_view_pos(uv, dc);
     // Use the derivative pair that's closer (avoids edges)
@@ -96,7 +96,7 @@ float compute_gtao(vec2 uv, vec3 view_pos, vec3 normal) {
             vec2 sample_uv = uv + dir * step_scale * params.radius * texel * 8.0;
             sample_uv = clamp(sample_uv, vec2(0.001), vec2(0.999));
 
-            float sample_depth = texture(depth_tex, sample_uv).r;
+            float sample_depth = textureLod(depth_tex, sample_uv, 0.0).r;
             vec3 sample_pos = reconstruct_view_pos(sample_uv, sample_depth);
             vec3 diff = sample_pos - view_pos;
             float dist = length(diff);
@@ -137,7 +137,7 @@ float compute_hbao(vec2 uv, vec3 view_pos, vec3 normal) {
             vec2 sample_uv = uv + dir * step_scale * params.radius * texel * 10.0;
             sample_uv = clamp(sample_uv, vec2(0.001), vec2(0.999));
 
-            float sample_depth = texture(depth_tex, sample_uv).r;
+            float sample_depth = textureLod(depth_tex, sample_uv, 0.0).r;
             vec3 sample_pos = reconstruct_view_pos(sample_uv, sample_depth);
             vec3 diff = sample_pos - view_pos;
             float dist = length(diff);
@@ -199,7 +199,7 @@ float compute_classic_ssao(vec2 uv, vec3 view_pos, vec3 normal) {
         );
         sample_uv = clamp(sample_uv, vec2(0.001), vec2(0.999));
 
-        float sample_depth = texture(depth_tex, sample_uv).r;
+        float sample_depth = textureLod(depth_tex, sample_uv, 0.0).r;
         float sample_z = linearize_depth(sample_depth);
 
         // Compare depths: occluded if sample is behind scene geometry
@@ -218,7 +218,7 @@ void main() {
 
     vec2 uv = (vec2(pixel) + 0.5) / params.screen_size;
 
-    float depth = texture(depth_tex, uv).r;
+    float depth = textureLod(depth_tex, uv, 0.0).r;
     // Skip skybox (depth == 1.0 or near-zero linearized)
     if (depth >= 0.9999) {
         imageStore(ao_output, pixel, vec4(1.0));

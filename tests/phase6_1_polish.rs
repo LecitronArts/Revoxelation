@@ -12,8 +12,8 @@
 /// because they resolve to single-sample targets.
 #[test]
 fn phase6_1_depth_store_op() {
-    let src = std::fs::read_to_string("src/renderer/swapchain.rs")
-        .expect("should read swapchain.rs");
+    let src =
+        std::fs::read_to_string("src/renderer/swapchain.rs").expect("should read swapchain.rs");
 
     // The resolved depth attachment description must use AttachmentStoreOp::STORE.
     assert!(
@@ -36,8 +36,10 @@ fn phase6_1_depth_store_op() {
             let start = if line_num >= 10 { line_num - 10 } else { 0 };
             let context = &lines[start..line_num];
             let is_msaa_intermediate = context.iter().any(|l| {
-                l.contains("MSAA color") || l.contains("MSAA depth")
-                    || l.contains("Attachment 0:") || l.contains("Attachment 1:")
+                l.contains("MSAA color")
+                    || l.contains("MSAA depth")
+                    || l.contains("Attachment 0:")
+                    || l.contains("Attachment 1:")
             });
             if !is_msaa_intermediate {
                 panic!(
@@ -54,8 +56,8 @@ fn phase6_1_depth_store_op() {
 /// entries with correct src/dst offsets (not a single flat copy).
 #[test]
 fn phase6_1_scene_grow_per_region() {
-    let src = std::fs::read_to_string("src/renderer/chunk_pool.rs")
-        .expect("should read chunk_pool.rs");
+    let src =
+        std::fs::read_to_string("src/renderer/chunk_pool.rs").expect("should read chunk_pool.rs");
 
     // Find the grow_capacity function body.
     let grow_start = src
@@ -121,8 +123,7 @@ fn phase6_1_push_constants_split() {
 /// (not a 2x2 downsample), and the downsample loop must start from mip 1.
 #[test]
 fn phase6_1_hiz_pass0() {
-    let src = std::fs::read_to_string("src/renderer/hiz.rs")
-        .expect("should read hiz.rs");
+    let src = std::fs::read_to_string("src/renderer/hiz.rs").expect("should read hiz.rs");
 
     // Find the generate() function body.
     let gen_start = src
@@ -167,8 +168,8 @@ fn phase6_1_hiz_pass0() {
 /// by the removed range's meshlet count (not just remove from HashMap).
 #[test]
 fn phase6_1_meshlet_pool_remove() {
-    let src = std::fs::read_to_string("src/renderer/chunk_pool.rs")
-        .expect("should read chunk_pool.rs");
+    let src =
+        std::fs::read_to_string("src/renderer/chunk_pool.rs").expect("should read chunk_pool.rs");
 
     // Find record_remove in MeshletPool (not ChunkPool).
     let meshlet_pool_start = src
@@ -197,13 +198,16 @@ fn phase6_1_meshlet_pool_remove() {
 /// coordinates using CHUNK_EDGE and BLOCK_SIZE (or lod_scale).
 #[test]
 fn phase6_1_sse_world_coords() {
-    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
-        .expect("should read scheduler.rs");
+    let src =
+        std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
 
     // The SSE distance calculation must reference CHUNK_EDGE and some form
     // of block size or lod_scale for world-space conversion.
     assert!(
-        src.contains("CHUNK_EDGE") && (src.contains("BLOCK_SIZE") || src.contains("lod_scale") || src.contains("chunk_world")),
+        src.contains("CHUNK_EDGE")
+            && (src.contains("BLOCK_SIZE")
+                || src.contains("lod_scale")
+                || src.contains("chunk_world")),
         "SSE distance must use CHUNK_EDGE and block/lod scale for world-space conversion"
     );
 }
@@ -211,8 +215,8 @@ fn phase6_1_sse_world_coords() {
 /// CRIT-06: deactivate_chunk must handle Queued state → Inactive transition.
 #[test]
 fn phase6_1_deactivate_queued() {
-    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
-        .expect("should read scheduler.rs");
+    let src =
+        std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
 
     // Find deactivate_chunk function.
     let fn_start = src
@@ -242,8 +246,8 @@ fn phase6_1_state_store_remove() {
 /// HIGH-04: cancel_flags must be removed for Queued deactivations.
 #[test]
 fn phase6_1_cancel_flag_cleanup() {
-    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
-        .expect("should read scheduler.rs");
+    let src =
+        std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
 
     // Find deactivate_chunk function.
     let fn_start = src
@@ -261,8 +265,8 @@ fn phase6_1_cancel_flag_cleanup() {
 /// HIGH-05: Dirty mesh records with absent payload must be removed from dirty map.
 #[test]
 fn phase6_1_dirty_cleanup() {
-    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
-        .expect("should read scheduler.rs");
+    let src =
+        std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
 
     // Find run_mesh_sync function.
     let fn_start = src
@@ -272,7 +276,9 @@ fn phase6_1_dirty_cleanup() {
 
     // When payload is None, must remove from dirty map (not just continue/skip).
     assert!(
-        fn_body.contains("dirty.remove") || fn_body.contains("remove_absent") || fn_body.contains("dirty_map.remove"),
+        fn_body.contains("dirty.remove")
+            || fn_body.contains("remove_absent")
+            || fn_body.contains("dirty_map.remove"),
         "run_mesh_sync must remove dirty entries when payload is absent"
     );
 }
@@ -280,8 +286,8 @@ fn phase6_1_dirty_cleanup() {
 /// HIGH-06: Job queue eviction must compare new task SSE vs evicted task SSE.
 #[test]
 fn phase6_1_eviction_comparison() {
-    let src = std::fs::read_to_string("src/streaming/job_queue.rs")
-        .expect("should read job_queue.rs");
+    let src =
+        std::fs::read_to_string("src/streaming/job_queue.rs").expect("should read job_queue.rs");
 
     // Find enqueue function.
     let fn_start = src.find("fn enqueue").expect("enqueue must exist");
@@ -289,7 +295,8 @@ fn phase6_1_eviction_comparison() {
 
     // Must compare SSE of new task vs evicted task (reject if lower).
     assert!(
-        fn_body.contains("sse_bits") && (fn_body.contains("reject") || fn_body.contains("<=") || fn_body.contains("<")),
+        fn_body.contains("sse_bits")
+            && (fn_body.contains("reject") || fn_body.contains("<=") || fn_body.contains("<")),
         "enqueue must compare new task SSE against evicted task SSE"
     );
 }
@@ -297,8 +304,8 @@ fn phase6_1_eviction_comparison() {
 /// MED-06: PrioritizedTask must use real SSE at enqueue time (not placeholder 1.0).
 #[test]
 fn phase6_1_real_sse_enqueue() {
-    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
-        .expect("should read scheduler.rs");
+    let src =
+        std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
 
     // Find run_world_update function.
     let fn_start = src
@@ -328,8 +335,8 @@ fn phase6_1_dirty_hashset() {
 /// MED-08: run_mesh_sync must limit job results processed per frame.
 #[test]
 fn phase6_1_mesh_sync_limit() {
-    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
-        .expect("should read scheduler.rs");
+    let src =
+        std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
 
     // Find run_mesh_sync function.
     let fn_start = src
@@ -339,7 +346,9 @@ fn phase6_1_mesh_sync_limit() {
 
     // Must have a per-frame results cap (max_results, recv_count limit, etc.).
     assert!(
-        fn_body.contains("max_results") || fn_body.contains("MAX_RESULTS") || fn_body.contains("recv_cap"),
+        fn_body.contains("max_results")
+            || fn_body.contains("MAX_RESULTS")
+            || fn_body.contains("recv_cap"),
         "run_mesh_sync must have a per-frame result processing limit"
     );
 }
@@ -357,8 +366,8 @@ fn phase6_1_egui_descriptor_safety() {
 
     // Must have per-frame descriptor sets: an array field like `descriptor_sets: [vk::DescriptorSet; 2]`
     // or UPDATE_AFTER_BIND on the egui descriptor pool/layout.
-    let has_per_frame = src.contains("[vk::DescriptorSet; 2]")
-        || src.contains("[vk::DescriptorSet;2]");
+    let has_per_frame =
+        src.contains("[vk::DescriptorSet; 2]") || src.contains("[vk::DescriptorSet;2]");
     let has_update_after_bind = src.contains("UPDATE_AFTER_BIND");
 
     assert!(
@@ -371,15 +380,16 @@ fn phase6_1_egui_descriptor_safety() {
 /// device.destroy_buffer/image BEFORE allocator.free (correct Vulkan order).
 #[test]
 fn phase6_1_destroy_order() {
-    let src = std::fs::read_to_string("src/renderer/helpers.rs")
-        .expect("should read helpers.rs");
+    let src = std::fs::read_to_string("src/renderer/helpers.rs").expect("should read helpers.rs");
 
     // Check destroy_allocated_buffer: destroy_buffer must appear BEFORE .free
     let fn_start = src
         .find("fn destroy_allocated_buffer")
         .expect("destroy_allocated_buffer must exist");
     let fn_body = &src[fn_start..fn_start + 400.min(src.len() - fn_start)];
-    let destroy_pos = fn_body.find("destroy_buffer").expect("must call destroy_buffer");
+    let destroy_pos = fn_body
+        .find("destroy_buffer")
+        .expect("must call destroy_buffer");
     let free_pos = fn_body.find(".free(").expect("must call .free()");
     assert!(
         destroy_pos < free_pos,
@@ -391,7 +401,9 @@ fn phase6_1_destroy_order() {
         .find("fn destroy_allocated_image")
         .expect("destroy_allocated_image must exist");
     let fn_body2 = &src[fn_start2..fn_start2 + 400.min(src.len() - fn_start2)];
-    let destroy_pos2 = fn_body2.find("destroy_image").expect("must call destroy_image");
+    let destroy_pos2 = fn_body2
+        .find("destroy_image")
+        .expect("must call destroy_image");
     let free_pos2 = fn_body2.find(".free(").expect("must call .free()");
     assert!(
         destroy_pos2 < free_pos2,
@@ -404,8 +416,7 @@ fn phase6_1_destroy_order() {
 /// when mesh shaders are supported.
 #[test]
 fn phase6_1_bindless_mesh_shader_flags() {
-    let src = std::fs::read_to_string("src/renderer/bindless.rs")
-        .expect("should read bindless.rs");
+    let src = std::fs::read_to_string("src/renderer/bindless.rs").expect("should read bindless.rs");
 
     assert!(
         src.contains("TASK_EXT") || src.contains("TASK_SHADER"),
@@ -421,8 +432,7 @@ fn phase6_1_bindless_mesh_shader_flags() {
 /// near plane = row2 of MVP (not row3+row2 which is OpenGL convention).
 #[test]
 fn phase6_1_camera_near_plane() {
-    let src = std::fs::read_to_string("src/renderer/camera.rs")
-        .expect("should read camera.rs");
+    let src = std::fs::read_to_string("src/renderer/camera.rs").expect("should read camera.rs");
 
     // Find extract_frustum_planes function.
     let fn_start = src
@@ -449,8 +459,7 @@ fn phase6_1_camera_near_plane() {
 /// (or TASK_SHADER_BIT_EXT) in dstStageMask when mesh shaders are enabled.
 #[test]
 fn phase6_1_barrier_mesh_shader_stages() {
-    let src = std::fs::read_to_string("src/renderer/submit.rs")
-        .expect("should read submit.rs");
+    let src = std::fs::read_to_string("src/renderer/submit.rs").expect("should read submit.rs");
 
     assert!(
         src.contains("TASK_SHADER_EXT") || src.contains("TASK_SHADER"),
@@ -462,8 +471,7 @@ fn phase6_1_barrier_mesh_shader_stages() {
 /// and emit log::warn (no silent zero-synchronization).
 #[test]
 fn phase6_1_transition_catchall_warn() {
-    let src = std::fs::read_to_string("src/renderer/helpers.rs")
-        .expect("should read helpers.rs");
+    let src = std::fs::read_to_string("src/renderer/helpers.rs").expect("should read helpers.rs");
 
     // Find transition_image_layout function.
     let fn_start = src
@@ -487,11 +495,12 @@ fn phase6_1_transition_catchall_warn() {
 /// MED-04: StagingBuffer::write must return Result<()> and check for unmapped memory.
 #[test]
 fn phase6_1_staging_write_result() {
-    let src = std::fs::read_to_string("src/renderer/staging.rs")
-        .expect("should read staging.rs");
+    let src = std::fs::read_to_string("src/renderer/staging.rs").expect("should read staging.rs");
 
     // Find the fn write signature line — it must return Result.
-    let write_line = src.lines().find(|l| l.contains("fn write(") || l.contains("fn write ("));
+    let write_line = src
+        .lines()
+        .find(|l| l.contains("fn write(") || l.contains("fn write ("));
     assert!(
         write_line.is_some(),
         "StagingBuffer must have a fn write method"
@@ -507,8 +516,7 @@ fn phase6_1_staging_write_result() {
 /// hardcoded INITIAL_MESHLET_CAPACITY.
 #[test]
 fn phase6_1_max_draw_count_dynamic() {
-    let src = std::fs::read_to_string("src/renderer/submit.rs")
-        .expect("should read submit.rs");
+    let src = std::fs::read_to_string("src/renderer/submit.rs").expect("should read submit.rs");
 
     // Find the meshlet rendering path.
     let render_start = src
@@ -531,10 +539,10 @@ fn phase6_1_max_draw_count_dynamic() {
 /// for load (correct cross-thread visibility on ARM).
 #[test]
 fn phase6_1_atomic_ordering() {
-    let job_runner_src = std::fs::read_to_string("src/streaming/job_runner.rs")
-        .expect("should read job_runner.rs");
-    let scheduler_src = std::fs::read_to_string("src/runtime/scheduler.rs")
-        .expect("should read scheduler.rs");
+    let job_runner_src =
+        std::fs::read_to_string("src/streaming/job_runner.rs").expect("should read job_runner.rs");
+    let scheduler_src =
+        std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
 
     // job_runner.rs: cancel flag loads should use Acquire (not Relaxed).
     let fn_start = job_runner_src
@@ -589,8 +597,8 @@ fn phase6_1_no_hardcoded_1080() {
 /// key shared definitions: face_normal_from_index, GpuChunkInstance, Bayer matrix.
 #[test]
 fn phase6_1_shared_shader_include() {
-    let common = std::fs::read_to_string("shaders/common.glsl")
-        .expect("shaders/common.glsl must exist");
+    let common =
+        std::fs::read_to_string("shaders/common.glsl").expect("shaders/common.glsl must exist");
     assert!(
         common.contains("face_normal"),
         "common.glsl must contain face_normal_from_index"
@@ -659,8 +667,8 @@ fn phase6_1_texture_mipmaps() {
 /// must reference SampleCountFlags::TYPE_4.
 #[test]
 fn phase6_1_msaa_enabled() {
-    let swap_src = std::fs::read_to_string("src/renderer/swapchain.rs")
-        .expect("should read swapchain.rs");
+    let swap_src =
+        std::fs::read_to_string("src/renderer/swapchain.rs").expect("should read swapchain.rs");
     let pipe_src = std::fs::read_to_string("src/renderer/mesh_pipeline.rs")
         .expect("should read mesh_pipeline.rs");
 
@@ -685,8 +693,7 @@ fn phase6_1_msaa_enabled() {
 /// and use delta_time for frame-rate-independent movement.
 #[test]
 fn phase6_1_camera_smoothing() {
-    let src = std::fs::read_to_string("src/renderer/camera.rs")
-        .expect("should read camera.rs");
+    let src = std::fs::read_to_string("src/renderer/camera.rs").expect("should read camera.rs");
 
     assert!(
         src.contains("move_speed"),
@@ -705,8 +712,8 @@ fn phase6_1_camera_smoothing() {
 /// POLISH-08: GpuChunkInstance must have spawn_time field for chunk fade-in transition.
 #[test]
 fn phase6_1_chunk_fade_in() {
-    let src = std::fs::read_to_string("src/renderer/chunk_pool.rs")
-        .expect("should read chunk_pool.rs");
+    let src =
+        std::fs::read_to_string("src/renderer/chunk_pool.rs").expect("should read chunk_pool.rs");
 
     let struct_start = src
         .find("struct GpuChunkInstance")
@@ -734,17 +741,15 @@ fn phase6_1_shader_fade() {
 /// MED-12: Octree parent mapping must skip out-of-range coordinates instead of clamping.
 #[test]
 fn phase6_1_octree_skip_link() {
-    let src = std::fs::read_to_string("src/streaming/octree.rs")
-        .expect("should read octree.rs");
+    let src = std::fs::read_to_string("src/streaming/octree.rs").expect("should read octree.rs");
 
-    let build_start = src
-        .find("fn build")
-        .expect("build function must exist");
+    let build_start = src.find("fn build").expect("build function must exist");
     let build_body = &src[build_start..];
 
     // Must NOT clamp parent coordinates — should skip instead.
     assert!(
-        !build_body.contains("px.clamp(") && !build_body.contains("py.clamp(")
+        !build_body.contains("px.clamp(")
+            && !build_body.contains("py.clamp(")
             && !build_body.contains("pz.clamp("),
         "octree parent coords must not use .clamp — should skip out-of-range coordinates"
     );
@@ -753,8 +758,7 @@ fn phase6_1_octree_skip_link() {
 /// REFAC-06: hecs dependency must be removed from Cargo.toml.
 #[test]
 fn phase6_1_no_hecs() {
-    let src = std::fs::read_to_string("Cargo.toml")
-        .expect("should read Cargo.toml");
+    let src = std::fs::read_to_string("Cargo.toml").expect("should read Cargo.toml");
 
     for line in src.lines() {
         assert!(
@@ -768,8 +772,8 @@ fn phase6_1_no_hecs() {
 /// REFAC-07: ChunkDrawMetadata dead code must be removed.
 #[test]
 fn phase6_1_dead_code_removed() {
-    let src = std::fs::read_to_string("src/renderer/chunk_pool.rs")
-        .expect("should read chunk_pool.rs");
+    let src =
+        std::fs::read_to_string("src/renderer/chunk_pool.rs").expect("should read chunk_pool.rs");
 
     assert!(
         !src.contains("ChunkDrawMetadata"),
@@ -817,8 +821,7 @@ fn phase6_1_no_unwrap_in_runtime() {
         "src/renderer/chunk_pool.rs",
         "src/renderer/staging_ring.rs",
     ] {
-        let src = std::fs::read_to_string(file)
-            .unwrap_or_else(|_| panic!("should read {}", file));
+        let src = std::fs::read_to_string(file).unwrap_or_else(|_| panic!("should read {}", file));
         let non_test = strip_test_module(&src);
 
         let unwrap_count = non_test.matches(".unwrap()").count();
@@ -833,8 +836,8 @@ fn phase6_1_no_unwrap_in_runtime() {
 /// for actual GPU-counted values (not placeholder estimates).
 #[test]
 fn phase6_1_gpu_readback() {
-    let submit_src = std::fs::read_to_string("src/renderer/submit.rs")
-        .expect("should read submit.rs");
+    let submit_src =
+        std::fs::read_to_string("src/renderer/submit.rs").expect("should read submit.rs");
     let perf_src = std::fs::read_to_string("src/renderer/perf_counters.rs")
         .expect("should read perf_counters.rs");
 
@@ -850,8 +853,8 @@ fn phase6_1_gpu_readback() {
 /// MED-11: No eprintln! calls in scheduler.rs — must use log framework.
 #[test]
 fn phase6_1_no_eprintln() {
-    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
-        .expect("should read scheduler.rs");
+    let src =
+        std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
     let non_test = strip_test_module(&src);
 
     let count = non_test.matches("eprintln!").count();
@@ -865,8 +868,8 @@ fn phase6_1_no_eprintln() {
 /// so no dummy events fire in production.
 #[test]
 fn phase6_1_no_seed_input_production() {
-    let src = std::fs::read_to_string("src/runtime/scheduler.rs")
-        .expect("should read scheduler.rs");
+    let src =
+        std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
 
     // Find seed_input_commands function body.
     let fn_start = src
@@ -897,8 +900,7 @@ fn phase6_1_no_seed_input_production() {
 /// instead of 38+ flat fields.
 #[test]
 fn phase6_1_renderer_split() {
-    let src = std::fs::read_to_string("src/renderer/mod.rs")
-        .expect("should read renderer/mod.rs");
+    let src = std::fs::read_to_string("src/renderer/mod.rs").expect("should read renderer/mod.rs");
 
     let has_core = src.contains("VulkanCore") || src.contains("vulkan_core");
     let has_pipelines = src.contains("PipelineSet") || src.contains("pipeline_set");
@@ -922,8 +924,7 @@ fn phase6_1_renderer_split() {
 /// (acquire_image, begin_render_pass, present, etc.).
 #[test]
 fn phase6_1_submit_decomposed() {
-    let src = std::fs::read_to_string("src/renderer/submit.rs")
-        .expect("should read submit.rs");
+    let src = std::fs::read_to_string("src/renderer/submit.rs").expect("should read submit.rs");
 
     let named_fns = [
         "fn acquire_image",
@@ -937,15 +938,18 @@ fn phase6_1_submit_decomposed() {
     assert!(
         found >= 6,
         "submit.rs must contain at least 6 named sub-functions, found {found}: {:?}",
-        named_fns.iter().filter(|f| src.contains(**f)).collect::<Vec<_>>()
+        named_fns
+            .iter()
+            .filter(|f| src.contains(**f))
+            .collect::<Vec<_>>()
     );
 }
 
 /// REFAC-03: Swapchain creation must share helper functions between create and recreate.
 #[test]
 fn phase6_1_swapchain_dedup() {
-    let src = std::fs::read_to_string("src/renderer/swapchain.rs")
-        .expect("should read swapchain.rs");
+    let src =
+        std::fs::read_to_string("src/renderer/swapchain.rs").expect("should read swapchain.rs");
 
     let has_helper = src.contains("fn build_depth_resources")
         || src.contains("fn build_render_pass")
@@ -960,8 +964,8 @@ fn phase6_1_swapchain_dedup() {
 /// REFAC-04: Staging copy pattern must be extracted into a helper function.
 #[test]
 fn phase6_1_staging_helper() {
-    let src = std::fs::read_to_string("src/renderer/chunk_pool.rs")
-        .expect("should read chunk_pool.rs");
+    let src =
+        std::fs::read_to_string("src/renderer/chunk_pool.rs").expect("should read chunk_pool.rs");
 
     assert!(
         src.contains("stage_and_copy") || src.contains("staging_helper"),
@@ -972,8 +976,7 @@ fn phase6_1_staging_helper() {
 /// REFAC-05: Binding IDs must use named constants instead of magic number literals.
 #[test]
 fn phase6_1_binding_constants() {
-    let src = std::fs::read_to_string("src/renderer/bindless.rs")
-        .expect("should read bindless.rs");
+    let src = std::fs::read_to_string("src/renderer/bindless.rs").expect("should read bindless.rs");
 
     assert!(
         src.contains("BINDING_SCENE"),
@@ -988,8 +991,7 @@ fn phase6_1_binding_constants() {
 /// REFAC-08: App must have a tick() method, keeping the event loop body short.
 #[test]
 fn phase6_1_app_tick() {
-    let src = std::fs::read_to_string("src/app.rs")
-        .expect("should read app.rs");
+    let src = std::fs::read_to_string("src/app.rs").expect("should read app.rs");
 
     assert!(
         src.contains("fn tick"),

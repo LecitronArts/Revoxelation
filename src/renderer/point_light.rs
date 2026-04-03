@@ -3,14 +3,20 @@
 //! `PointLightManager` owns a double-buffered SSBO at binding 22 containing
 //! up to MAX_VISIBLE_POINT_LIGHTS point lights sorted by distance to camera.
 
+use std::cmp::Ordering;
+use std::collections::HashMap;
+
 use anyhow::Result;
 use ash::vk;
-use gpu_allocator::vulkan::Allocation;
+use glam::Vec3;
 use gpu_allocator::MemoryLocation;
+use gpu_allocator::vulkan::Allocation;
 
 use super::Renderer;
-use super::helpers::create_allocated_buffer;
 use super::bindless::BINDING_POINT_LIGHT_SSBO;
+use super::helpers::create_allocated_buffer;
+use super::material::emissive_block_info;
+use crate::streaming::types::{CHUNK_EDGE, ChunkKey, ChunkVoxels};
 
 /// GPU-side point light data (matches GLSL PointLight struct).
 #[repr(C)]
@@ -33,6 +39,8 @@ pub struct PointLightHeader {
 
 /// Maximum number of visible point lights uploaded per frame.
 pub const MAX_VISIBLE_POINT_LIGHTS: usize = 64;
+const BLOCK_SIZE: f32 = 1.0 / 16.0;
+const MAX_POINT_LIGHT_DISTANCE: f32 = 24.0;
 
 /// SSBO size: header + max lights.
 const SSBO_SIZE: u64 = (std::mem::size_of::<PointLightHeader>()
@@ -98,6 +106,78 @@ impl PointLightManager {
         })
     }
 
+    pub fn rebuild_from_payloads(
+        &mut self,
+        payloads: &HashMap<ChunkKey, ChunkVoxels>,
+        camera_pos: [f32; 3],
+    ) {
+        self.visible_lights.clear();
+
+        let camera = Vec3::from_array(camera_pos);
+        let max_dist_sq = MAX_POINT_LIGHT_DISTANCE * MAX_POINT_LIGHT_DISTANCE;
+        let mut candidates = Vec::new();
+
+        for (key, chunk) in payloads {
+            if key.lod_level != 0 {
+                continue;
+            }
+
+            let block_world_size = BLOCK_SIZE * (1_u32 << key.lod_level) as f32;
+            let chunk_world_edge = CHUNK_EDGE as f32 * block_world_size;
+            let chunk_origin = Vec3::new(
+                key.x as f32 * chunk_world_edge,
+                key.y as f32 * chunk_world_edge,
+                key.z as f32 * chunk_world_edge,
+            );
+            let chunk_center = chunk_origin + Vec3::splat(chunk_world_edge * 0.5);
+            if chunk_center.distance_squared(camera)
+                > (MAX_POINT_LIGHT_DISTANCE + chunk_world_edge).powi(2)
+            {
+                continue;
+            }
+
+            for z in 0..CHUNK_EDGE as u8 {
+                for y in 0..CHUNK_EDGE as u8 {
+                    for x in 0..CHUNK_EDGE as u8 {
+                        let block_id = chunk.block(x, y, z);
+                        let Some(info) = emissive_block_info(block_id) else {
+                            continue;
+                        };
+
+                        let position = chunk_origin
+                            + Vec3::new(
+                                (x as f32 + 0.5) * block_world_size,
+                                (y as f32 + 0.5) * block_world_size,
+                                (z as f32 + 0.5) * block_world_size,
+                            );
+                        let dist_sq = position.distance_squared(camera);
+                        if dist_sq > max_dist_sq {
+                            continue;
+                        }
+
+                        candidates.push((
+                            dist_sq,
+                            PointLight {
+                                position: position.to_array(),
+                                radius: info.radius,
+                                color: info.color,
+                                intensity: info.intensity,
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+
+        candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+        self.visible_lights.extend(
+            candidates
+                .into_iter()
+                .take(MAX_VISIBLE_POINT_LIGHTS)
+                .map(|(_, light)| light),
+        );
+    }
+
     /// Upload current visible lights to the current frame's SSBO.
     pub fn upload(&self, renderer: &Renderer, current_frame: usize) {
         let count = self.visible_lights.len().min(MAX_VISIBLE_POINT_LIGHTS);
@@ -145,11 +225,7 @@ impl PointLightManager {
     pub fn destroy(mut self, renderer: &mut Renderer) -> Result<()> {
         for i in 0..2 {
             if let Some(alloc) = self.ssbo_allocs[i].take() {
-                super::helpers::destroy_allocated_buffer(
-                    renderer,
-                    self.ssbo_buffers[i],
-                    alloc,
-                )?;
+                super::helpers::destroy_allocated_buffer(renderer, self.ssbo_buffers[i], alloc)?;
             }
         }
         Ok(())

@@ -5,45 +5,20 @@ layout(local_size_x = 8, local_size_y = 8) in;
 layout(push_constant) uniform BlurParams {
     vec2 direction;   // (1,0) for horizontal, (0,1) for vertical
     vec2 texel_size;
-    uint pass_index;  // 0 = horizontal (read 17, write 24), 1 = vertical (read 24, write 17)
+    uint pass_index;  // 0 = horizontal, 1 = vertical
     float _pad0;
     float _pad1;
     float _pad2;
 } params;
 
-// Horizontal pass: read from AO result (binding 17), write to blur intermediate (binding 24).
-layout(set = 0, binding = 17) uniform sampler2D ao_input_17;
-layout(r8, set = 0, binding = 24) uniform writeonly image2D ao_output_24;
-
-// Vertical pass: read from blur intermediate (binding 24 as sampler), write to AO result (binding 17 as image).
-// NOTE: Vulkan with PARTIALLY_BOUND allows binding 24 to be both STORAGE_IMAGE and COMBINED_IMAGE_SAMPLER
-// in the descriptor set layout, but we declared binding 24 as STORAGE_IMAGE only.
-// Instead, we use imageLoad on the storage image for the vertical pass read.
-// However, since binding 24 is declared as writeonly in horizontal pass, we need a different approach.
-//
-// Solution: Use two separate pipelines or use a single pipeline with pass_index selecting behavior.
-// Since we cannot read from writeonly image2D, we will:
-// - Pass 0 (horizontal): sample ao_input_17 (sampler2D), write ao_output_24 (writeonly image2D)
-// - Pass 1 (vertical): We need to read binding 24. Since it's STORAGE_IMAGE, we declare it as
-//   readonly image2D in a separate binding... but that would require another binding.
-//
-// Practical approach: Use binding 17 as both sampler2D (read) and writeonly image2D (write) via
-// separate descriptor types. But Vulkan doesn't allow same binding to be two types.
-//
-// Final approach (simplest): Both passes use the same direction. The host alternates
-// which images are at binding 17 (sampler) and binding 24 (storage_image) by updating
-// descriptors between passes. But UPDATE_AFTER_BIND makes this safe.
-//
-// SIMPLEST: Use a single blur pipeline. The Rust side updates descriptor binding 17 and 24
-// between passes so that:
-//   Pass 0: binding 17 = AO result (read), binding 24 = blur intermediate (write)
-//   Pass 1: binding 17 = blur intermediate (read), binding 24 = AO result (write)
-// This way the shader code is identical for both passes.
+// Dedicated blur descriptor set: binding 0 = sampled input, binding 1 = storage output.
+layout(set = 0, binding = 0) uniform sampler2D ao_input;
+layout(r8, set = 0, binding = 1) uniform writeonly image2D ao_output;
 
 // 7-tap Gaussian bilateral blur
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 output_size = imageSize(ao_output_24);
+    ivec2 output_size = imageSize(ao_output);
     if (pixel.x >= output_size.x || pixel.y >= output_size.y) return;
 
     vec2 uv = (vec2(pixel) + 0.5) * params.texel_size;
@@ -51,15 +26,15 @@ void main() {
     // Gaussian weights for 7-tap kernel (sigma ~= 2.0)
     const float weights[4] = float[4](0.2270270, 0.1945945, 0.1216216, 0.0540540);
 
-    float center_ao = texture(ao_input_17, uv).r;
+    float center_ao = texture(ao_input, uv).r;
     float result = center_ao * weights[0];
     float total_weight = weights[0];
 
     for (int i = 1; i <= 3; i++) {
         vec2 offset = params.direction * params.texel_size * float(i);
 
-        float ao_pos = texture(ao_input_17, uv + offset).r;
-        float ao_neg = texture(ao_input_17, uv - offset).r;
+        float ao_pos = texture(ao_input, uv + offset).r;
+        float ao_neg = texture(ao_input, uv - offset).r;
 
         // Bilateral weight: reduce weight for samples with very different AO (preserves edges)
         float w_pos = weights[i] * (1.0 - smoothstep(0.0, 0.1, abs(ao_pos - center_ao)));
@@ -70,5 +45,5 @@ void main() {
     }
 
     result /= max(total_weight, 0.001);
-    imageStore(ao_output_24, pixel, vec4(result, 0.0, 0.0, 0.0));
+    imageStore(ao_output, pixel, vec4(result, 0.0, 0.0, 0.0));
 }

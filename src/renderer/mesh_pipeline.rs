@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use ash::vk;
 
-use super::{Renderer, chunk_pool::ChunkPool, spirv::create_shader_module};
 use super::camera::CameraUniforms;
-use super::swapchain::MSAA_SAMPLES;
 use super::chunk_pool::MeshletPool;
 use super::cull_pipeline::MeshletCullPushConstants;
+use super::swapchain::MSAA_SAMPLES;
+use super::{Renderer, chunk_pool::ChunkPool, spirv::create_shader_module};
 
 // ============================================================================
 // MeshletPipeline trait — abstracts meshlet rendering backend (D-06)
@@ -153,13 +153,19 @@ impl ComputeIndirectPath {
             .line_width(1.0)
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::CLOCKWISE);
-        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(MSAA_SAMPLES);
+        let multisample =
+            vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(MSAA_SAMPLES);
         let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
-            .blend_enable(false)
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
             .color_write_mask(vk::ColorComponentFlags::RGBA)];
-        let color_blend = vk::PipelineColorBlendStateCreateInfo::default()
-            .attachments(&color_blend_attachment);
+        let color_blend =
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(true)
             .depth_write_enable(true)
@@ -433,13 +439,19 @@ impl MeshShaderPath {
             .line_width(1.0)
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::CLOCKWISE);
-        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(MSAA_SAMPLES);
+        let multisample =
+            vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(MSAA_SAMPLES);
         let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
-            .blend_enable(false)
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
             .color_write_mask(vk::ColorComponentFlags::RGBA)];
-        let color_blend = vk::PipelineColorBlendStateCreateInfo::default()
-            .attachments(&color_blend_attachment);
+        let color_blend =
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(true)
             .depth_write_enable(true)
@@ -592,7 +604,8 @@ impl MeshletPipeline for MeshShaderPath {
 
             // Dispatch task+mesh shader: one workgroup per 32 meshlets.
             let group_count_x = total_meshlets.div_ceil(32);
-            self.mesh_shader_fn.cmd_draw_mesh_tasks(cmd, group_count_x, 1, 1);
+            self.mesh_shader_fn
+                .cmd_draw_mesh_tasks(cmd, group_count_x, 1, 1);
         }
     }
 
@@ -708,13 +721,19 @@ impl ChunkMeshPipeline {
             .line_width(1.0)
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::CLOCKWISE);
-        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(MSAA_SAMPLES);
+        let multisample =
+            vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(MSAA_SAMPLES);
         let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
-            .blend_enable(false)
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
             .color_write_mask(vk::ColorComponentFlags::RGBA)];
-        let color_blend = vk::PipelineColorBlendStateCreateInfo::default()
-            .attachments(&color_blend_attachment);
+        let color_blend =
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(true)
             .depth_write_enable(true)
@@ -797,8 +816,14 @@ impl ChunkMeshPipeline {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline,
             );
-            renderer.device_ctx.device.cmd_set_viewport(cmd, 0, &[viewport]);
-            renderer.device_ctx.device.cmd_set_scissor(cmd, 0, &[scissor]);
+            renderer
+                .device_ctx
+                .device
+                .cmd_set_viewport(cmd, 0, &[viewport]);
+            renderer
+                .device_ctx
+                .device
+                .cmd_set_scissor(cmd, 0, &[scissor]);
             renderer.device_ctx.device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
@@ -841,7 +866,10 @@ impl ChunkMeshPipeline {
 
     pub fn destroy(self, renderer: &Renderer) {
         unsafe {
-            renderer.device_ctx.device.destroy_pipeline(self.pipeline, None);
+            renderer
+                .device_ctx
+                .device
+                .destroy_pipeline(self.pipeline, None);
             renderer
                 .device_ctx
                 .device

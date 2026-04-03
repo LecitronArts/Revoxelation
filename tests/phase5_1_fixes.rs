@@ -25,8 +25,8 @@ fn hiz_resize_wired_to_swapchain() {
 /// Verify that `HiZPyramid::recreate` method exists in hiz.rs.
 #[test]
 fn hiz_pyramid_recreate_exists() {
-    let source = std::fs::read_to_string("src/renderer/hiz.rs")
-        .expect("failed to read src/renderer/hiz.rs");
+    let source =
+        std::fs::read_to_string("src/renderer/hiz.rs").expect("failed to read src/renderer/hiz.rs");
 
     assert!(
         source.contains("fn recreate"),
@@ -47,10 +47,7 @@ fn camera_pos_not_hardcoded() {
         .expect("run_world_update function not found in scheduler.rs");
     let body = &source[fn_start..];
     // The body extends until the next `fn ` at the start of a line (or EOF).
-    let fn_end = body[1..]
-        .find("\nfn ")
-        .map(|i| i + 1)
-        .unwrap_or(body.len());
+    let fn_end = body[1..].find("\nfn ").map(|i| i + 1).unwrap_or(body.len());
     let fn_body = &body[..fn_end];
 
     assert!(
@@ -105,7 +102,9 @@ fn run_frame_accepts_camera_pos() {
     let fn_start = source
         .find("pub fn run_frame")
         .expect("run_frame function not found in scheduler.rs");
-    let sig_end = source[fn_start..].find('{').unwrap_or(source.len() - fn_start);
+    let sig_end = source[fn_start..]
+        .find('{')
+        .unwrap_or(source.len() - fn_start);
     let signature = &source[fn_start..fn_start + sig_end];
 
     assert!(
@@ -117,8 +116,7 @@ fn run_frame_accepts_camera_pos() {
 /// FIX-03: app.rs must extract camera position and pass to run_frame.
 #[test]
 fn app_passes_camera_pos_to_run_frame() {
-    let source = std::fs::read_to_string("src/app.rs")
-        .expect("failed to read src/app.rs");
+    let source = std::fs::read_to_string("src/app.rs").expect("failed to read src/app.rs");
 
     // The call site must reference camera position.
     assert!(
@@ -127,7 +125,9 @@ fn app_passes_camera_pos_to_run_frame() {
     );
 
     // Must appear near run_frame call.
-    let run_frame_idx = source.find("run_frame").expect("run_frame call not found in app.rs");
+    let run_frame_idx = source
+        .find("run_frame")
+        .expect("run_frame call not found in app.rs");
     let context_start = run_frame_idx.saturating_sub(200);
     let context_end = (run_frame_idx + 300).min(source.len());
     let context = &source[context_start..context_end];
@@ -156,9 +156,7 @@ fn send_safety_documented() {
                 // Check that a `// SAFETY:` comment exists within 5 lines above.
                 let start = i.saturating_sub(5);
                 let preceding = &lines[start..i];
-                let has_safety_comment = preceding
-                    .iter()
-                    .any(|l| l.contains("// SAFETY:"));
+                let has_safety_comment = preceding.iter().any(|l| l.contains("// SAFETY:"));
                 assert!(
                     has_safety_comment,
                     "{file_path}:{}: `unsafe impl Send` at line {} lacks a `// SAFETY:` comment \
@@ -189,8 +187,8 @@ fn draw_cmd_no_raw_parts() {
 /// silently discarding them with `let _ = ...`.
 #[test]
 fn drop_impl_logs_errors() {
-    let source = std::fs::read_to_string("src/renderer/mod.rs")
-        .expect("failed to read src/renderer/mod.rs");
+    let source =
+        std::fs::read_to_string("src/renderer/mod.rs").expect("failed to read src/renderer/mod.rs");
 
     // Find the `fn drop` block.
     let drop_start = source

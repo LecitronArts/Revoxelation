@@ -38,8 +38,7 @@ fn rend_06_no_oncelock_in_renderer() {
 
 #[test]
 fn rend_06_app_struct_owns_renderer() {
-    let app_source =
-        std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
+    let app_source = std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
     assert!(
         app_source.contains("struct App"),
         "src/app.rs should define struct App"
@@ -116,8 +115,7 @@ fn rend_06_run_frame_takes_mutable_refs() {
 
 #[test]
 fn rend_06_app_struct_owns_all_subsystems() {
-    let app_source =
-        std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
+    let app_source = std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
     assert!(
         app_source.contains("streaming") && app_source.contains("StreamingState"),
         "App struct should have a streaming: StreamingState field"
@@ -134,8 +132,7 @@ fn rend_06_app_struct_owns_all_subsystems() {
 
 #[test]
 fn rend_06_env_logger_initialized() {
-    let main_source =
-        std::fs::read_to_string("src/main.rs").expect("src/main.rs should exist");
+    let main_source = std::fs::read_to_string("src/main.rs").expect("src/main.rs should exist");
     assert!(
         main_source.contains("env_logger::init()") || main_source.contains("env_logger::builder()"),
         "src/main.rs should initialize env_logger before app::run()"
@@ -144,22 +141,22 @@ fn rend_06_env_logger_initialized() {
 
 #[test]
 fn rend_06_submit_frame_errors_propagated() {
-    let app_source =
-        std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
+    let app_source = std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
     assert!(
         app_source.contains("submit_frame"),
         "app.rs should call submit_frame"
     );
     assert!(
-        app_source.contains("Err") || app_source.contains("if let Err") || app_source.contains("log::error!"),
+        app_source.contains("Err")
+            || app_source.contains("if let Err")
+            || app_source.contains("log::error!"),
         "app.rs should handle submit_frame errors"
     );
 }
 
 #[test]
 fn rend_06_env_logger_in_cargo_toml() {
-    let cargo_toml =
-        std::fs::read_to_string("Cargo.toml").expect("Cargo.toml should exist");
+    let cargo_toml = std::fs::read_to_string("Cargo.toml").expect("Cargo.toml should exist");
     assert!(
         cargo_toml.contains("env_logger"),
         "Cargo.toml should include env_logger dependency"
@@ -182,7 +179,10 @@ fn rend_01_camera_view_proj_is_valid() {
         [0.0, 0.0, 1.0, 0.0],
         [0.0, 0.0, 0.0, 1.0],
     ];
-    assert_ne!(uniforms.view_proj, identity, "view_proj must not be identity");
+    assert_ne!(
+        uniforms.view_proj, identity,
+        "view_proj must not be identity"
+    );
     // All values must be finite
     for row in &uniforms.view_proj {
         for val in row {
@@ -206,7 +206,11 @@ fn rend_01_camera_movement_changes_position() {
     use revoxelation::renderer::camera::FpsCamera;
     let mut camera = FpsCamera::default();
     let original_pos = camera.position;
-    camera.process_keyboard(revoxelation::renderer::camera::CameraKey::Forward, true, 1.0 / 60.0);
+    camera.process_keyboard(
+        revoxelation::renderer::camera::CameraKey::Forward,
+        true,
+        1.0 / 60.0,
+    );
     assert_ne!(
         camera.position, original_pos,
         "Camera position should change after forward movement"
@@ -253,8 +257,12 @@ fn rend_05_staging_ring_allocation_returns_valid_offset() {
     use revoxelation::renderer::staging_ring::StagingRing;
     // 32 MB total, 2 frames → 16 MB per frame
     let mut ring = StagingRing::new_layout_only(32 * 1024 * 1024, 2);
-    let a1 = ring.allocate(256, 16).expect("first allocation should succeed");
-    let a2 = ring.allocate(512, 16).expect("second allocation should succeed");
+    let a1 = ring
+        .allocate(256, 16)
+        .expect("first allocation should succeed");
+    let a2 = ring
+        .allocate(512, 16)
+        .expect("second allocation should succeed");
     // First allocation starts at offset 0 within frame 0 region
     assert_eq!(a1.offset, 0, "first alloc offset should be 0");
     // Second allocation must come after the first, respecting alignment
@@ -279,7 +287,9 @@ fn rend_05_staging_ring_frame_advance_resets_offset() {
     let _a1 = ring.allocate(1024, 16).expect("allocation should succeed");
     // Advance to frame 1 — cursor resets to frame 1 region start
     ring.advance_frame();
-    let a2 = ring.allocate(256, 16).expect("allocation in new frame should succeed");
+    let a2 = ring
+        .allocate(256, 16)
+        .expect("allocation in new frame should succeed");
     // After advancing, offset should be in the second frame's region (16 MB into the buffer)
     let frame_size: u64 = 16 * 1024 * 1024;
     assert_eq!(
@@ -394,15 +404,16 @@ fn rend_02_submit_handles_out_of_date() {
     let source = std::fs::read_to_string("src/renderer/submit.rs")
         .expect("src/renderer/submit.rs should exist");
     assert!(
-        source.contains("OUT_OF_DATE") || source.contains("ErrorOutOfDateKhr") || source.contains("ERROR_OUT_OF_DATE_KHR"),
+        source.contains("OUT_OF_DATE")
+            || source.contains("ErrorOutOfDateKhr")
+            || source.contains("ERROR_OUT_OF_DATE_KHR"),
         "submit.rs must handle OUT_OF_DATE errors from acquire/present"
     );
 }
 
 #[test]
 fn rend_02_app_handles_resize_event() {
-    let source = std::fs::read_to_string("src/app.rs")
-        .expect("src/app.rs should exist");
+    let source = std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
     assert!(
         source.contains("Resized") && source.contains("recreate_swapchain"),
         "app.rs must handle WindowEvent::Resized and trigger swapchain recreation"
@@ -411,12 +422,15 @@ fn rend_02_app_handles_resize_event() {
 
 #[test]
 fn rend_02_minimized_skips_rendering() {
-    let source = std::fs::read_to_string("src/app.rs")
-        .expect("src/app.rs should exist");
+    let source = std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
     // Check that app checks for zero-size extent before rendering
     assert!(
-        (source.contains("width == 0") || source.contains("width < 1") || source.contains("is_minimized"))
-            && (source.contains("height == 0") || source.contains("height < 1") || source.contains("is_minimized")),
+        (source.contains("width == 0")
+            || source.contains("width < 1")
+            || source.contains("is_minimized"))
+            && (source.contains("height == 0")
+                || source.contains("height < 1")
+                || source.contains("is_minimized")),
         "app.rs must check for zero-size window (minimized) and skip rendering"
     );
 }
@@ -459,7 +473,7 @@ fn rend_03_frustum_planes_from_identity_matrix() {
 #[test]
 fn rend_03_point_inside_frustum_passes() {
     use glam::{Mat4, Vec3};
-    use revoxelation::renderer::camera::{extract_frustum_planes, FpsCamera};
+    use revoxelation::renderer::camera::{FpsCamera, extract_frustum_planes};
     // Camera at origin looking +Z... but our camera looks -Z at yaw=0
     // So let's create a perspective projection looking along -Z and test point at (0,0,-5)
     let camera = FpsCamera {
@@ -486,7 +500,7 @@ fn rend_03_point_inside_frustum_passes() {
 #[test]
 fn rend_03_point_behind_camera_fails() {
     use glam::{Mat4, Vec3};
-    use revoxelation::renderer::camera::{extract_frustum_planes, FpsCamera};
+    use revoxelation::renderer::camera::{FpsCamera, extract_frustum_planes};
     let camera = FpsCamera {
         position: Vec3::ZERO,
         yaw: 0.0,
@@ -628,8 +642,16 @@ fn rend_01_mesh_pipeline_has_push_constant_range() {
 #[test]
 fn rend_04_hiz_mip_count_calculation() {
     use revoxelation::renderer::hiz::hiz_mip_count;
-    assert_eq!(hiz_mip_count(1920, 1080), 11, "1920x1080 should produce 11 mip levels");
-    assert_eq!(hiz_mip_count(256, 256), 9, "256x256 should produce 9 mip levels");
+    assert_eq!(
+        hiz_mip_count(1920, 1080),
+        11,
+        "1920x1080 should produce 11 mip levels"
+    );
+    assert_eq!(
+        hiz_mip_count(256, 256),
+        9,
+        "256x256 should produce 9 mip levels"
+    );
     assert_eq!(hiz_mip_count(1, 1), 1, "1x1 should produce 1 mip level");
 }
 
@@ -649,8 +671,8 @@ fn rend_04_hiz_generate_shader_exists() {
 
 #[test]
 fn rend_04_hiz_module_exists() {
-    let source = std::fs::read_to_string("src/renderer/hiz.rs")
-        .expect("src/renderer/hiz.rs should exist");
+    let source =
+        std::fs::read_to_string("src/renderer/hiz.rs").expect("src/renderer/hiz.rs should exist");
     assert!(
         source.contains("HiZPyramid"),
         "hiz.rs must define HiZPyramid struct"
@@ -756,8 +778,7 @@ fn rend_07_perf_counters_struct_exists() {
 
 #[test]
 fn rend_07_hud_shows_gpu_stats() {
-    let source = std::fs::read_to_string("src/app.rs")
-        .expect("src/app.rs should exist");
+    let source = std::fs::read_to_string("src/app.rs").expect("src/app.rs should exist");
     assert!(
         source.contains("visible_chunks") || source.contains("frame_time"),
         "app.rs must display visible_chunks or frame_time in egui HUD"

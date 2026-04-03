@@ -8,8 +8,8 @@
 use anyhow::{Context, Result};
 use ash::vk;
 use glam::Mat4;
-use gpu_allocator::vulkan::Allocation;
 use gpu_allocator::MemoryLocation;
+use gpu_allocator::vulkan::Allocation;
 
 use super::Renderer;
 use super::bindless::BINDING_SKY_PARAMS;
@@ -40,13 +40,13 @@ impl AtmosphereModel {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SkyParams {
-    pub sun_direction: [f32; 3],       // normalized
-    pub turbidity: f32,                // atmospheric turbidity (default 2.0)
-    pub sun_color: [f32; 3],           // sun disk color
-    pub sun_angular_radius: f32,       // sun disk size (default 0.01 radians)
-    pub ground_albedo: [f32; 3],       // for Hosek-Wilkie model
-    pub atmosphere_model: u32,         // 0=Preetham, 1=Hosek-Wilkie
-    pub inv_view_proj: [f32; 16],      // mat4 for ray direction reconstruction
+    pub sun_direction: [f32; 3],  // normalized
+    pub turbidity: f32,           // atmospheric turbidity (default 2.0)
+    pub sun_color: [f32; 3],      // sun disk color
+    pub sun_angular_radius: f32,  // sun disk size (default 0.01 radians)
+    pub ground_albedo: [f32; 3],  // for Hosek-Wilkie model
+    pub atmosphere_model: u32,    // 0=Preetham, 1=Hosek-Wilkie
+    pub inv_view_proj: [f32; 16], // mat4 for ray direction reconstruction
     pub camera_pos: [f32; 3],
     pub _pad: f32,
 }
@@ -55,7 +55,7 @@ pub struct SkyParams {
 #[derive(Clone, Debug)]
 pub struct SkyConfig {
     pub atmosphere_model: AtmosphereModel,
-    pub turbidity: f32,       // 1.0-10.0 (default 2.0)
+    pub turbidity: f32,          // 1.0-10.0 (default 2.0)
     pub sun_angular_radius: f32, // default 0.01 radians
     pub ground_albedo: [f32; 3],
     pub enabled: bool,
@@ -132,8 +132,8 @@ impl SkyRenderer {
             .line_width(1.0);
 
         // MSAA must match the main render pass.
-        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-            .rasterization_samples(MSAA_SAMPLES);
+        let multisample =
+            vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(MSAA_SAMPLES);
 
         // Depth test: LESS_OR_EQUAL, no depth write.
         // Sky renders at depth=1.0 — geometry at depth < 1.0 will overwrite.

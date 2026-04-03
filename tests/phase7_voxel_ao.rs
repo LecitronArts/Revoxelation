@@ -2,8 +2,8 @@
 
 use revoxelation::{
     meshing::{
-        ChunkNeighborSet, MeshDirtyRecord, MeshDirtyCause, PackedVertex,
-        build_greedy_mesh, pack_vertex,
+        ChunkNeighborSet, MeshDirtyCause, MeshDirtyRecord, PackedVertex, build_greedy_mesh,
+        pack_vertex,
     },
     streaming::types::{CHUNK_VOXEL_COUNT, ChunkVoxels},
 };
@@ -37,11 +37,7 @@ fn test_open_air_ao_fully_bright() {
     // Single block in the middle of an empty chunk: all exposed faces should
     // have AO = 3 at all corners (no neighbors to occlude).
     let chunk = chunk_with_blocks(&[(32, 32, 32, 1)]);
-    let mesh = build_greedy_mesh(
-        &chunk,
-        &ChunkNeighborSet::default(),
-        &clean_dirty_record(),
-    );
+    let mesh = build_greedy_mesh(&chunk, &ChunkNeighborSet::default(), &clean_dirty_record());
 
     // All vertices should have AO = 3 (fully open).
     for (i, v) in mesh.vertices.iter().enumerate() {
@@ -73,11 +69,7 @@ fn test_corner_ao_fully_occluded() {
         (9, 1, 10, 1),  // side1 at face level
         (10, 1, 9, 1),  // side2 at face level
     ]);
-    let mesh = build_greedy_mesh(
-        &chunk,
-        &ChunkNeighborSet::default(),
-        &clean_dirty_record(),
-    );
+    let mesh = build_greedy_mesh(&chunk, &ChunkNeighborSet::default(), &clean_dirty_record());
 
     // At least one vertex should have AO = 0 (fully occluded corner).
     let has_ao_0 = mesh.vertices.iter().any(|v| decode_ao(v) == 0);
@@ -106,11 +98,7 @@ fn test_single_neighbor_ao() {
         (10, 0, 10, 1), // main block
         (9, 1, 10, 1),  // one side neighbor at face level
     ]);
-    let mesh = build_greedy_mesh(
-        &chunk,
-        &ChunkNeighborSet::default(),
-        &clean_dirty_record(),
-    );
+    let mesh = build_greedy_mesh(&chunk, &ChunkNeighborSet::default(), &clean_dirty_record());
 
     // Should have a mix of AO values: some 3 (open) and some 2 (one neighbor).
     let ao_values: Vec<u8> = mesh.vertices.iter().map(|v| decode_ao(v)).collect();
@@ -187,16 +175,21 @@ fn test_chunk_boundary_ao_with_neighbor() {
     );
 
     // Without neighbor: all AO should be 3 on the +X face.
-    let mesh_without_neighbor = build_greedy_mesh(
-        &center,
-        &ChunkNeighborSet::default(),
-        &clean_dirty_record(),
-    );
+    let mesh_without_neighbor =
+        build_greedy_mesh(&center, &ChunkNeighborSet::default(), &clean_dirty_record());
 
     // The mesh with a neighbor should potentially have lower AO values
     // (at least one vertex affected by the cross-boundary block).
-    let _ao_with: Vec<u8> = mesh_with_neighbor.vertices.iter().map(|v| decode_ao(v)).collect();
-    let ao_without: Vec<u8> = mesh_without_neighbor.vertices.iter().map(|v| decode_ao(v)).collect();
+    let _ao_with: Vec<u8> = mesh_with_neighbor
+        .vertices
+        .iter()
+        .map(|v| decode_ao(v))
+        .collect();
+    let ao_without: Vec<u8> = mesh_without_neighbor
+        .vertices
+        .iter()
+        .map(|v| decode_ao(v))
+        .collect();
 
     // Without neighbor, all should be 3 (fully open).
     assert!(
@@ -218,16 +211,13 @@ fn test_chunk_boundary_ao_with_neighbor() {
 fn test_air_blocks_non_occluding() {
     // A single solid block surrounded by air on all sides.
     let chunk = chunk_with_blocks(&[(30, 30, 30, 1)]);
-    let mesh = build_greedy_mesh(
-        &chunk,
-        &ChunkNeighborSet::default(),
-        &clean_dirty_record(),
-    );
+    let mesh = build_greedy_mesh(&chunk, &ChunkNeighborSet::default(), &clean_dirty_record());
 
     // All AO should be 3 — air blocks don't occlude.
     for v in mesh.vertices.iter() {
         assert_eq!(
-            decode_ao(v), 3,
+            decode_ao(v),
+            3,
             "block surrounded by air should have AO=3 everywhere"
         );
     }
