@@ -8,8 +8,9 @@ use std::sync::{
 use log::{info, warn};
 
 use crate::meshing::{
-    ChunkNeighborSet, MeshDirtyCause, MeshingJobResult, MeshingState,
-    build_greedy_mesh, build_meshlets_from_packed, fine_chunk_boundary_mask,
+    MeshBuildResult, MeshDirtyCause, MeshingJobResult, MeshingState,
+    OwnedChunkNeighborSet, build_greedy_mesh, build_meshlets_from_packed,
+    fine_chunk_boundary_mask,
 };
 use crate::renderer::RenderDelta;
 use crate::renderer::coords;
@@ -356,15 +357,19 @@ fn enqueue_chunk_task(ss: &StreamingState, key: ChunkKey, camera_pos: [f32; 3]) 
 /// Maximum number of job results processed per MeshSync frame (MED-08).
 const MAX_RESULTS_PER_FRAME: u32 = 16;
 
-/// Maximum number of dirty meshes rebuilt per MeshSync frame.
-/// Greedy meshing + meshlet build for a 64³ chunk costs ~5-18 ms on the main
-/// thread, so we keep this low to avoid frame spikes.
+/// Maximum number of dirty meshes submitted to rayon per MeshSync frame.
+/// Now that meshing runs off-thread, we can afford a larger batch without
+/// frame spikes.
 const MESH_BATCH_PER_FRAME: usize = 4;
+
+/// Maximum number of completed mesh build results drained per frame.
+const MAX_MESH_RESULTS_PER_FRAME: usize = 16;
 
 fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_index: u64) {
     let mut recv_count = 0u32;
     let max_results = MAX_RESULTS_PER_FRAME;
 
+    // --- Phase 0: Drain chunk job results (Generated/Loaded/Unloaded/etc.) ---
     loop {
         if recv_count >= max_results {
             break;
@@ -379,15 +384,64 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
         }
     }
 
+    // --- Phase 1: Drain completed mesh build results from rayon workers ---
+    let mut mesh_recv_count = 0usize;
+    if let Some(ref rx) = meshing.mesh_result_receiver {
+        loop {
+            if mesh_recv_count >= MAX_MESH_RESULTS_PER_FRAME {
+                break;
+            }
+            match rx.try_recv() {
+                Ok(result) => {
+                    mesh_recv_count += 1;
+                    let key = result.key;
+
+                    // Remove from in-flight tracking.
+                    meshing.mesh_in_flight.remove(&key);
+
+                    // Discard result if chunk is no longer active (cancelled/unloaded).
+                    if !meshing.payloads.contains_key(&key) {
+                        continue;
+                    }
+
+                    let source_revision = ss
+                        .state_store
+                        .get(&key)
+                        .map_or(result.dirty_record.source_revision, |entry| {
+                            entry.revision
+                        });
+                    meshing
+                        .completed_meshes
+                        .retain(|completed| completed.key != key);
+                    meshing.completed_meshes.push(MeshingJobResult {
+                        key,
+                        mesh: result.packed_mesh,
+                        source_revision,
+                    });
+                    meshing.dirty.remove(&key);
+                    ss.pending_render_deltas.push_back(RenderDelta::Upsert {
+                        key,
+                        mesh: result.meshlet_mesh,
+                    });
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+    }
+
+    // --- Phase 2: Submit new mesh jobs to rayon ---
     let dirty_batch = {
         let batch = meshing.take_dirty_batch(MESH_BATCH_PER_FRAME);
         if frame_index < 10 || frame_index.is_multiple_of(60) {
             log::debug!(
-                "[DIAG-MS] frame={} results_received={} dirty_batch_size={} queued_remaining={} pending_render_deltas={}",
+                "[DIAG-MS] frame={} chunk_results_received={} mesh_results_received={} dirty_batch_size={} queued_remaining={} mesh_in_flight={} pending_render_deltas={}",
                 frame_index,
                 recv_count,
+                mesh_recv_count,
                 batch.len(),
                 meshing.queued.len(),
+                meshing.mesh_in_flight.len(),
                 ss.pending_render_deltas.len(),
             );
         }
@@ -395,84 +449,81 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
     };
 
     for key in dirty_batch {
-        let maybe_mesh = {
-            match meshing.dirty.get(&key).cloned() {
-                Some(dirty_record) => match meshing.payloads.get(&key) {
-                    Some(chunk) => {
-                        let neighbors = ChunkNeighborSet {
-                            px: meshing.payloads.get(&ChunkKey::new(
-                                key.x + 1,
-                                key.y,
-                                key.z,
-                                key.lod_level,
-                            )),
-                            nx: meshing.payloads.get(&ChunkKey::new(
-                                key.x - 1,
-                                key.y,
-                                key.z,
-                                key.lod_level,
-                            )),
-                            py: meshing.payloads.get(&ChunkKey::new(
-                                key.x,
-                                key.y + 1,
-                                key.z,
-                                key.lod_level,
-                            )),
-                            ny: meshing.payloads.get(&ChunkKey::new(
-                                key.x,
-                                key.y - 1,
-                                key.z,
-                                key.lod_level,
-                            )),
-                            pz: meshing.payloads.get(&ChunkKey::new(
-                                key.x,
-                                key.y,
-                                key.z + 1,
-                                key.lod_level,
-                            )),
-                            nz: meshing.payloads.get(&ChunkKey::new(
-                                key.x,
-                                key.y,
-                                key.z - 1,
-                                key.lod_level,
-                            )),
-                            finer_neighbor_face_mask: dirty_record.finer_neighbor_face_mask,
-                        };
-                        let packed = build_greedy_mesh(chunk, &neighbors, &dirty_record);
-                        let meshlet_mesh = build_meshlets_from_packed(&packed);
-                        Some((packed, meshlet_mesh, dirty_record))
-                    }
-                    // HIGH-05: Payload absent for dirty key — remove from dirty map.
-                    None => {
-                        meshing.dirty.remove(&key);
-                        None
-                    }
-                },
-                None => None,
+        // Skip if already being meshed on a worker thread.
+        if meshing.mesh_in_flight.contains(&key) {
+            // Re-enqueue so it will be picked up next frame.
+            if !meshing.queued_set.contains(&key) {
+                meshing.queued.push_back(key);
+                meshing.queued_set.insert(key);
+            }
+            continue;
+        }
+
+        let dirty_record = match meshing.dirty.get(&key).cloned() {
+            Some(record) => record,
+            None => continue,
+        };
+
+        let chunk_arc = match meshing.payloads.get(&key) {
+            Some(arc) => Arc::clone(arc),
+            // HIGH-05: Payload absent for dirty key — remove from dirty map.
+            None => {
+                meshing.dirty.remove(&key);
+                continue;
             }
         };
 
-        let Some((packed_mesh, meshlet_mesh, dirty_record)) = maybe_mesh else {
-            continue;
+        // Build owned neighbor set with Arc clones (cheap pointer bumps).
+        let owned_neighbors = OwnedChunkNeighborSet {
+            px: meshing
+                .payloads
+                .get(&ChunkKey::new(key.x + 1, key.y, key.z, key.lod_level))
+                .cloned(),
+            nx: meshing
+                .payloads
+                .get(&ChunkKey::new(key.x - 1, key.y, key.z, key.lod_level))
+                .cloned(),
+            py: meshing
+                .payloads
+                .get(&ChunkKey::new(key.x, key.y + 1, key.z, key.lod_level))
+                .cloned(),
+            ny: meshing
+                .payloads
+                .get(&ChunkKey::new(key.x, key.y - 1, key.z, key.lod_level))
+                .cloned(),
+            pz: meshing
+                .payloads
+                .get(&ChunkKey::new(key.x, key.y, key.z + 1, key.lod_level))
+                .cloned(),
+            nz: meshing
+                .payloads
+                .get(&ChunkKey::new(key.x, key.y, key.z - 1, key.lod_level))
+                .cloned(),
+            finer_neighbor_face_mask: dirty_record.finer_neighbor_face_mask,
         };
 
-        let source_revision = ss
-            .state_store
-            .get(&key)
-            .map_or(dirty_record.source_revision, |entry| entry.revision);
-        meshing
-            .completed_meshes
-            .retain(|completed| completed.key != key);
-        meshing.completed_meshes.push(MeshingJobResult {
-            key,
-            mesh: packed_mesh,
-            source_revision,
+        // Get sender clone before spawning.
+        let sender = match meshing.mesh_result_sender {
+            Some(ref tx) => tx.clone(),
+            None => continue,
+        };
+
+        let dirty_for_job = dirty_record.clone();
+
+        // Spawn mesh build job on the shared rayon pool.
+        ss.rayon_pool.spawn(move || {
+            let neighbors_borrowed = owned_neighbors.as_borrowed();
+            let packed = build_greedy_mesh(&chunk_arc, &neighbors_borrowed, &dirty_for_job);
+            let meshlet_mesh = build_meshlets_from_packed(&packed);
+            let _ = sender.send(MeshBuildResult {
+                key,
+                meshlet_mesh,
+                packed_mesh: packed,
+                dirty_record: dirty_for_job,
+            });
         });
-        meshing.dirty.remove(&key);
-        ss.pending_render_deltas.push_back(RenderDelta::Upsert {
-            key,
-            mesh: meshlet_mesh,
-        });
+
+        meshing.mesh_in_flight.insert(key);
     }
 }
 
@@ -527,7 +578,7 @@ fn handle_job_result(
                 warn!("chunk {key:?} transition to Active (Generated) failed: {e}");
             }
             let source_revision = ss.state_store.get(&key).map_or(0, |entry| entry.revision);
-            meshing.payloads.insert(key, voxels);
+            meshing.payloads.insert(key, Arc::new(voxels));
             meshing.mark_dirty(key, MeshDirtyCause::GeneratedPayload, source_revision);
             // NOTE: Neighbor dirty marking is deferred to avoid startup dirty-queue
             // explosion.  With radius=2, 125 LOD0 chunks × 7 dirty = 875 entries
@@ -564,6 +615,7 @@ fn handle_job_result(
             meshing.queued.retain(|queued| *queued != key);
             meshing.queued_set.remove(&key);
             meshing.completed_meshes.retain(|mesh| mesh.key != key);
+            meshing.mesh_in_flight.remove(&key);
             if key.lod_level == 0 {
                 meshing.mark_coarse_lod_neighbors_dirty(
                     key,

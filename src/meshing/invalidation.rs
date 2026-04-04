@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use crate::streaming::types::ChunkKey;
 
@@ -39,15 +40,35 @@ pub struct MeshDirtyRecord {
 
 #[derive(Debug, Default)]
 pub struct MeshingState {
-    pub payloads: HashMap<ChunkKey, ChunkVoxels>,
+    pub payloads: HashMap<ChunkKey, Arc<ChunkVoxels>>,
     pub dirty: HashMap<ChunkKey, MeshDirtyRecord>,
     pub queued: VecDeque<ChunkKey>,
     /// O(1) membership check for queued keys (MED-07).
     pub queued_set: HashSet<ChunkKey>,
     pub completed_meshes: Vec<MeshingJobResult>,
+    /// Channel for receiving completed mesh build results from rayon workers.
+    pub mesh_result_sender: Option<std::sync::mpsc::Sender<super::MeshBuildResult>>,
+    pub mesh_result_receiver: Option<std::sync::mpsc::Receiver<super::MeshBuildResult>>,
+    /// Chunks currently being meshed on rayon workers — prevents duplicate submissions.
+    pub mesh_in_flight: HashSet<ChunkKey>,
 }
 
 impl MeshingState {
+    /// Create a new `MeshingState` with an initialized mesh result channel.
+    pub fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        Self {
+            payloads: HashMap::new(),
+            dirty: HashMap::new(),
+            queued: VecDeque::new(),
+            queued_set: HashSet::new(),
+            completed_meshes: Vec::new(),
+            mesh_result_sender: Some(tx),
+            mesh_result_receiver: Some(rx),
+            mesh_in_flight: HashSet::new(),
+        }
+    }
+
     pub fn mark_dirty(&mut self, key: ChunkKey, cause: MeshDirtyCause, source_revision: u64) {
         let should_queue = !self.queued_set.contains(&key); // MED-07: O(1) lookup
         let entry = self.dirty.entry(key).or_insert_with(|| MeshDirtyRecord {

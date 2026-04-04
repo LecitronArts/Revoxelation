@@ -5,6 +5,7 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Result;
 use ash::vk;
@@ -108,7 +109,7 @@ impl PointLightManager {
 
     pub fn rebuild_from_payloads(
         &mut self,
-        payloads: &HashMap<ChunkKey, ChunkVoxels>,
+        payloads: &HashMap<ChunkKey, Arc<ChunkVoxels>>,
         camera_pos: [f32; 3],
     ) {
         self.visible_lights.clear();
