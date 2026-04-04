@@ -49,7 +49,7 @@ impl Default for RenderConfig {
             meshlet_cull_frustum: true,
             meshlet_cull_hiz: true,
             use_mesh_shader_path: false,
-            use_meshlet_rendering: false,
+            use_meshlet_rendering: true,
             sse_threshold: 2.0,
             shadow: ShadowConfig::default(),
             ssao: SsaoConfig::default(),

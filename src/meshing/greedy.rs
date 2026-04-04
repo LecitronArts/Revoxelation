@@ -1,5 +1,6 @@
 use super::{ChunkNeighborSet, ChunkVoxels, GreedyQuad, MeshDirtyRecord, PackedMesh, pack_quad};
 use crate::renderer::material::{face_visible_against, is_transparent_block};
+use crate::streaming::types::CHUNK_EDGE;
 
 // -----------------------------------------------------------------------
 // Voxel Ambient Occlusion (LGHT-04)
@@ -168,16 +169,16 @@ fn emit_quads_for_axis(
     is_skirt: bool,
     quads: &mut Vec<GreedyQuad>,
 ) {
-    let boundary_slice = if positive_face { 63usize } else { 0usize };
-    let mut mask = vec![None; 64 * 64];
-    for slice in 0..64usize {
+    let boundary_slice = if positive_face { CHUNK_EDGE - 1 } else { 0usize };
+    let mut mask = vec![None; CHUNK_EDGE * CHUNK_EDGE];
+    for slice in 0..CHUNK_EDGE {
         if is_skirt && slice != boundary_slice {
             continue;
         }
 
         mask.fill(None);
-        for v in 0..64usize {
-            for u in 0..64usize {
+        for v in 0..CHUNK_EDGE {
+            for u in 0..CHUNK_EDGE {
                 let coords = coords_for_cell(axis, slice, u, v);
                 let current_block = chunk.block(coords[0], coords[1], coords[2]);
                 if current_block == 0 {
@@ -196,7 +197,7 @@ fn emit_quads_for_axis(
                 };
 
                 if face_visible_against(current_block, neighbor_block) {
-                    mask[(v * 64) + u] = Some(MergeKey {
+                    mask[(v * CHUNK_EDGE) + u] = Some(MergeKey {
                         axis,
                         positive_face,
                         block_id: current_block as u16,
@@ -216,22 +217,22 @@ fn greedy_merge_mask(
     mask: &mut [Option<MergeKey>],
     quads: &mut Vec<GreedyQuad>,
 ) {
-    for v in 0..64usize {
-        for u in 0..64usize {
-            let idx = (v * 64) + u;
+    for v in 0..CHUNK_EDGE {
+        for u in 0..CHUNK_EDGE {
+            let idx = (v * CHUNK_EDGE) + u;
             let Some(key) = mask[idx] else {
                 continue;
             };
 
             let mut width = 1usize;
-            while u + width < 64 && mask[idx + width] == Some(key) {
+            while u + width < CHUNK_EDGE && mask[idx + width] == Some(key) {
                 width += 1;
             }
 
             let mut height = 1usize;
-            'height: while v + height < 64 {
+            'height: while v + height < CHUNK_EDGE {
                 for du in 0..width {
-                    if mask[((v + height) * 64) + u + du] != Some(key) {
+                    if mask[((v + height) * CHUNK_EDGE) + u + du] != Some(key) {
                         break 'height;
                     }
                 }
@@ -240,7 +241,7 @@ fn greedy_merge_mask(
 
             for dv in 0..height {
                 for du in 0..width {
-                    mask[((v + dv) * 64) + u + du] = None;
+                    mask[((v + dv) * CHUNK_EDGE) + u + du] = None;
                 }
             }
 
@@ -281,45 +282,47 @@ fn sample_with_halo(
     y: i32,
     z: i32,
 ) -> u8 {
-    // Interior: all coords in [0, 64)
-    if (0..64).contains(&x) && (0..64).contains(&y) && (0..64).contains(&z) {
+    // Interior: all coords in [0, CHUNK_EDGE)
+    let ce = CHUNK_EDGE as i32;
+    if (0..ce).contains(&x) && (0..ce).contains(&y) && (0..ce).contains(&z) {
         return chunk.block(x as u8, y as u8, z as u8);
     }
 
-    // Single-axis halo lookups (only ±1 on one axis while the other two remain in [0, 64)).
+    // Single-axis halo lookups (only ±1 on one axis while the other two remain in [0, CHUNK_EDGE)).
     // Edge/corner halo (multiple axes out-of-range) returns air.
+    let last = (CHUNK_EDGE - 1) as u8;
 
     // X halo
-    if x == -1 && (0..64).contains(&y) && (0..64).contains(&z) {
+    if x == -1 && (0..ce).contains(&y) && (0..ce).contains(&z) {
         return neighbors
             .nx
-            .map_or(0, |neighbor| neighbor.block(63, y as u8, z as u8));
+            .map_or(0, |neighbor| neighbor.block(last, y as u8, z as u8));
     }
-    if x == 64 && (0..64).contains(&y) && (0..64).contains(&z) {
+    if x == ce && (0..ce).contains(&y) && (0..ce).contains(&z) {
         return neighbors
             .px
             .map_or(0, |neighbor| neighbor.block(0, y as u8, z as u8));
     }
 
     // Y halo
-    if y == -1 && (0..64).contains(&x) && (0..64).contains(&z) {
+    if y == -1 && (0..ce).contains(&x) && (0..ce).contains(&z) {
         return neighbors
             .ny
-            .map_or(0, |neighbor| neighbor.block(x as u8, 63, z as u8));
+            .map_or(0, |neighbor| neighbor.block(x as u8, last, z as u8));
     }
-    if y == 64 && (0..64).contains(&x) && (0..64).contains(&z) {
+    if y == ce && (0..ce).contains(&x) && (0..ce).contains(&z) {
         return neighbors
             .py
             .map_or(0, |neighbor| neighbor.block(x as u8, 0, z as u8));
     }
 
     // Z halo
-    if z == -1 && (0..64).contains(&x) && (0..64).contains(&y) {
+    if z == -1 && (0..ce).contains(&x) && (0..ce).contains(&y) {
         return neighbors
             .nz
-            .map_or(0, |neighbor| neighbor.block(x as u8, y as u8, 63));
+            .map_or(0, |neighbor| neighbor.block(x as u8, y as u8, last));
     }
-    if z == 64 && (0..64).contains(&x) && (0..64).contains(&y) {
+    if z == ce && (0..ce).contains(&x) && (0..ce).contains(&y) {
         return neighbors
             .pz
             .map_or(0, |neighbor| neighbor.block(x as u8, y as u8, 0));

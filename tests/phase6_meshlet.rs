@@ -233,8 +233,12 @@ fn phase6_gpu_meshlet_pod() {
 
 #[test]
 fn phase6_meshlet_pool_buffers() {
-    let source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
+    // MeshletPool may live in chunk_pool.rs (re-exported) or meshlet_pool.rs (extracted).
+    let chunk_source = std::fs::read_to_string("src/renderer/chunk_pool.rs")
         .expect("src/renderer/chunk_pool.rs should exist");
+    let meshlet_source = std::fs::read_to_string("src/renderer/meshlet_pool.rs")
+        .unwrap_or_default();
+    let source = format!("{chunk_source}\n{meshlet_source}");
 
     for name in &[
         "meshlet_meta_buffer",
@@ -246,7 +250,7 @@ fn phase6_meshlet_pool_buffers() {
     ] {
         assert!(
             source.contains(name),
-            "chunk_pool.rs must contain field: {name}"
+            "chunk_pool.rs or meshlet_pool.rs must contain field: {name}"
         );
     }
 }

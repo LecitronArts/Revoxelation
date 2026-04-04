@@ -21,7 +21,7 @@ use revoxelation::{
     streaming::{
         job_queue::PrioritizedTask,
         job_runner::spawn_chunk_job,
-        types::{CHUNK_EDGE, CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkVoxels},
+        types::{CHUNK_VOXEL_COUNT, ChunkJobOutcome, ChunkKey, ChunkVoxels},
     },
 };
 
@@ -187,8 +187,10 @@ fn mesh_03_chunk_metadata_world_origin_matches_chunk_key() {
         .prepare_upload(key, &mesh)
         .expect("upload should compute chunk metadata");
 
-    let lod_scale = (1_u32 << key.lod_level) as f32;
-    let chunk_world_edge = CHUNK_EDGE as f32 * lod_scale;
+    // coords::chunk_scale includes BLOCK_SIZE (1/16), so chunk positions are
+    // in metres, not raw voxel units (CRIT-05 fix).
+    let chunk_scale = revoxelation::renderer::coords::chunk_scale(key.lod_level);
+    let chunk_world_edge = revoxelation::renderer::coords::chunk_world_edge(key.lod_level);
     let expected_origin = [
         key.x as f32 * chunk_world_edge,
         key.y as f32 * chunk_world_edge,
@@ -199,17 +201,17 @@ fn mesh_03_chunk_metadata_world_origin_matches_chunk_key() {
     assert_eq!(
         upload.instance.aabb_min,
         [
-            expected_origin[0] + mesh.aabb_min[0] * lod_scale,
-            expected_origin[1] + mesh.aabb_min[1] * lod_scale,
-            expected_origin[2] + mesh.aabb_min[2] * lod_scale,
+            expected_origin[0] + mesh.aabb_min[0] * chunk_scale,
+            expected_origin[1] + mesh.aabb_min[1] * chunk_scale,
+            expected_origin[2] + mesh.aabb_min[2] * chunk_scale,
         ]
     );
     assert_eq!(
         upload.instance.aabb_max,
         [
-            expected_origin[0] + mesh.aabb_max[0] * lod_scale,
-            expected_origin[1] + mesh.aabb_max[1] * lod_scale,
-            expected_origin[2] + mesh.aabb_max[2] * lod_scale,
+            expected_origin[0] + mesh.aabb_max[0] * chunk_scale,
+            expected_origin[1] + mesh.aabb_max[1] * chunk_scale,
+            expected_origin[2] + mesh.aabb_max[2] * chunk_scale,
         ]
     );
     assert_eq!(

@@ -168,8 +168,16 @@ fn phase6_1_hiz_pass0() {
 /// by the removed range's meshlet count (not just remove from HashMap).
 #[test]
 fn phase6_1_meshlet_pool_remove() {
-    let src =
+    // MeshletPool may live in chunk_pool.rs (re-exported) or meshlet_pool.rs (extracted).
+    let chunk_src =
         std::fs::read_to_string("src/renderer/chunk_pool.rs").expect("should read chunk_pool.rs");
+    let meshlet_src =
+        std::fs::read_to_string("src/renderer/meshlet_pool.rs").unwrap_or_default();
+    let src = if meshlet_src.contains("impl MeshletPool") {
+        meshlet_src
+    } else {
+        chunk_src
+    };
 
     // Find record_remove in MeshletPool (not ChunkPool).
     let meshlet_pool_start = src
@@ -201,13 +209,13 @@ fn phase6_1_sse_world_coords() {
     let src =
         std::fs::read_to_string("src/runtime/scheduler.rs").expect("should read scheduler.rs");
 
-    // The SSE distance calculation must reference CHUNK_EDGE and some form
-    // of block size or lod_scale for world-space conversion.
+    // The SSE distance calculation must reference world-space conversion via
+    // coords module (chunk_world_edge) or raw CHUNK_EDGE + BLOCK_SIZE/lod_scale.
     assert!(
-        src.contains("CHUNK_EDGE")
-            && (src.contains("BLOCK_SIZE")
-                || src.contains("lod_scale")
-                || src.contains("chunk_world")),
+        src.contains("chunk_world_edge")
+            || (src.contains("CHUNK_EDGE")
+                && (src.contains("BLOCK_SIZE")
+                    || src.contains("lod_scale"))),
         "SSE distance must use CHUNK_EDGE and block/lod scale for world-space conversion"
     );
 }
@@ -459,11 +467,16 @@ fn phase6_1_camera_near_plane() {
 /// (or TASK_SHADER_BIT_EXT) in dstStageMask when mesh shaders are enabled.
 #[test]
 fn phase6_1_barrier_mesh_shader_stages() {
-    let src = std::fs::read_to_string("src/renderer/submit.rs").expect("should read submit.rs");
+    // The barrier code may live in submit.rs, pass/upload_pass.rs, or graph/mod.rs
+    // (after Phase 4 graph integration, barriers are auto-inserted by the render graph).
+    let submit_src = std::fs::read_to_string("src/renderer/submit.rs").expect("should read submit.rs");
+    let upload_src = std::fs::read_to_string("src/renderer/pass/upload_pass.rs").unwrap_or_default();
+    let graph_src = std::fs::read_to_string("src/renderer/graph/mod.rs").unwrap_or_default();
+    let combined = format!("{submit_src}\n{upload_src}\n{graph_src}");
 
     assert!(
-        src.contains("TASK_SHADER_EXT") || src.contains("TASK_SHADER"),
-        "submit.rs must include TASK_SHADER_EXT in barrier dstStageMask"
+        combined.contains("TASK_SHADER_EXT") || combined.contains("TASK_SHADER"),
+        "submit.rs, upload_pass.rs, or graph/mod.rs must include TASK_SHADER_EXT in barrier dstStageMask"
     );
 }
 

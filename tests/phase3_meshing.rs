@@ -480,7 +480,7 @@ fn mesh_03_delta_sync_updates_only_dirty_slots() {
     assert_eq!(
         allocator.instance_shadow()[allocator.slot_for(first).expect("first slot exists") as usize]
             .chunk_scale,
-        1.0
+        revoxelation::renderer::coords::chunk_scale(first.lod_level),
     );
     // Verify the re-uploaded mesh has updated indirect count
     assert_eq!(
@@ -530,20 +530,13 @@ fn mesh_03_build_script_and_indirect_submit_contract() {
     assert_eq!(
         revoxelation::renderer::submit_frame_sequence(),
         &[
-            "staging_ring_reset",
-            "chunk_delta_uploads",
-            "transfer_to_compute_barrier",
-            "compute_cull_chunk",
-            "chunk_to_meshlet_barrier",
-            "compute_cull_meshlet",
-            "meshlet_cull_to_draw_barrier",
-            "indirect_barrier",
-            "render_pass",
-            "sky_draw",
-            "meshlet_draw_or_chunk_draw",
+            "upload",
+            "shadow",
+            "cull",
+            "geometry",
             "egui",
-            "hiz_generate",
-            "ssao_compute",
+            "hiz",
+            "ssao",
         ]
     );
 }

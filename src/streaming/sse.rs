@@ -63,6 +63,10 @@ pub struct ActiveSetDiff {
 /// Nodes in `desired` but not in `current_active` → `to_activate`.
 /// Nodes in `current_active` but not in `desired`  → `to_deactivate`.
 ///
+/// **Hysteresis**: already-active chunks use a lower deactivation threshold
+/// (`threshold_px * 0.3`) to prevent edge-of-range chunks from flickering
+/// in and out every frame.
+///
 /// `camera_dist_fn(key)` returns the distance in metres from the camera
 /// to the chunk centre.
 pub fn diff_active_set(
@@ -74,19 +78,57 @@ pub fn diff_active_set(
 ) -> ActiveSetDiff {
     let mut desired: HashSet<ChunkKey> = HashSet::new();
 
-    for node in octree.nodes() {
-        let key = &node.key;
+    // LOD mutual exclusion: walk the octree top-down per root node.
+    // For each coarse node, decide whether to refine (activate children)
+    // or activate the coarse node itself.  A parent and its children must
+    // NEVER both be active — that causes overlapping geometry (spaghetti
+    // triangles / z-fighting).
+    //
+    // Decision rule:
+    //   SSE >= threshold  →  node needs more detail  →  recurse into children
+    //   SSE <  threshold  →  node is detailed enough →  activate this node
+    //   Leaf node (no children) → always activate regardless of SSE
+    //
+    // This guarantees every world-space region is covered by exactly one LOD.
+    fn select_nodes_recursive(
+        octree: &StreamingOctree,
+        node_idx: usize,
+        lod_configs: &[LodConfig],
+        cfg: &SseConfig,
+        camera_dist_fn: &impl Fn(&ChunkKey) -> f32,
+        desired: &mut HashSet<ChunkKey>,
+    ) {
+        let node = &octree.nodes()[node_idx];
+        let key = node.key;
+
+        // Leaf node — always activate.
+        if node.children.is_empty() {
+            desired.insert(key);
+            return;
+        }
+
+        // Compute SSE for this node.
         let lod_idx = key.lod_level as usize;
-        let lod = match lod_configs.get(lod_idx) {
-            Some(l) => l,
-            None => continue,
-        };
+        if let Some(lod_cfg) = lod_configs.get(lod_idx) {
+            let dist = camera_dist_fn(&key);
+            let sse = compute_sse(lod_cfg, cfg, dist);
+            if sse < cfg.threshold_px {
+                // This LOD level is sufficient — activate this node, skip children.
+                desired.insert(key);
+                return;
+            }
+        }
 
-        let dist = camera_dist_fn(key);
-        let sse = compute_sse(lod, cfg, dist);
+        // SSE too high or no config for this LOD — need more detail, recurse.
+        for &child_idx in &node.children {
+            select_nodes_recursive(octree, child_idx, lod_configs, cfg, camera_dist_fn, desired);
+        }
+    }
 
-        if sse >= cfg.threshold_px {
-            desired.insert(*key);
+    // Find root nodes (nodes without parents) and recurse from each.
+    for (idx, node) in octree.nodes().iter().enumerate() {
+        if node.parent.is_none() {
+            select_nodes_recursive(octree, idx, lod_configs, cfg, &camera_dist_fn, &mut desired);
         }
     }
 

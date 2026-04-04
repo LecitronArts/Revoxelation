@@ -71,10 +71,13 @@ impl ChunkCullPipeline {
             .unwrap_or(std::ptr::null_mut());
 
         // Create draw count buffer (4 bytes, GpuOnly with TRANSFER_DST for vkCmdFillBuffer reset)
+        // Also needs INDIRECT_BUFFER since cmd_draw_indexed_indirect_count reads it as countBuffer.
         let (draw_count_buffer, draw_count_allocation) = create_allocated_buffer(
             renderer,
             size_of::<u32>() as u64,
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::INDIRECT_BUFFER,
             MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "cull-draw-count",

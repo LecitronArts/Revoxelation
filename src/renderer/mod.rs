@@ -28,6 +28,7 @@ pub mod instance;
 pub mod lighting;
 pub mod material;
 pub mod mesh_pipeline;
+pub mod meshlet_pool;
 pub mod pass;
 pub mod perf_counters;
 pub mod pipeline_cache;
@@ -94,8 +95,15 @@ pub fn shader_source_files() -> &'static [&'static str] {
 // ---------------------------------------------------------------------------
 
 // Re-export sub-struct types at renderer level for convenient access.
+// NOTE: VulkanCore, PipelineSet, PoolManager are REFAC-01 logical views.
+// Currently unused in production code (all #[allow(dead_code)]). They remain
+// available for future borrow-splitting refactors but are no longer re-exported
+// at crate level to reduce noise.
+#[allow(unused_imports)]
 pub use pipeline_set::PipelineSet;
+#[allow(unused_imports)]
 pub use pool_manager::PoolManager;
+#[allow(unused_imports)]
 pub use vulkan_core::VulkanCore;
 
 pub struct Renderer {
@@ -151,6 +159,8 @@ pub struct Renderer {
     pub ssao_pass: Option<ssao::SsaoPass>,
     /// Sky/atmosphere renderer (LGHT-05).
     pub sky_renderer: Option<sky::SkyRenderer>,
+    /// Cached render graph — reused across frames to avoid per-frame allocation.
+    pub render_graph: Option<graph::RenderGraph>,
 }
 
 impl Renderer {
@@ -262,6 +272,7 @@ impl Renderer {
             shadow_map: None,
             ssao_pass: None,
             sky_renderer: None,
+            render_graph: None,
         })
     }
 }

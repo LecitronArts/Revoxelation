@@ -224,10 +224,12 @@ impl MeshletPool {
         )?;
 
         // Count buffer: single u32.
+        // Must include INDIRECT_BUFFER because cmd_draw_indexed_indirect_count
+        // reads this as the countBuffer (Vulkan spec requirement).
         let (meshlet_count_buffer, meshlet_count_allocation) = create_allocated_buffer(
             renderer,
             size_of::<u32>() as u64,
-            usage,
+            usage | vk::BufferUsageFlags::INDIRECT_BUFFER,
             MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "meshlet-pool-count",
@@ -542,7 +544,7 @@ impl MeshletPool {
         let (new_meshlet_count_buffer, new_meshlet_count_allocation) = create_allocated_buffer(
             renderer,
             size_of::<u32>() as u64,
-            storage_usage,
+            storage_usage | vk::BufferUsageFlags::INDIRECT_BUFFER,
             MemoryLocation::GpuOnly,
             AllocationScheme::GpuAllocatorManaged,
             "meshlet-pool-count",

@@ -1,12 +1,5 @@
-mod collision;
 mod meshing;
-mod persistence;
 mod world;
-
-pub use collision::CollisionBoundaryRegistry;
-pub use meshing::MeshingBoundaryRegistry;
-pub use persistence::PersistenceBoundaryRegistry;
-pub use world::WorldBoundaryRegistry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuntimeDomain {
@@ -50,24 +43,23 @@ pub struct RegisteredSystem {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct BoundaryRegistryCore {
+pub struct BoundaryRegistry {
     domain: RuntimeDomain,
     systems: Vec<RegisteredSystem>,
 }
 
-impl BoundaryRegistryCore {
-    pub(crate) fn new(domain: RuntimeDomain) -> Self {
+impl BoundaryRegistry {
+    pub fn new(domain: RuntimeDomain) -> Self {
         Self {
             domain,
             systems: Vec::new(),
         }
     }
 
-    pub(crate) fn register(
-        &mut self,
-        declared_domain: RuntimeDomain,
-        name: &'static str,
-    ) -> Result<(), RegistrationError> {
+    pub fn register<S: DomainSystem>(&mut self) -> Result<(), RegistrationError> {
+        let declared_domain = S::DOMAIN;
+        let name = S::NAME;
+
         if declared_domain != self.domain {
             return Err(RegistrationError::with_reason(format!(
                 "cross-domain registration rejected: system `{name}` declared `{}` cannot register in `{}` boundary",
@@ -94,49 +86,49 @@ impl BoundaryRegistryCore {
         Ok(())
     }
 
-    pub(crate) fn systems(&self) -> &[RegisteredSystem] {
+    pub fn systems(&self) -> &[RegisteredSystem] {
         &self.systems
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct RuntimeBoundaryRegistry {
-    world: WorldBoundaryRegistry,
-    meshing: MeshingBoundaryRegistry,
-    collision: CollisionBoundaryRegistry,
-    persistence: PersistenceBoundaryRegistry,
+    world: BoundaryRegistry,
+    meshing: BoundaryRegistry,
+    collision: BoundaryRegistry,
+    persistence: BoundaryRegistry,
 }
 
 impl RuntimeBoundaryRegistry {
-    pub fn world(&self) -> &WorldBoundaryRegistry {
+    pub fn world(&self) -> &BoundaryRegistry {
         &self.world
     }
 
-    pub fn world_mut(&mut self) -> &mut WorldBoundaryRegistry {
+    pub fn world_mut(&mut self) -> &mut BoundaryRegistry {
         &mut self.world
     }
 
-    pub fn meshing(&self) -> &MeshingBoundaryRegistry {
+    pub fn meshing(&self) -> &BoundaryRegistry {
         &self.meshing
     }
 
-    pub fn meshing_mut(&mut self) -> &mut MeshingBoundaryRegistry {
+    pub fn meshing_mut(&mut self) -> &mut BoundaryRegistry {
         &mut self.meshing
     }
 
-    pub fn collision(&self) -> &CollisionBoundaryRegistry {
+    pub fn collision(&self) -> &BoundaryRegistry {
         &self.collision
     }
 
-    pub fn collision_mut(&mut self) -> &mut CollisionBoundaryRegistry {
+    pub fn collision_mut(&mut self) -> &mut BoundaryRegistry {
         &mut self.collision
     }
 
-    pub fn persistence(&self) -> &PersistenceBoundaryRegistry {
+    pub fn persistence(&self) -> &BoundaryRegistry {
         &self.persistence
     }
 
-    pub fn persistence_mut(&mut self) -> &mut PersistenceBoundaryRegistry {
+    pub fn persistence_mut(&mut self) -> &mut BoundaryRegistry {
         &mut self.persistence
     }
 }
@@ -144,10 +136,10 @@ impl RuntimeBoundaryRegistry {
 impl Default for RuntimeBoundaryRegistry {
     fn default() -> Self {
         Self {
-            world: WorldBoundaryRegistry::new(),
-            meshing: MeshingBoundaryRegistry::new(),
-            collision: CollisionBoundaryRegistry::new(),
-            persistence: PersistenceBoundaryRegistry::new(),
+            world: BoundaryRegistry::new(RuntimeDomain::World),
+            meshing: BoundaryRegistry::new(RuntimeDomain::Meshing),
+            collision: BoundaryRegistry::new(RuntimeDomain::Collision),
+            persistence: BoundaryRegistry::new(RuntimeDomain::Persistence),
         }
     }
 }

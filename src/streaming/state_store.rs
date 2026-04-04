@@ -14,19 +14,38 @@ use super::types::{ChunkEntry, ChunkKey, ChunkState};
 
 /// Returned when a requested state transition is not permitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransitionError {
-    pub key: ChunkKey,
-    pub from: ChunkState,
-    pub to: ChunkState,
+pub enum TransitionError {
+    /// The chunk key is not tracked in the store.
+    NotTracked {
+        key: ChunkKey,
+        attempted_to: ChunkState,
+    },
+    /// The requested state transition is not a valid edge.
+    InvalidTransition {
+        key: ChunkKey,
+        from: ChunkState,
+        to: ChunkState,
+    },
 }
 
 impl std::fmt::Display for TransitionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "invalid transition for {:?}: {:?} -> {:?}",
-            self.key, self.from, self.to
-        )
+        match self {
+            Self::NotTracked { key, attempted_to } => {
+                write!(
+                    f,
+                    "chunk {:?} is not tracked in the state store (attempted transition to {:?})",
+                    key, attempted_to
+                )
+            }
+            Self::InvalidTransition { key, from, to } => {
+                write!(
+                    f,
+                    "invalid transition for {:?}: {:?} -> {:?}",
+                    key, from, to
+                )
+            }
+        }
     }
 }
 
@@ -100,15 +119,17 @@ impl ChunkStateStore {
         key: ChunkKey,
         to: ChunkState,
     ) -> Result<&ChunkEntry, TransitionError> {
-        let entry = self.entries.get_mut(&key).ok_or(TransitionError {
-            key,
-            from: ChunkState::Inactive, // best-effort for unknown keys
-            to,
-        })?;
+        let entry = self
+            .entries
+            .get_mut(&key)
+            .ok_or(TransitionError::NotTracked {
+                key,
+                attempted_to: to,
+            })?;
 
         let from = entry.state;
         if !is_valid_transition(from, to) {
-            return Err(TransitionError { key, from, to });
+            return Err(TransitionError::InvalidTransition { key, from, to });
         }
 
         entry.state = to;
@@ -189,8 +210,14 @@ mod tests {
         let err = store
             .transition_to(k, Loading)
             .expect_err("must be rejected");
-        assert_eq!(err.from, Inactive);
-        assert_eq!(err.to, Loading);
+        match err {
+            TransitionError::InvalidTransition { key: ek, from, to } => {
+                assert_eq!(ek, k);
+                assert_eq!(from, Inactive);
+                assert_eq!(to, Loading);
+            }
+            other => panic!("expected InvalidTransition, got {:?}", other),
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -5,23 +5,18 @@ use glam::Mat4;
 use super::Renderer;
 use super::camera::{CameraUniforms, extract_frustum_planes};
 use super::cull_pipeline::{HiZConfig, MeshletCullPushConstants};
+use super::lighting::LightingParams;
 
+/// Pass names in execution order. Kept in sync with submit_frame's graph setup.
 pub fn submit_frame_sequence() -> &'static [&'static str] {
     &[
-        "staging_ring_reset",
-        "chunk_delta_uploads",
-        "transfer_to_compute_barrier",
-        "compute_cull_chunk",
-        "chunk_to_meshlet_barrier",
-        "compute_cull_meshlet",
-        "meshlet_cull_to_draw_barrier",
-        "indirect_barrier",
-        "render_pass",
-        "sky_draw",
-        "meshlet_draw_or_chunk_draw",
+        "upload",
+        "shadow",
+        "cull",
+        "geometry",
         "egui",
-        "hiz_generate",
-        "ssao_compute",
+        "hiz",
+        "ssao",
     ]
 }
 
@@ -167,7 +162,7 @@ unsafe fn begin_command_buffer(renderer: &mut Renderer) -> Result<vk::CommandBuf
 /// before the main-view cull overwrites the shared meshlet buffers.
 ///
 /// Dispatch chunk-level and meshlet-level culling compute passes.
-unsafe fn dispatch_chunk_cull(
+pub(crate) unsafe fn dispatch_chunk_cull(
     renderer: &mut Renderer,
     command_buffer: vk::CommandBuffer,
     camera_uniforms: &CameraUniforms,
@@ -346,7 +341,7 @@ unsafe fn dispatch_chunk_cull(
 ///
 /// Clear color is dynamically computed from the sky's zenith color at the
 /// current time_of_day to roughly match the procedural sky (LGHT-05).
-unsafe fn begin_render_pass(
+pub(crate) unsafe fn begin_render_pass(
     renderer: &Renderer,
     command_buffer: vk::CommandBuffer,
     image_index: u32,
@@ -410,8 +405,30 @@ unsafe fn begin_render_pass(
     }
 }
 
+/// Draw the sky fullscreen triangle.
+///
+/// # Safety
+/// Records Vulkan commands.
+pub(crate) unsafe fn draw_sky(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
+    if let Some(sky_renderer) = &renderer.sky_renderer {
+        if sky_renderer.config.enabled {
+            let bindless_set = renderer
+                .bindless
+                .as_ref()
+                .map(|b| b.descriptor_set)
+                .unwrap_or(vk::DescriptorSet::null());
+            sky_renderer.record_draw(
+                &renderer.device_ctx.device,
+                command_buffer,
+                bindless_set,
+                renderer.swapchain_ctx.extent,
+            );
+        }
+    }
+}
+
 /// Draw meshlets (or legacy per-chunk path).
-unsafe fn draw_meshlets(
+pub(crate) unsafe fn draw_meshlets(
     renderer: &Renderer,
     command_buffer: vk::CommandBuffer,
     camera_uniforms: &CameraUniforms,
@@ -475,7 +492,7 @@ unsafe fn draw_meshlets(
 }
 
 /// Record egui overlay drawing.
-fn draw_egui(renderer: &mut Renderer, command_buffer: vk::CommandBuffer) -> Result<()> {
+pub(crate) fn draw_egui(renderer: &mut Renderer, command_buffer: vk::CommandBuffer) -> Result<()> {
     if let Some(mut egui_backend) = renderer.egui_backend.take() {
         let egui_output = renderer.pending_egui_output.take();
         let egui_frame = renderer.current_frame;
@@ -511,7 +528,7 @@ fn draw_egui(renderer: &mut Renderer, command_buffer: vk::CommandBuffer) -> Resu
 }
 
 /// Generate Hi-Z depth pyramid from the current frame's resolved depth output.
-unsafe fn generate_hiz(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
+pub(crate) unsafe fn generate_hiz(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
     if renderer.hiz_pyramid.is_none() {
         return;
     }
@@ -579,7 +596,7 @@ unsafe fn generate_hiz(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
 ///
 /// Runs after Hi-Z generation — reads the resolved depth via binding 7 (Hi-Z mip 0).
 /// Writes blurred AO to binding 17 for fragment shader consumption on this or next frame.
-unsafe fn record_ssao_pass(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
+pub(crate) unsafe fn record_ssao_pass(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
     let Some(ssao) = &renderer.ssao_pass else {
         return;
     };
@@ -670,7 +687,7 @@ unsafe fn present(
 /// Inserted between dispatch_chunk_cull and begin_render_pass.
 /// Computes cascade matrices from camera + sun direction, renders depth-only
 /// passes, then transitions shadow images to read-only for fragment sampling.
-unsafe fn record_csm_shadow_passes(
+pub(crate) unsafe fn record_csm_shadow_passes(
     renderer: &mut Renderer,
     command_buffer: vk::CommandBuffer,
     camera_uniforms: &CameraUniforms,
@@ -717,8 +734,19 @@ unsafe fn record_csm_shadow_passes(
         if let Some(alloc) = &ls.ssbo_allocs[current_frame] {
             if let Some(mapped) = alloc.mapped_ptr() {
                 let ptr = mapped.as_ptr() as *mut u8;
-                // shadow_matrices start at offset 48 (3*f32 + f32 + 3*f32 + f32 + 3*f32 + f32 = 48 bytes)
-                let shadow_matrices_offset = 48usize;
+                let shadow_matrices_offset = std::mem::offset_of!(LightingParams, shadow_matrices);
+                let splits_offset = std::mem::offset_of!(LightingParams, cascade_splits);
+
+                // Compile-time sanity: ensure offsets match the GLSL std430 layout.
+                const _: () = assert!(
+                    std::mem::offset_of!(LightingParams, shadow_matrices) == 48,
+                    "LightingParams::shadow_matrices offset drifted from expected 48 bytes"
+                );
+                const _: () = assert!(
+                    std::mem::offset_of!(LightingParams, cascade_splits) == 48 + 256,
+                    "LightingParams::cascade_splits offset drifted from expected 304 bytes"
+                );
+
                 let shadow_matrices_data: [[f32; 16]; 4] = [
                     cascade_matrices[0].to_cols_array(),
                     cascade_matrices[1].to_cols_array(),
@@ -733,8 +761,6 @@ unsafe fn record_csm_shadow_passes(
                         matrix_bytes.len(),
                     );
                 }
-                // cascade_splits at offset 48 + 256 = 304
-                let splits_offset = shadow_matrices_offset + std::mem::size_of::<[[f32; 16]; 4]>();
                 let splits_bytes = bytemuck::bytes_of(&cascade_splits);
                 unsafe {
                     std::ptr::copy_nonoverlapping(
@@ -883,108 +909,14 @@ unsafe fn record_csm_shadow_passes(
 // Main submit_frame — orchestrator calling the named sub-functions above.
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// pub(crate) wrappers — allow pass/ modules to call private sub-functions.
-// These will be removed in Phase 4 when RenderGraph takes over orchestration.
-// ---------------------------------------------------------------------------
-
-/// Public wrapper for `dispatch_chunk_cull`.
-///
-/// # Safety
-/// Same as `dispatch_chunk_cull` — records Vulkan commands.
-pub(crate) unsafe fn dispatch_chunk_cull_pub(
-    renderer: &mut Renderer,
-    command_buffer: vk::CommandBuffer,
-    camera_uniforms: &CameraUniforms,
-) {
-    unsafe { dispatch_chunk_cull(renderer, command_buffer, camera_uniforms) };
-}
-
-/// Public wrapper for `record_csm_shadow_passes`.
-///
-/// # Safety
-/// Same as `record_csm_shadow_passes` — records Vulkan commands.
-pub(crate) unsafe fn record_csm_shadow_passes_pub(
-    renderer: &mut Renderer,
-    command_buffer: vk::CommandBuffer,
-    camera_uniforms: &CameraUniforms,
-) {
-    unsafe { record_csm_shadow_passes(renderer, command_buffer, camera_uniforms) };
-}
-
-/// Public wrapper for `begin_render_pass`.
-///
-/// # Safety
-/// Same as `begin_render_pass` — records Vulkan commands.
-pub(crate) unsafe fn begin_render_pass_pub(
-    renderer: &Renderer,
-    command_buffer: vk::CommandBuffer,
-    image_index: u32,
-) {
-    unsafe { begin_render_pass(renderer, command_buffer, image_index) };
-}
-
-/// Public wrapper for sky draw (extracted from submit_frame step 7.5).
-///
-/// # Safety
-/// Records Vulkan commands.
-pub(crate) unsafe fn draw_sky_pub(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
-    if let Some(sky_renderer) = &renderer.sky_renderer {
-        if sky_renderer.config.enabled {
-            let bindless_set = renderer
-                .bindless
-                .as_ref()
-                .map(|b| b.descriptor_set)
-                .unwrap_or(vk::DescriptorSet::null());
-            sky_renderer.record_draw(
-                &renderer.device_ctx.device,
-                command_buffer,
-                bindless_set,
-                renderer.swapchain_ctx.extent,
-            );
-        }
-    }
-}
-
-/// Public wrapper for `draw_meshlets`.
-///
-/// # Safety
-/// Same as `draw_meshlets` — records Vulkan commands.
-pub(crate) unsafe fn draw_meshlets_pub(
-    renderer: &Renderer,
-    command_buffer: vk::CommandBuffer,
-    camera_uniforms: &CameraUniforms,
-    current_time: f32,
-) {
-    unsafe { draw_meshlets(renderer, command_buffer, camera_uniforms, current_time) };
-}
-
-/// Public wrapper for `draw_egui`.
-pub(crate) fn draw_egui_pub(
-    renderer: &mut Renderer,
-    command_buffer: vk::CommandBuffer,
-) -> anyhow::Result<()> {
-    draw_egui(renderer, command_buffer)
-}
-
-/// Public wrapper for `generate_hiz`.
-///
-/// # Safety
-/// Same as `generate_hiz` — records Vulkan commands.
-pub(crate) unsafe fn generate_hiz_pub(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
-    unsafe { generate_hiz(renderer, command_buffer) };
-}
-
-/// Public wrapper for `record_ssao_pass`.
-///
-/// # Safety
-/// Same as `record_ssao_pass` — records Vulkan commands.
-pub(crate) unsafe fn record_ssao_pass_pub(
-    renderer: &Renderer,
-    command_buffer: vk::CommandBuffer,
-) {
-    unsafe { record_ssao_pass(renderer, command_buffer) };
-}
+use super::pass::upload_pass::UploadPass;
+use super::pass::shadow_pass::ShadowPass;
+use super::pass::cull_pass::CullPass;
+use super::pass::geometry_pass::GeometryPass;
+use super::pass::egui_pass::EguiPass;
+use super::pass::hiz_pass::HiZPass;
+use super::pass::ssao_pass::SsaoComputePass;
+use super::graph::RenderGraph;
 
 pub fn submit_frame(
     renderer: &mut Renderer,
@@ -1004,126 +936,40 @@ pub fn submit_frame(
         // 3. Begin command buffer.
         let command_buffer = begin_command_buffer(renderer)?;
 
-        // 3.5. Upload lighting and point light data (LGHT-01).
-        // Must happen before draw commands so the SSBOs are ready for fragment shaders.
-        {
-            let current_frame = renderer.current_frame;
-            if let Some(ls) = &renderer.lighting_state {
-                ls.update(renderer, current_frame);
-            }
-            if let Some(plm) = &renderer.point_light_manager {
-                plm.upload(renderer, current_frame);
-            }
-        }
+        // --- RenderGraph-driven frame recording (Phase 4) ---
+        // Passes declare resource dependencies; the graph auto-inserts barriers.
+        // Reuse cached graph to avoid per-frame HashMap/Vec allocation.
+        let mut graph = renderer.render_graph.take().unwrap_or_else(RenderGraph::new);
+        graph.reset();
 
-        // 3.6. Update sky params SSBO (LGHT-05).
-        // Must happen after lighting_state.update() so sun direction is current.
-        {
-            let current_frame = renderer.current_frame;
-            let sun_direction = renderer
-                .lighting_state
-                .as_ref()
-                .map(|ls| ls.compute_sun_direction_pub())
-                .unwrap_or([0.0, 1.0, 0.0]);
-            let sun_color = renderer
-                .lighting_state
-                .as_ref()
-                .map(|ls| ls.sun_color)
-                .unwrap_or([1.0, 1.0, 1.0]);
-            if let Some(sky) = &renderer.sky_renderer {
-                sky.update(
-                    renderer,
-                    current_frame,
-                    sun_direction,
-                    sun_color,
-                    camera_uniforms,
-                );
-            }
-        }
+        // Pass 0: Upload (staging → GPU copies + lighting/sky SSBOs)
+        graph.add_pass(UploadPass);
+        // Pass 1: Shadow (CSM 4-cascade depth rendering)
+        graph.add_pass(ShadowPass);
+        // Pass 2: Cull (chunk + meshlet culling compute dispatches)
+        graph.add_pass(CullPass);
+        // Pass 3: Geometry (begin RP + sky + meshlet/chunk draws)
+        graph.add_pass(GeometryPass);
+        // Pass 4: Egui (overlay within render pass)
+        graph.add_pass(EguiPass);
+        // Pass 5: Hi-Z (depth pyramid generation — after render pass ends)
+        graph.add_pass(HiZPass);
+        // Pass 6: SSAO (compute + bilateral blur)
+        graph.add_pass(SsaoComputePass);
 
-        // 4. Record staging→GPU copy commands for pending chunk deltas.
-        renderer.record_chunk_delta_uploads(command_buffer)?;
-        renderer.record_shadow_draw_setup(command_buffer)?;
+        // End render pass between egui (pass 4) and Hi-Z (pass 5).
+        // This callback fires after pass 4 completes.
+        graph.add_inter_pass_callback(4, |renderer, cb| {
+            renderer.device_ctx.device.cmd_end_render_pass(cb);
+        });
 
-        // 5. Transfer→compute barrier.
-        if renderer.chunk_pool.is_some() && renderer.staging_ring.is_some() {
-            let mut dst_stages = vk::PipelineStageFlags::COMPUTE_SHADER
-                | vk::PipelineStageFlags::DRAW_INDIRECT
-                | vk::PipelineStageFlags::VERTEX_INPUT
-                | vk::PipelineStageFlags::VERTEX_SHADER;
-            if renderer.config.use_mesh_shader_path {
-                dst_stages |= vk::PipelineStageFlags::TASK_SHADER_EXT
-                    | vk::PipelineStageFlags::MESH_SHADER_EXT;
-            }
-            let transfer_barrier = vk::MemoryBarrier::default()
-                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                .dst_access_mask(
-                    vk::AccessFlags::SHADER_READ
-                        | vk::AccessFlags::INDIRECT_COMMAND_READ
-                        | vk::AccessFlags::VERTEX_ATTRIBUTE_READ
-                        | vk::AccessFlags::INDEX_READ,
-                );
-            renderer.device_ctx.device.cmd_pipeline_barrier(
-                command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                dst_stages,
-                vk::DependencyFlags::empty(),
-                &[transfer_barrier],
-                &[],
-                &[],
-            );
-        }
+        graph.compile();
+        graph.execute(renderer, command_buffer, camera_uniforms, current_time, image_index)?;
 
-        // 6. Record CSM shadow depth passes before main-view culling overwrites
-        // the shared visible/indirect meshlet buffers.
-        record_csm_shadow_passes(renderer, command_buffer, camera_uniforms);
+        // Return cached graph for next frame reuse.
+        renderer.render_graph = Some(graph);
 
-        // 6.5. Dispatch chunk + meshlet culling for the main camera view.
-        dispatch_chunk_cull(renderer, command_buffer, camera_uniforms);
-
-        // 7. Begin render pass.
-        begin_render_pass(renderer, command_buffer, image_index);
-
-        // 7.5: Draw sky (fullscreen triangle behind all geometry, LGHT-05).
-        if let Some(sky_renderer) = &renderer.sky_renderer {
-            if sky_renderer.config.enabled {
-                let bindless_set = renderer
-                    .bindless
-                    .as_ref()
-                    .map(|b| b.descriptor_set)
-                    .unwrap_or(vk::DescriptorSet::null());
-                sky_renderer.record_draw(
-                    &renderer.device_ctx.device,
-                    command_buffer,
-                    bindless_set,
-                    renderer.swapchain_ctx.extent,
-                );
-            }
-        }
-
-        // 8. Draw meshlets (geometry overwrites sky at closer depth).
-        draw_meshlets(renderer, command_buffer, camera_uniforms, current_time);
-
-        // 9. Draw egui overlay.
-        draw_egui(renderer, command_buffer)?;
-
-        // 10. End render pass.
-        renderer
-            .device_ctx
-            .device
-            .cmd_end_render_pass(command_buffer);
-
-        // 11. Generate Hi-Z pyramid.
-        generate_hiz(renderer, command_buffer);
-
-        // 11.5. SSAO compute + bilateral blur (LGHT-03).
-        // Runs after Hi-Z generation — reads the resolved depth at binding 7 (Hi-Z mip 0).
-        // AO result written to binding 17 for next frame's fragment shader consumption.
-        record_ssao_pass(renderer, command_buffer);
-
-        // 11.6. Transition CSM shadow maps back to attachment for next frame (LGHT-02).
-        // Only if shadow passes actually ran (i.e. meshlets > 0), otherwise
-        // images are still in ATTACHMENT layout and transition would be invalid (H2 fix).
+        // CSM shadow map layout transition for next frame (LGHT-02).
         if renderer.config.shadow.enabled {
             if let Some(shadow_map) = &renderer.shadow_map {
                 let has_meshlets = renderer
