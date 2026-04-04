@@ -463,7 +463,7 @@ impl SsaoPass {
         new_width: u32,
         new_height: u32,
     ) -> Result<Self> {
-        let config = renderer.ssao_config.clone();
+        let config = renderer.config.ssao.clone();
         self.destroy(renderer)?;
         Self::new(renderer, new_width, new_height, &config)
     }

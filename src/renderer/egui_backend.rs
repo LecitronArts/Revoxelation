@@ -291,6 +291,7 @@ impl EguiAshBackend {
         textures_delta: TexturesDelta,
         clipped_primitives: Vec<ClippedPrimitive>,
         screen_size_points: [f32; 2],
+        pixels_per_point: f32,
     ) -> Result<()> {
         // 0. Free scratch buffers for THIS frame slot (safe — fence was waited on).
         self.free_stale_scratch(renderer, current_frame)?;
@@ -364,11 +365,16 @@ impl EguiAshBackend {
                     continue;
                 };
 
-                // Convert egui clip rect to Vulkan scissor (pixel coordinates).
-                let clip_min_x = (clip_rect.min.x.round() as i32).max(0);
-                let clip_min_y = (clip_rect.min.y.round() as i32).max(0);
-                let clip_max_x = (clip_rect.max.x.round() as u32).min(extent.width);
-                let clip_max_y = (clip_rect.max.y.round() as u32).min(extent.height);
+                // Convert egui clip rect (point coordinates) to Vulkan scissor
+                // (physical pixel coordinates) by scaling with pixels_per_point.
+                let clip_min_x = (clip_rect.min.x * pixels_per_point).round() as i32;
+                let clip_min_y = (clip_rect.min.y * pixels_per_point).round() as i32;
+                let clip_max_x = (clip_rect.max.x * pixels_per_point).round() as u32;
+                let clip_max_y = (clip_rect.max.y * pixels_per_point).round() as u32;
+                let clip_min_x = clip_min_x.max(0);
+                let clip_min_y = clip_min_y.max(0);
+                let clip_max_x = clip_max_x.min(extent.width);
+                let clip_max_y = clip_max_y.min(extent.height);
 
                 if clip_max_x <= clip_min_x as u32 || clip_max_y <= clip_min_y as u32 {
                     continue;

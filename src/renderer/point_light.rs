@@ -39,7 +39,7 @@ pub struct PointLightHeader {
 
 /// Maximum number of visible point lights uploaded per frame.
 pub const MAX_VISIBLE_POINT_LIGHTS: usize = 64;
-const BLOCK_SIZE: f32 = 1.0 / 16.0;
+const BLOCK_SIZE: f32 = crate::renderer::coords::BLOCK_SIZE;
 const MAX_POINT_LIGHT_DISTANCE: f32 = 24.0;
 
 /// SSBO size: header + max lights.

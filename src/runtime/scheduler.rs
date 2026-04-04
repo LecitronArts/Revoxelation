@@ -8,10 +8,11 @@ use std::sync::{
 use log::{info, warn};
 
 use crate::meshing::{
-    ALL_FACE_MASK, ChunkNeighborSet, MeshDirtyCause, MeshingJobResult, MeshingState,
+    ChunkNeighborSet, MeshDirtyCause, MeshingJobResult, MeshingState,
     build_greedy_mesh, build_meshlets_from_packed, fine_chunk_boundary_mask,
 };
 use crate::renderer::RenderDelta;
+use crate::renderer::coords;
 use crate::streaming::{
     job_queue::{ChunkJobQueue, PrioritizedTask},
     job_runner::spawn_chunk_job,
@@ -19,7 +20,7 @@ use crate::streaming::{
     sse::{compute_sse, diff_active_set},
     state_store::ChunkStateStore,
     types::{
-        CHUNK_EDGE, ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState, LodConfig, SseConfig,
+        ChunkJobOutcome, ChunkJobResult, ChunkKey, ChunkState, LodConfig, SseConfig,
     },
 };
 
@@ -40,17 +41,30 @@ use super::events::{
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Block size in metres (1/16 m = 6.25 cm).
-const BLOCK_SIZE: f32 = 1.0 / 16.0;
+/// Block size in metres — now imported from `crate::renderer::coords`.
 
 /// Maximum number of tasks drained from the job queue per WorldUpdate frame.
-const PER_FRAME_CAP: usize = 16;
+const PER_FRAME_CAP: usize = 8;
 
 /// Default job queue capacity (evicts lowest-SSE task when full).
 const QUEUE_CAPACITY: usize = 128;
 
 /// Maximum retry attempts before a chunk is transitioned to Inactive.
 pub const MAX_RETRIES: u32 = 3;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Convert world-space camera position to chunk-space coordinates at LOD 0.
+fn camera_pos_to_chunk(camera_pos: [f32; 3]) -> [i32; 3] {
+    let edge = coords::chunk_world_edge(0);
+    [
+        (camera_pos[0] / edge).floor() as i32,
+        (camera_pos[1] / edge).floor() as i32,
+        (camera_pos[2] / edge).floor() as i32,
+    ]
+}
 
 // ---------------------------------------------------------------------------
 // StreamingState
@@ -63,8 +77,19 @@ pub struct StreamingState {
     pub sse_config: SseConfig,
     pub state_store: ChunkStateStore,
     pub job_queue: ChunkJobQueue,
-    /// Cancel flags for in-flight jobs keyed by ChunkKey.
-    pub cancel_flags: HashMap<ChunkKey, Arc<AtomicBool>>,
+    /// Cancel flags for in-flight background jobs, keyed by `ChunkKey`.
+    ///
+    /// # Thread-safety invariant
+    ///
+    /// The `HashMap` itself is **only mutated on the main thread** (inside
+    /// `run_world_update`, `handle_job_result`, and `deactivate_chunk`).
+    /// Rayon worker threads never touch the map — they only hold an
+    /// `Arc<AtomicBool>` clone obtained *before* the job was spawned.
+    ///
+    /// Because this invariant is not enforced by the type system, the field
+    /// is kept private.  External code should use [`Self::has_in_flight_jobs`]
+    /// instead of reaching into the map directly.
+    cancel_flags: HashMap<ChunkKey, Arc<AtomicBool>>,
     pub result_sender: mpsc::Sender<ChunkJobResult>,
     pub result_receiver: mpsc::Receiver<ChunkJobResult>,
     pub rayon_pool: rayon::ThreadPool,
@@ -78,16 +103,20 @@ impl Default for StreamingState {
 }
 
 impl StreamingState {
+    /// Returns `true` if any background chunk jobs are still in flight.
+    pub fn has_in_flight_jobs(&self) -> bool {
+        !self.cancel_flags.is_empty()
+    }
+
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
-            octree: StreamingOctree::build(4, 3),
+            octree: StreamingOctree::build(4, 2),
             lod_configs: vec![
                 LodConfig::new(1.0, 16.0),
                 LodConfig::new(4.0, 32.0),
-                LodConfig::new(16.0, 64.0),
             ],
-            sse_config: SseConfig::new(720.0, std::f32::consts::FRAC_PI_3, 1.0, false),
+            sse_config: SseConfig::new(720.0, std::f32::consts::FRAC_PI_3, 2.0, false),
             state_store: ChunkStateStore::new(),
             job_queue: ChunkJobQueue::new(QUEUE_CAPACITY),
             cancel_flags: HashMap::new(),
@@ -179,6 +208,18 @@ pub fn run_frame(
 // ---------------------------------------------------------------------------
 
 fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32; 3]) {
+    // B5: Dynamic recenter — now returns an OctreeDiff so we can directly
+    // deactivate removed chunks and fast-path activate added ones.
+    let camera_chunk = camera_pos_to_chunk(camera_pos);
+    let octree_diff = ss.octree.recenter(camera_chunk);
+
+    // If recenter produced a diff, eagerly deactivate removed nodes.
+    if let Some(ref diff) = octree_diff {
+        for key in &diff.removed {
+            deactivate_chunk(ss, *key);
+        }
+    }
+
     if frame_index < 10 || frame_index.is_multiple_of(60) {
         log::debug!(
             "[DIAG-WU] frame={} octree_nodes={} active_set_size={}",
@@ -188,7 +229,7 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
         );
     }
 
-    // Compute diff against current active set.
+    // Compute diff against current active set (SSE-based LOD selection).
     let current_active = ss.state_store.active_set();
     let diff = diff_active_set(
         &ss.octree,
@@ -196,13 +237,12 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
         &ss.sse_config,
         &current_active,
         |key: &ChunkKey| {
-            // World-space conversion: CHUNK_EDGE * BLOCK_SIZE * lod_scale (CRIT-05).
-            let lod_scale = (1_u32 << key.lod_level) as f32;
-            let chunk_edge_world = CHUNK_EDGE as f32 * BLOCK_SIZE * lod_scale;
-            let half_edge = chunk_edge_world * 0.5;
-            let wx = key.x as f32 * chunk_edge_world + half_edge;
-            let wy = key.y as f32 * chunk_edge_world + half_edge;
-            let wz = key.z as f32 * chunk_edge_world + half_edge;
+            // World-space conversion via unified coords module (CRIT-05).
+            let edge = coords::chunk_world_edge(key.lod_level);
+            let half_edge = edge * 0.5;
+            let wx = key.x as f32 * edge + half_edge;
+            let wy = key.y as f32 * edge + half_edge;
+            let wz = key.z as f32 * edge + half_edge;
             let dx = wx - camera_pos[0];
             let dy = wy - camera_pos[1];
             let dz = wz - camera_pos[2];
@@ -291,12 +331,11 @@ fn run_world_update(ss: &mut StreamingState, frame_index: u64, camera_pos: [f32;
 
 fn enqueue_chunk_task(ss: &StreamingState, key: ChunkKey, camera_pos: [f32; 3]) {
     // Compute real SSE at enqueue time (MED-06, CRIT-05).
-    let lod_scale = (1_u32 << key.lod_level) as f32;
-    let chunk_edge_world = CHUNK_EDGE as f32 * BLOCK_SIZE * lod_scale;
-    let half_edge = chunk_edge_world * 0.5;
-    let wx = key.x as f32 * chunk_edge_world + half_edge;
-    let wy = key.y as f32 * chunk_edge_world + half_edge;
-    let wz = key.z as f32 * chunk_edge_world + half_edge;
+    let edge = coords::chunk_world_edge(key.lod_level);
+    let half_edge = edge * 0.5;
+    let wx = key.x as f32 * edge + half_edge;
+    let wy = key.y as f32 * edge + half_edge;
+    let wz = key.z as f32 * edge + half_edge;
     let dx = wx - camera_pos[0];
     let dy = wy - camera_pos[1];
     let dz = wz - camera_pos[2];
@@ -317,6 +356,11 @@ fn enqueue_chunk_task(ss: &StreamingState, key: ChunkKey, camera_pos: [f32; 3]) 
 /// Maximum number of job results processed per MeshSync frame (MED-08).
 const MAX_RESULTS_PER_FRAME: u32 = 16;
 
+/// Maximum number of dirty meshes rebuilt per MeshSync frame.
+/// Greedy meshing + meshlet build for a 64³ chunk costs ~5-18 ms on the main
+/// thread, so we keep this low to avoid frame spikes.
+const MESH_BATCH_PER_FRAME: usize = 4;
+
 fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_index: u64) {
     let mut recv_count = 0u32;
     let max_results = MAX_RESULTS_PER_FRAME;
@@ -336,7 +380,7 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
     }
 
     let dirty_batch = {
-        let batch = meshing.take_dirty_batch(PER_FRAME_CAP);
+        let batch = meshing.take_dirty_batch(MESH_BATCH_PER_FRAME);
         if frame_index < 10 || frame_index.is_multiple_of(60) {
             log::debug!(
                 "[DIAG-MS] frame={} results_received={} dirty_batch_size={} queued_remaining={} pending_render_deltas={}",
@@ -432,6 +476,29 @@ fn run_mesh_sync(ss: &mut StreamingState, meshing: &mut MeshingState, frame_inde
     }
 }
 
+/// Transition a Loading chunk to Inactive and remove from store (cancel path).
+///
+/// Shared by `ChunkJobOutcome::Generated`/`Loaded` when `was_cancelled` is set,
+/// and by `ChunkJobOutcome::Cancelled`.
+fn cancel_loading_chunk(ss: &mut StreamingState, key: ChunkKey, frame_index: u64) {
+    let state = ss.state_store.get(&key).map(|e| e.state);
+    if state == Some(ChunkState::Loading) {
+        if let Err(e) = ss.state_store.transition_to(
+            key,
+            ChunkState::Error {
+                retry_count: MAX_RETRIES,
+                next_retry_frame: frame_index,
+            },
+        ) {
+            warn!("chunk {key:?} cancel: transition to Error failed: {e}");
+        }
+        if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
+            warn!("chunk {key:?} cancel: transition to Inactive failed: {e}");
+        }
+        ss.state_store.remove(&key);
+    }
+}
+
 fn handle_job_result(
     ss: &mut StreamingState,
     meshing: &mut MeshingState,
@@ -452,26 +519,7 @@ fn handle_job_result(
         ChunkJobOutcome::Generated(voxels) => {
             // If cancel flag was set during Loading, go to Inactive instead of Active (CRIT-06).
             if was_cancelled {
-                let state = ss.state_store.get(&key).map(|e| e.state);
-                if state == Some(ChunkState::Loading) {
-                    if let Err(e) = ss.state_store.transition_to(
-                        key,
-                        ChunkState::Error {
-                            retry_count: MAX_RETRIES,
-                            next_retry_frame: frame_index,
-                        },
-                    ) {
-                        warn!(
-                            "chunk {key:?} transition to Error (cancelled Generated) failed: {e}"
-                        );
-                    }
-                    if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
-                        warn!(
-                            "chunk {key:?} transition to Inactive (cancelled Generated) failed: {e}"
-                        );
-                    }
-                    ss.state_store.remove(&key);
-                }
+                cancel_loading_chunk(ss, key, frame_index);
                 return;
             }
             // Loading -> Active
@@ -481,36 +529,20 @@ fn handle_job_result(
             let source_revision = ss.state_store.get(&key).map_or(0, |entry| entry.revision);
             meshing.payloads.insert(key, voxels);
             meshing.mark_dirty(key, MeshDirtyCause::GeneratedPayload, source_revision);
-            meshing.mark_face_neighbors_dirty(key, ALL_FACE_MASK, source_revision);
-            if key.lod_level == 0 {
-                meshing.mark_coarse_lod_neighbors_dirty(
-                    key,
-                    fine_chunk_boundary_mask(key),
-                    true,
-                    source_revision,
-                );
-            }
+            // NOTE: Neighbor dirty marking is deferred to avoid startup dirty-queue
+            // explosion.  With radius=2, 125 LOD0 chunks × 7 dirty = 875 entries
+            // at MESH_BATCH=2 → 7 minutes to clear.  We only mark self dirty now;
+            // border seams will resolve when the neighbor itself becomes active and
+            // generates its own mesh.  Re-enable when meshing moves to background
+            // thread pool.
+            // meshing.mark_face_neighbors_dirty(key, ALL_FACE_MASK, source_revision);
+            // if key.lod_level == 0 {
+            //     meshing.mark_coarse_lod_neighbors_dirty(...)
+            // }
         }
         ChunkJobOutcome::Loaded => {
             if was_cancelled {
-                let state = ss.state_store.get(&key).map(|e| e.state);
-                if state == Some(ChunkState::Loading) {
-                    if let Err(e) = ss.state_store.transition_to(
-                        key,
-                        ChunkState::Error {
-                            retry_count: MAX_RETRIES,
-                            next_retry_frame: frame_index,
-                        },
-                    ) {
-                        warn!("chunk {key:?} transition to Error (cancelled Loaded) failed: {e}");
-                    }
-                    if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
-                        warn!(
-                            "chunk {key:?} transition to Inactive (cancelled Loaded) failed: {e}"
-                        );
-                    }
-                    ss.state_store.remove(&key);
-                }
+                cancel_loading_chunk(ss, key, frame_index);
                 return;
             }
             if let Err(e) = ss.state_store.transition_to(key, ChunkState::Active) {
@@ -519,22 +551,7 @@ fn handle_job_result(
         }
         ChunkJobOutcome::Cancelled => {
             // Intentional cancel: transition Loading -> Inactive.
-            let state = ss.state_store.get(&key).map(|e| e.state);
-            if state == Some(ChunkState::Loading) {
-                if let Err(e) = ss.state_store.transition_to(
-                    key,
-                    ChunkState::Error {
-                        retry_count: MAX_RETRIES,
-                        next_retry_frame: frame_index,
-                    },
-                ) {
-                    warn!("chunk {key:?} transition to Error (Cancelled) failed: {e}");
-                }
-                if let Err(e) = ss.state_store.transition_to(key, ChunkState::Inactive) {
-                    warn!("chunk {key:?} transition to Inactive (Cancelled) failed: {e}");
-                }
-                ss.state_store.remove(&key);
-            }
+            cancel_loading_chunk(ss, key, frame_index);
         }
         ChunkJobOutcome::Unloaded => {
             // Unloading -> Inactive
@@ -782,7 +799,15 @@ mod tests {
     #[test]
     fn error_chunk_requeues_when_retry_frame_elapsed() {
         let mut streaming = StreamingState::new();
-        let key = streaming.octree.nodes()[0].key;
+        // Use a leaf node (LOD0) so the LOD mutual-exclusion logic always
+        // selects it (leaf nodes are unconditionally desired).
+        let key = streaming
+            .octree
+            .nodes()
+            .iter()
+            .find(|n| n.children.is_empty())
+            .expect("octree must have at least one leaf node")
+            .key;
         streaming.state_store.insert_inactive(key);
         streaming
             .state_store

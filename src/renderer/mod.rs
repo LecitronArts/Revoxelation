@@ -13,10 +13,13 @@ use crate::{
 pub mod bindless;
 pub mod camera;
 pub mod chunk_pool;
+pub mod config;
+pub mod coords;
 pub mod cull_pipeline;
 pub mod device;
 pub mod egui_backend;
 pub mod frame;
+pub mod graph;
 pub mod helpers;
 pub mod hiz;
 #[cfg(all(debug_assertions, feature = "hot-reload"))]
@@ -25,6 +28,7 @@ pub mod instance;
 pub mod lighting;
 pub mod material;
 pub mod mesh_pipeline;
+pub mod pass;
 pub mod perf_counters;
 pub mod pipeline_cache;
 pub mod pipeline_set;
@@ -115,10 +119,6 @@ pub struct Renderer {
     pub mesh_pipeline: Option<mesh_pipeline::ChunkMeshPipeline>,
     pub cull_pipeline: Option<cull_pipeline::ChunkCullPipeline>,
     pub meshlet_cull_pipeline: Option<cull_pipeline::MeshletCullPipeline>,
-    /// Runtime toggles for meshlet culling modes (egui-accessible).
-    pub meshlet_cull_backface: bool,
-    pub meshlet_cull_frustum: bool,
-    pub meshlet_cull_hiz: bool,
     pub hiz_pyramid: Option<hiz::HiZPyramid>,
     pub pipeline_cache: Option<pipeline_cache::PipelineCache>,
     pub egui_backend: Option<egui_backend::EguiAshBackend>,
@@ -128,12 +128,8 @@ pub struct Renderer {
     pub material_allocation: Option<gpu_allocator::vulkan::Allocation>,
     /// Meshlet draw pipeline — either MeshShaderPath or ComputeIndirectPath (MSHL-03/04).
     pub meshlet_pipeline: Option<Box<dyn mesh_pipeline::MeshletPipeline>>,
-    /// Whether the active meshlet_pipeline is a MeshShaderPath (skips meshlet_cull.comp).
-    pub use_mesh_shader_path: bool,
-    /// Runtime toggle: use meshlet rendering (true, default) or legacy per-chunk path (false).
-    pub use_meshlet_rendering: bool,
-    /// SSE threshold in pixels for LOD selection (MSHL-05). Default 2.0.
-    pub sse_threshold: f32,
+    /// Runtime render configuration — egui-adjustable toggles and config structs (REFAC-01b).
+    pub config: config::RenderConfig,
     /// GPU readback counters for real performance data (POLISH-06).
     pub readback_counters: Option<perf_counters::GpuReadbackCounters>,
     /// Latest GPU-counted visible meshlet count from readback (POLISH-06).
@@ -151,12 +147,8 @@ pub struct Renderer {
     pub emissive_texture_array: Option<texture_array::TextureArray>,
     /// Cascaded shadow map for directional light shadows (LGHT-02).
     pub shadow_map: Option<shadow::CascadedShadowMap>,
-    /// Shadow configuration (egui-adjustable, LGHT-02).
-    pub shadow_config: shadow::ShadowConfig,
     /// Screen-space ambient occlusion pass (LGHT-03).
     pub ssao_pass: Option<ssao::SsaoPass>,
-    /// SSAO configuration (egui-adjustable, LGHT-03).
-    pub ssao_config: ssao::SsaoConfig,
     /// Sky/atmosphere renderer (LGHT-05).
     pub sky_renderer: Option<sky::SkyRenderer>,
 }
@@ -251,9 +243,6 @@ impl Renderer {
             mesh_pipeline: None,
             cull_pipeline: None,
             meshlet_cull_pipeline: None,
-            meshlet_cull_backface: true,
-            meshlet_cull_frustum: true,
-            meshlet_cull_hiz: true,
             hiz_pyramid: None,
             pipeline_cache: None,
             egui_backend: None,
@@ -262,9 +251,7 @@ impl Renderer {
             material_buffer: None,
             material_allocation: None,
             meshlet_pipeline: None,
-            use_mesh_shader_path: false,
-            use_meshlet_rendering: true,
-            sse_threshold: 2.0,
+            config: config::RenderConfig::default(),
             readback_counters: None,
             last_gpu_visible_meshlets: 0,
             lighting_state: None,
@@ -273,9 +260,7 @@ impl Renderer {
             normal_texture_array: None,
             emissive_texture_array: None,
             shadow_map: None,
-            shadow_config: shadow::ShadowConfig::default(),
             ssao_pass: None,
-            ssao_config: ssao::SsaoConfig::default(),
             sky_renderer: None,
         })
     }
@@ -571,7 +556,14 @@ impl Renderer {
         };
 
         let device = self.device_ctx.device.clone();
+        // Cap uploads per frame to avoid staging exhaustion and GPU stalls on startup.
+        let max_uploads_per_frame = 8;
+        let mut uploads_this_frame = 0u32;
         while let Some(delta) = self.pending_chunk_deltas.pop_front() {
+            if uploads_this_frame >= max_uploads_per_frame {
+                self.pending_chunk_deltas.push_front(delta);
+                break;
+            }
             let result: Result<()> = match &delta {
                 RenderDelta::Upsert { key, mesh } => {
                     let packed = mesh.to_packed_mesh();
@@ -613,6 +605,7 @@ impl Renderer {
                 self.pending_chunk_deltas.push_front(delta);
                 return Ok(());
             }
+            uploads_this_frame += 1;
         }
 
         Ok(())

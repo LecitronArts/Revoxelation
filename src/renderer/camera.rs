@@ -44,7 +44,7 @@ pub struct FpsCamera {
 impl Default for FpsCamera {
     fn default() -> Self {
         Self {
-            position: Vec3::new(32.0, 48.0, -60.0),
+            position: Vec3::new(0.0, 4.0, -8.0),
             yaw: 0.0,
             pitch: 0.0,
             fov_y: 60.0_f32.to_radians(),

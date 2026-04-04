@@ -14,6 +14,7 @@ use crate::{
     streaming::types::{CHUNK_EDGE, ChunkKey},
 };
 
+use super::coords;
 use super::staging_ring::StagingRing;
 use super::{Renderer, create_allocated_buffer, destroy_allocated_buffer};
 
@@ -205,13 +206,13 @@ impl SlotAllocator {
 
         let first_index = slot_id * index_slot_stride_indices() as u32;
         let vertex_offset = (slot_id * vertex_slot_stride_vertices() as u32) as i32;
-        let chunk_scale = lod_scale(key.lod_level);
-        let chunk_origin = chunk_origin(key, chunk_scale);
+        let chunk_scale = coords::chunk_scale(key.lod_level);
+        let chunk_origin = coords::chunk_origin(key.x, key.y, key.z, key.lod_level);
 
         let instance = GpuChunkInstance {
-            aabb_min: world_aabb(mesh.aabb_min, chunk_origin, chunk_scale),
+            aabb_min: coords::world_aabb(mesh.aabb_min, chunk_origin, chunk_scale),
             material_id: 0, // filled by material system (Plan 04)
-            aabb_max: world_aabb(mesh.aabb_max, chunk_origin, chunk_scale),
+            aabb_max: coords::world_aabb(mesh.aabb_max, chunk_origin, chunk_scale),
             lod_level: u32::from(key.lod_level),
             chunk_origin,
             chunk_scale,
@@ -974,18 +975,7 @@ fn index_slot_stride_bytes() -> usize {
     index_slot_stride_indices() * size_of::<u32>()
 }
 
-fn lod_scale(lod_level: u8) -> f32 {
-    (1_u32 << lod_level) as f32
-}
-
-fn chunk_origin(key: ChunkKey, chunk_scale: f32) -> [f32; 3] {
-    let chunk_world_edge = CHUNK_EDGE as f32 * chunk_scale;
-    [
-        key.x as f32 * chunk_world_edge,
-        key.y as f32 * chunk_world_edge,
-        key.z as f32 * chunk_world_edge,
-    ]
-}
+// chunk_origin and chunk_scale are now in coords.rs (CRIT-05 fix).
 
 /// Safe #[repr(C)] Pod wrapper for DrawIndexedIndirectCommand, used for bytemuck casts.
 ///
@@ -1014,13 +1004,7 @@ impl DrawCmdPod {
     }
 }
 
-fn world_aabb(local: [f32; 3], origin: [f32; 3], chunk_scale: f32) -> [f32; 3] {
-    [
-        origin[0] + local[0] * chunk_scale,
-        origin[1] + local[1] * chunk_scale,
-        origin[2] + local[2] * chunk_scale,
-    ]
-}
+// world_aabb is now in coords.rs (CRIT-05 fix).
 
 // ===========================================================================
 // MeshletPool — meshlet-granular GPU SSBO management (MSHL-01, D-04..D-09)

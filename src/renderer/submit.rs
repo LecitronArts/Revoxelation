@@ -232,7 +232,7 @@ unsafe fn dispatch_chunk_cull(
 
     // ---- Level 2: Meshlet-level backface + frustum + Hi-Z culling ----
     // Skipped when mesh shader path is active (task shader does the culling).
-    if !renderer.use_mesh_shader_path
+    if !renderer.config.use_mesh_shader_path
         && let (Some(meshlet_cull), Some(meshlet_pool)) =
             (&renderer.meshlet_cull_pipeline, &renderer.meshlet_pool)
     {
@@ -240,12 +240,12 @@ unsafe fn dispatch_chunk_cull(
         if total_meshlets > 0 {
             let meshlet_pc = MeshletCullPushConstants {
                 total_meshlet_count: total_meshlets,
-                enable_backface: u32::from(renderer.meshlet_cull_backface),
-                enable_frustum: u32::from(renderer.meshlet_cull_frustum),
-                enable_hiz: u32::from(renderer.meshlet_cull_hiz),
+                enable_backface: u32::from(renderer.config.meshlet_cull_backface),
+                enable_frustum: u32::from(renderer.config.meshlet_cull_frustum),
+                enable_hiz: u32::from(renderer.config.meshlet_cull_hiz),
                 camera_pos: camera_uniforms.camera_pos,
                 _pad: 0,
-                sse_threshold: renderer.sse_threshold,
+                sse_threshold: renderer.config.sse_threshold,
                 screen_height: renderer.swapchain_ctx.extent.height as f32,
             };
             meshlet_cull.record_dispatch(
@@ -423,7 +423,7 @@ unsafe fn draw_meshlets(
         .map(|b| b.descriptor_set)
         .unwrap_or(vk::DescriptorSet::null());
 
-    let used_meshlet_path = renderer.use_meshlet_rendering
+    let used_meshlet_path = renderer.config.use_meshlet_rendering
         && renderer.meshlet_pipeline.is_some()
         && renderer.meshlet_pool.is_some();
 
@@ -444,7 +444,7 @@ unsafe fn draw_meshlets(
                     meshlet_pool,
                     max_draw_count,
                     extent,
-                    renderer.sse_threshold,
+                    renderer.config.sse_threshold,
                     current_time,
                 );
             }
@@ -486,7 +486,8 @@ fn draw_egui(renderer: &mut Renderer, command_buffer: vk::CommandBuffer) -> Resu
                 egui_frame,
                 output.textures_delta,
                 output.clipped_primitives,
-                output.screen_size,
+                output.screen_size_points,
+                output.pixels_per_point,
             );
             renderer.egui_backend = Some(egui_backend);
             paint_result?;
@@ -500,6 +501,7 @@ fn draw_egui(renderer: &mut Renderer, command_buffer: vk::CommandBuffer) -> Resu
                 egui::TexturesDelta::default(),
                 Vec::new(),
                 [extent.width as f32, extent.height as f32],
+                1.0,
             );
             renderer.egui_backend = Some(egui_backend);
             paint_result?;
@@ -581,7 +583,7 @@ unsafe fn record_ssao_pass(renderer: &Renderer, command_buffer: vk::CommandBuffe
     let Some(ssao) = &renderer.ssao_pass else {
         return;
     };
-    if !renderer.ssao_config.enabled {
+    if !renderer.config.ssao.enabled {
         return;
     }
 
@@ -593,7 +595,7 @@ unsafe fn record_ssao_pass(renderer: &Renderer, command_buffer: vk::CommandBuffe
     ssao.record_dispatch(
         &renderer.device_ctx.device,
         command_buffer,
-        &renderer.ssao_config,
+        &renderer.config.ssao,
     );
 }
 
@@ -673,7 +675,7 @@ unsafe fn record_csm_shadow_passes(
     command_buffer: vk::CommandBuffer,
     camera_uniforms: &CameraUniforms,
 ) {
-    if !renderer.shadow_config.enabled {
+    if !renderer.config.shadow.enabled {
         return;
     }
     let Some(shadow_map) = &renderer.shadow_map else {
@@ -697,7 +699,7 @@ unsafe fn record_csm_shadow_passes(
 
     let camera_near = 0.1_f32;
     let camera_far = 2000.0_f32;
-    let lambda = renderer.shadow_config.split_lambda;
+    let lambda = renderer.config.shadow.split_lambda;
     let resolution = shadow_map.resolution;
 
     let (cascade_matrices, cascade_splits) = super::shadow::compute_cascade_matrices(
@@ -826,9 +828,9 @@ unsafe fn record_csm_shadow_passes(
                 .cmd_set_scissor(command_buffer, 0, &[scissor]);
             renderer.device_ctx.device.cmd_set_depth_bias(
                 command_buffer,
-                renderer.shadow_config.bias_constant,
+                renderer.config.shadow.bias_constant,
                 0.0,
-                renderer.shadow_config.bias_slope,
+                renderer.config.shadow.bias_slope,
             );
             renderer.device_ctx.device.cmd_push_constants(
                 command_buffer,
@@ -880,6 +882,109 @@ unsafe fn record_csm_shadow_passes(
 // ---------------------------------------------------------------------------
 // Main submit_frame — orchestrator calling the named sub-functions above.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// pub(crate) wrappers — allow pass/ modules to call private sub-functions.
+// These will be removed in Phase 4 when RenderGraph takes over orchestration.
+// ---------------------------------------------------------------------------
+
+/// Public wrapper for `dispatch_chunk_cull`.
+///
+/// # Safety
+/// Same as `dispatch_chunk_cull` — records Vulkan commands.
+pub(crate) unsafe fn dispatch_chunk_cull_pub(
+    renderer: &mut Renderer,
+    command_buffer: vk::CommandBuffer,
+    camera_uniforms: &CameraUniforms,
+) {
+    unsafe { dispatch_chunk_cull(renderer, command_buffer, camera_uniforms) };
+}
+
+/// Public wrapper for `record_csm_shadow_passes`.
+///
+/// # Safety
+/// Same as `record_csm_shadow_passes` — records Vulkan commands.
+pub(crate) unsafe fn record_csm_shadow_passes_pub(
+    renderer: &mut Renderer,
+    command_buffer: vk::CommandBuffer,
+    camera_uniforms: &CameraUniforms,
+) {
+    unsafe { record_csm_shadow_passes(renderer, command_buffer, camera_uniforms) };
+}
+
+/// Public wrapper for `begin_render_pass`.
+///
+/// # Safety
+/// Same as `begin_render_pass` — records Vulkan commands.
+pub(crate) unsafe fn begin_render_pass_pub(
+    renderer: &Renderer,
+    command_buffer: vk::CommandBuffer,
+    image_index: u32,
+) {
+    unsafe { begin_render_pass(renderer, command_buffer, image_index) };
+}
+
+/// Public wrapper for sky draw (extracted from submit_frame step 7.5).
+///
+/// # Safety
+/// Records Vulkan commands.
+pub(crate) unsafe fn draw_sky_pub(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
+    if let Some(sky_renderer) = &renderer.sky_renderer {
+        if sky_renderer.config.enabled {
+            let bindless_set = renderer
+                .bindless
+                .as_ref()
+                .map(|b| b.descriptor_set)
+                .unwrap_or(vk::DescriptorSet::null());
+            sky_renderer.record_draw(
+                &renderer.device_ctx.device,
+                command_buffer,
+                bindless_set,
+                renderer.swapchain_ctx.extent,
+            );
+        }
+    }
+}
+
+/// Public wrapper for `draw_meshlets`.
+///
+/// # Safety
+/// Same as `draw_meshlets` — records Vulkan commands.
+pub(crate) unsafe fn draw_meshlets_pub(
+    renderer: &Renderer,
+    command_buffer: vk::CommandBuffer,
+    camera_uniforms: &CameraUniforms,
+    current_time: f32,
+) {
+    unsafe { draw_meshlets(renderer, command_buffer, camera_uniforms, current_time) };
+}
+
+/// Public wrapper for `draw_egui`.
+pub(crate) fn draw_egui_pub(
+    renderer: &mut Renderer,
+    command_buffer: vk::CommandBuffer,
+) -> anyhow::Result<()> {
+    draw_egui(renderer, command_buffer)
+}
+
+/// Public wrapper for `generate_hiz`.
+///
+/// # Safety
+/// Same as `generate_hiz` — records Vulkan commands.
+pub(crate) unsafe fn generate_hiz_pub(renderer: &Renderer, command_buffer: vk::CommandBuffer) {
+    unsafe { generate_hiz(renderer, command_buffer) };
+}
+
+/// Public wrapper for `record_ssao_pass`.
+///
+/// # Safety
+/// Same as `record_ssao_pass` — records Vulkan commands.
+pub(crate) unsafe fn record_ssao_pass_pub(
+    renderer: &Renderer,
+    command_buffer: vk::CommandBuffer,
+) {
+    unsafe { record_ssao_pass(renderer, command_buffer) };
+}
 
 pub fn submit_frame(
     renderer: &mut Renderer,
@@ -946,7 +1051,7 @@ pub fn submit_frame(
                 | vk::PipelineStageFlags::DRAW_INDIRECT
                 | vk::PipelineStageFlags::VERTEX_INPUT
                 | vk::PipelineStageFlags::VERTEX_SHADER;
-            if renderer.use_mesh_shader_path {
+            if renderer.config.use_mesh_shader_path {
                 dst_stages |= vk::PipelineStageFlags::TASK_SHADER_EXT
                     | vk::PipelineStageFlags::MESH_SHADER_EXT;
             }
@@ -1017,9 +1122,17 @@ pub fn submit_frame(
         record_ssao_pass(renderer, command_buffer);
 
         // 11.6. Transition CSM shadow maps back to attachment for next frame (LGHT-02).
-        if renderer.shadow_config.enabled {
+        // Only if shadow passes actually ran (i.e. meshlets > 0), otherwise
+        // images are still in ATTACHMENT layout and transition would be invalid (H2 fix).
+        if renderer.config.shadow.enabled {
             if let Some(shadow_map) = &renderer.shadow_map {
-                shadow_map.transition_to_attachment(&renderer.device_ctx.device, command_buffer);
+                let has_meshlets = renderer
+                    .meshlet_pool
+                    .as_ref()
+                    .is_some_and(|mp| mp.active_meshlet_count() > 0);
+                if has_meshlets {
+                    shadow_map.transition_to_attachment(&renderer.device_ctx.device, command_buffer);
+                }
             }
         }
 

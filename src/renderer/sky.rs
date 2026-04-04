@@ -301,11 +301,12 @@ impl SkyRenderer {
             );
 
             // Set viewport and scissor (dynamic state).
+            // Use negative-height viewport to match geometry Y-flip (Vulkan Y-down → Y-up, B6 fix).
             let viewport = vk::Viewport {
                 x: 0.0,
-                y: 0.0,
+                y: extent.height as f32,
                 width: extent.width as f32,
-                height: extent.height as f32,
+                height: -(extent.height as f32),
                 min_depth: 0.0,
                 max_depth: 1.0,
             };

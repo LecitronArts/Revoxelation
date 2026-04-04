@@ -379,7 +379,7 @@ impl LightingState {
             .shadow_map
             .as_ref()
             .map(|shadow| shadow.resolution as f32)
-            .unwrap_or(renderer.shadow_config.resolution as f32);
+            .unwrap_or(renderer.config.shadow.resolution as f32);
 
         // Fog color tracks sky horizon color when day-night cycle is active.
         let fog_color = if self.use_day_night_cycle {
