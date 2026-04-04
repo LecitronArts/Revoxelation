@@ -6,7 +6,7 @@ use winit::{
     event::{DeviceEvent, ElementState, Event, Ime, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::WindowBuilder,
+    window::{CursorGrabMode, WindowBuilder},
 };
 
 use crate::config::RuntimeConfig;
@@ -33,7 +33,12 @@ use crate::runtime::scheduler::StreamingState;
 pub struct PendingEguiOutput {
     pub textures_delta: egui::TexturesDelta,
     pub clipped_primitives: Vec<egui::ClippedPrimitive>,
-    pub screen_size: [f32; 2],
+    /// Screen size in egui **point** coordinates (logical pixels).
+    /// Tessellated vertex positions and clip rects are also in points.
+    pub screen_size_points: [f32; 2],
+    /// Physical pixels per egui point — needed to convert clip rects to
+    /// Vulkan scissor rects (which operate in physical pixel coordinates).
+    pub pixels_per_point: f32,
 }
 
 /// Application root that owns all subsystems directly (no global state).
@@ -75,6 +80,10 @@ pub struct App {
     pub window_focused: bool,
     /// Next throttled redraw time while idle.
     pub next_idle_redraw: Instant,
+    /// Whether the mouse is captured for FPS camera look (B2 fix).
+    pub mouse_captured: bool,
+    /// Whether to show the HUD overlay (F1 toggle, H9 fix).
+    pub show_hud: bool,
 }
 
 /// Tracks which movement keys are currently held down.
@@ -96,7 +105,7 @@ impl KeysPressed {
 
 impl App {
     fn sync_ssao_pass(&mut self, width: u32, height: u32) -> Result<()> {
-        let divisor = if self.renderer.ssao_config.half_resolution {
+        let divisor = if self.renderer.config.ssao.half_resolution {
             2
         } else {
             1
@@ -114,7 +123,7 @@ impl App {
         let ssao = match self.renderer.ssao_pass.take() {
             Some(ssao) => ssao.recreate(&mut self.renderer, width, height)?,
             None => {
-                let ssao_config = self.renderer.ssao_config.clone();
+                let ssao_config = self.renderer.config.ssao.clone();
                 crate::renderer::ssao::SsaoPass::new(
                     &mut self.renderer,
                     width,
@@ -132,7 +141,7 @@ impl App {
         self.needs_resize
             || self.keys_pressed.any_pressed()
             || !self.egui_events.is_empty()
-            || !self.streaming.cancel_flags.is_empty()
+            || self.streaming.has_in_flight_jobs()
             || !self.streaming.pending_render_deltas.is_empty()
             || self.streaming.job_queue.len() > 0
             || !self.meshing.dirty.is_empty()
@@ -170,7 +179,7 @@ impl App {
 
         // Delta time for smooth movement.
         let now = Instant::now();
-        let dt = now.duration_since(self.last_frame_time).as_secs_f32();
+        let dt = now.duration_since(self.last_frame_time).as_secs_f32().min(0.1);
         self.last_frame_time = now;
 
         // Apply continuous keyboard movement.
@@ -223,244 +232,56 @@ impl App {
         }
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            egui::Window::new("Debug").show(ctx, |ui| {
-                ui.label(format!("Frame: {}", self.frame_index));
-                ui.separator();
-                let pc = &self.perf_counters;
-                ui.label(format!(
-                    "Chunks: {}/{} | Slots: {}/{} | Frame: {:.1}ms",
-                    pc.visible_chunks,
-                    pc.total_chunks,
-                    pc.total_chunks,
-                    pc.chunk_capacity,
-                    pc.frame_time_ms
-                ));
+            // H9 fix: All debug windows gated behind show_hud (F1 toggles).
+            if !self.show_hud {
+                return;
+            }
 
-                // Meshlet LOD statistics (MSHL-05).
-                ui.separator();
-                ui.label(format!(
-                    "Meshlets: {} (LOD0: {}, LOD1: {})",
-                    pc.total_meshlets, pc.lod0_meshlets, pc.lod1_meshlets
-                ));
-                ui.label(format!(
-                    "Visible: {} | Cull rate: {:.1}%",
-                    pc.visible_meshlets,
-                    pc.meshlet_cull_rate * 100.0
-                ));
-            });
+            use crate::ui::debug_panels;
 
-            // Meshlet culling controls (MSHL-05).
-            egui::Window::new("Meshlet Culling").show(ctx, |ui| {
-                ui.checkbox(&mut self.renderer.meshlet_cull_backface, "Backface culling");
-                ui.checkbox(&mut self.renderer.meshlet_cull_frustum, "Frustum culling");
-                ui.checkbox(
-                    &mut self.renderer.meshlet_cull_hiz,
-                    "Hi-Z occlusion culling",
-                );
-                ui.checkbox(
-                    &mut self.renderer.use_meshlet_rendering,
-                    "Meshlet rendering",
-                );
-                ui.separator();
-                ui.label("SSE threshold (LOD)");
-                ui.add(egui::Slider::new(&mut self.renderer.sse_threshold, 0.1..=16.0).text("px"));
-            });
+            debug_panels::draw_debug_window(
+                ctx,
+                &self.perf_counters,
+                self.frame_index,
+                self.camera.position,
+            );
+
+            debug_panels::draw_meshlet_culling_window(ctx, &mut self.renderer.config);
 
             // Lighting controls (LGHT-01).
             if let Some(ls) = &mut self.renderer.lighting_state {
-                egui::Window::new("Lighting").show(ctx, |ui| {
-                    ui.label("Sun Elevation");
-                    ui.add(egui::Slider::new(&mut ls.sun_elevation, 0.0..=90.0).text("deg"));
-                    ui.label("Sun Azimuth");
-                    ui.add(egui::Slider::new(&mut ls.sun_azimuth, 0.0..=360.0).text("deg"));
-                    ui.label("Sun Intensity");
-                    ui.add(egui::Slider::new(&mut ls.sun_intensity, 0.0..=5.0));
-                    ui.label("Ambient Intensity");
-                    ui.add(egui::Slider::new(&mut ls.ambient_intensity, 0.0..=1.0));
-                    ui.label("Time of Day");
-                    ui.add(egui::Slider::new(&mut ls.time_of_day, 0.0..=1.0));
-                });
+                debug_panels::draw_lighting_window(ctx, ls);
             }
 
             // CSM Shadow controls (LGHT-02).
             {
-                let sc = &mut self.renderer.shadow_config;
-                egui::Window::new("Shadows").show(ctx, |ui| {
-                    ui.checkbox(&mut sc.enabled, "Shadows enabled");
-                    ui.separator();
-                    ui.label("Split Lambda");
-                    ui.add(egui::Slider::new(&mut sc.split_lambda, 0.0..=1.0).text("lambda"));
-                    ui.label("Bias Constant");
-                    ui.add(egui::Slider::new(&mut sc.bias_constant, 0.0..=5.0));
-                    ui.label("Bias Slope");
-                    ui.add(egui::Slider::new(&mut sc.bias_slope, 0.0..=5.0));
-                    ui.checkbox(&mut sc.debug_cascades, "Debug cascade colors");
-                    if let Some(sm) = &self.renderer.shadow_map {
-                        ui.separator();
-                        ui.label(format!("Resolution: {}x{}", sm.resolution, sm.resolution));
-                        ui.label(format!(
-                            "Cascades: {}",
-                            crate::renderer::shadow::CASCADE_COUNT
-                        ));
-                    }
-                });
+                let shadow_resolution = self.renderer.shadow_map.as_ref().map(|sm| sm.resolution);
+                debug_panels::draw_shadow_window(
+                    ctx,
+                    &mut self.renderer.config.shadow,
+                    shadow_resolution,
+                );
             }
 
             // SSAO controls (LGHT-03).
             {
-                let ssao_cfg = &mut self.renderer.ssao_config;
-                egui::Window::new("SSAO").show(ctx, |ui| {
-                    ui.checkbox(&mut ssao_cfg.enabled, "SSAO enabled");
-                    ui.separator();
-
-                    // Algorithm selector.
-                    let algo_label = ssao_cfg.algorithm.as_str();
-                    egui::ComboBox::from_label("Algorithm")
-                        .selected_text(algo_label)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut ssao_cfg.algorithm,
-                                crate::renderer::ssao::SsaoAlgorithm::Gtao,
-                                "GTAO",
-                            );
-                            ui.selectable_value(
-                                &mut ssao_cfg.algorithm,
-                                crate::renderer::ssao::SsaoAlgorithm::HbaoPlus,
-                                "HBAO+",
-                            );
-                            ui.selectable_value(
-                                &mut ssao_cfg.algorithm,
-                                crate::renderer::ssao::SsaoAlgorithm::ClassicSsao,
-                                "Classic SSAO",
-                            );
-                        });
-
-                    ui.label("AO Radius");
-                    ui.add(egui::Slider::new(&mut ssao_cfg.radius, 0.1..=2.0).text("world"));
-                    ui.label("AO Intensity");
-                    ui.add(egui::Slider::new(&mut ssao_cfg.intensity, 0.0..=3.0));
-                    ui.label("Sample Count");
-                    ui.add(egui::Slider::new(&mut ssao_cfg.sample_count, 4..=64));
-                    ui.checkbox(&mut ssao_cfg.half_resolution, "Half resolution");
-                    ui.checkbox(&mut ssao_cfg.debug_view, "Debug AO view");
-
-                    if let Some(ssao) = &self.renderer.ssao_pass {
-                        ui.separator();
-                        ui.label(format!("AO size: {}x{}", ssao.width, ssao.height));
-                    }
-                });
+                let ao_size = self
+                    .renderer
+                    .ssao_pass
+                    .as_ref()
+                    .map(|ssao| (ssao.width, ssao.height));
+                debug_panels::draw_ssao_window(ctx, &mut self.renderer.config.ssao, ao_size);
             }
 
-            // Sky / Atmosphere / Fog controls (LGHT-05).
+            // Sky / Atmosphere controls (LGHT-05).
             if let Some(sky) = &mut self.renderer.sky_renderer {
-                egui::Window::new("Sky & Atmosphere").show(ctx, |ui| {
-                    ui.checkbox(&mut sky.config.enabled, "Sky enabled");
-                    ui.separator();
-
-                    // Atmosphere model selector.
-                    let model_label = sky.config.atmosphere_model.as_str();
-                    egui::ComboBox::from_label("Atmosphere Model")
-                        .selected_text(model_label)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut sky.config.atmosphere_model,
-                                crate::renderer::sky::AtmosphereModel::Preetham,
-                                "Preetham",
-                            );
-                            ui.selectable_value(
-                                &mut sky.config.atmosphere_model,
-                                crate::renderer::sky::AtmosphereModel::HosekWilkie,
-                                "Hosek-Wilkie",
-                            );
-                        });
-
-                    ui.label("Turbidity");
-                    ui.add(egui::Slider::new(&mut sky.config.turbidity, 1.0..=10.0));
-                    ui.label("Sun Disk Size");
-                    ui.add(
-                        egui::Slider::new(&mut sky.config.sun_angular_radius, 0.001..=0.05)
-                            .text("rad"),
-                    );
-                });
+                debug_panels::draw_sky_window(ctx, &mut sky.config);
             }
 
-            // Day-Night Cycle controls (LGHT-05).
+            // Day-Night Cycle + Fog controls (LGHT-05).
             if let Some(ls) = &mut self.renderer.lighting_state {
-                egui::Window::new("Day-Night Cycle").show(ctx, |ui| {
-                    ui.checkbox(&mut ls.use_day_night_cycle, "Use day-night cycle");
-                    ui.separator();
-
-                    // Time display.
-                    let time_str = ls.day_night.time_as_hhmm();
-                    let elevation = ls.day_night.sun_elevation();
-                    ui.label(format!("Time: {} | Sun elev: {:.2}", time_str, elevation));
-                    ui.separator();
-
-                    // Time of day slider.
-                    ui.label("Time of Day");
-                    let time_labels = "Midnight          Dawn          Noon          Dusk";
-                    ui.label(time_labels);
-                    ui.add(egui::Slider::new(&mut ls.day_night.time_of_day, 0.0..=1.0));
-
-                    // Day speed slider.
-                    ui.label("Day Speed (seconds per game day)");
-                    ui.add(
-                        egui::Slider::new(&mut ls.day_night.day_speed, 60.0..=3600.0).text("sec"),
-                    );
-
-                    // Pause toggle.
-                    ui.checkbox(&mut ls.day_night.paused, "Paused");
-
-                    // Lighting summary.
-                    ui.separator();
-                    ui.label(format!(
-                        "Sun dir: [{:.2}, {:.2}, {:.2}]",
-                        ls.sun_color[0], ls.sun_color[1], ls.sun_color[2]
-                    ));
-                    ui.label(format!("Sun intensity: {:.2}", ls.sun_intensity));
-                    ui.label(format!(
-                        "Ambient: [{:.2}, {:.2}, {:.2}] @ {:.2}",
-                        ls.ambient_color[0],
-                        ls.ambient_color[1],
-                        ls.ambient_color[2],
-                        ls.ambient_intensity
-                    ));
-                });
-
-                // Fog controls (LGHT-05).
-                egui::Window::new("Distance Fog").show(ctx, |ui| {
-                    ui.checkbox(&mut ls.fog_config.enabled, "Fog enabled");
-                    ui.separator();
-
-                    // Fog type selector.
-                    let fog_label = ls.fog_config.fog_type.as_str();
-                    egui::ComboBox::from_label("Fog Type")
-                        .selected_text(fog_label)
-                        .show_ui(ui, |ui| {
-                            for &ft in crate::renderer::lighting::FogType::all() {
-                                ui.selectable_value(&mut ls.fog_config.fog_type, ft, ft.as_str());
-                            }
-                        });
-
-                    ui.label("Fog Density");
-                    ui.add(
-                        egui::Slider::new(&mut ls.fog_config.density, 0.001..=0.1)
-                            .logarithmic(true),
-                    );
-
-                    // Linear fog start/end (only relevant for linear fog type).
-                    ui.label("Fog Start (linear)");
-                    ui.add(egui::Slider::new(&mut ls.fog_config.start, 10.0..=500.0).text("m"));
-                    ui.label("Fog End (linear)");
-                    ui.add(egui::Slider::new(&mut ls.fog_config.end, 50.0..=2000.0).text("m"));
-
-                    // Show current fog color.
-                    let fc = ls.day_night.fog_color();
-                    ui.label(format!(
-                        "Fog color: [{:.2}, {:.2}, {:.2}]",
-                        fc[0], fc[1], fc[2]
-                    ));
-                });
+                debug_panels::draw_day_night_window(ctx, ls);
+                debug_panels::draw_fog_window(ctx, ls);
             }
         });
 
@@ -477,7 +298,8 @@ impl App {
         self.renderer.pending_egui_output = Some(PendingEguiOutput {
             textures_delta,
             clipped_primitives,
-            screen_size,
+            screen_size_points: [screen_size_points.x, screen_size_points.y],
+            pixels_per_point,
         });
 
         if let Err(e) = self.sync_ssao_pass(size.width, size.height) {
@@ -560,7 +382,7 @@ impl App {
         } else {
             self.perf_counters.meshlet_cull_rate = 0.0;
         }
-        self.perf_counters.sse_threshold = self.renderer.sse_threshold;
+        self.perf_counters.sse_threshold = self.renderer.config.sse_threshold;
 
         // Shader hot-reload (debug builds with hot-reload feature only).
         #[cfg(all(debug_assertions, feature = "hot-reload"))]
@@ -636,7 +458,7 @@ pub fn run() -> Result<()> {
     // Create pipelines using the shared bindless layout.
     renderer.mesh_pipeline = Some(ChunkMeshPipeline::new(&renderer, bindless_layout)?);
     renderer.meshlet_pipeline = Some(create_meshlet_pipeline(&renderer, bindless_layout)?);
-    renderer.use_mesh_shader_path =
+    renderer.config.use_mesh_shader_path =
         renderer.device_ctx.mesh_shader_supported && renderer.device_ctx.mesh_shader_fn.is_some();
     renderer.cull_pipeline = Some(ChunkCullPipeline::new(&mut renderer, bindless_layout)?);
 
@@ -739,7 +561,7 @@ pub fn run() -> Result<()> {
 
     // Create SSAO pass (LGHT-03).
     {
-        let ssao_config = renderer.ssao_config.clone();
+        let ssao_config = renderer.config.ssao.clone();
         let ssao = crate::renderer::ssao::SsaoPass::new(
             &mut renderer,
             extent.width,
@@ -770,6 +592,8 @@ pub fn run() -> Result<()> {
         camera: {
             let mut cam = FpsCamera::default();
             cam.move_speed = config.camera_speed;
+            cam.fov_y = config.camera_fov.to_radians();
+            cam.mouse_sensitivity = config.mouse_sensitivity;
             cam
         },
         frame_index: 0,
@@ -779,7 +603,7 @@ pub fn run() -> Result<()> {
         needs_resize: false,
         window_extent: extent,
         perf_counters: GpuPerfCounters::default(),
-        config,
+        config: config.clone(),
         #[cfg(all(debug_assertions, feature = "hot-reload"))]
         hot_reload: crate::renderer::hot_reload::ShaderHotReload::new(),
         egui_events: Vec::new(),
@@ -789,6 +613,8 @@ pub fn run() -> Result<()> {
         egui_modifiers: egui::Modifiers::default(),
         window_focused: true,
         next_idle_redraw: Instant::now(),
+        mouse_captured: false,
+        show_hud: config.show_hud,
     };
 
     event_loop
@@ -808,8 +634,8 @@ pub fn run() -> Result<()> {
                 event: DeviceEvent::MouseMotion { delta: (dx, dy) },
                 ..
             } => {
-                // Only forward mouse motion to camera if egui doesn't want pointer.
-                if !app.egui_wants_pointer {
+                // Only forward mouse motion to camera when mouse is captured (B2 fix).
+                if app.mouse_captured && !app.egui_wants_pointer {
                     app.camera.process_mouse(dx as f32, dy as f32);
                 }
             }
@@ -845,7 +671,23 @@ pub fn run() -> Result<()> {
                 }
                 // Mouse button events — forward to egui when it wants input,
                 // otherwise ignore (camera uses DeviceEvent::MouseMotion).
+                // Right-click toggles mouse capture for FPS camera look (B2 fix).
                 WindowEvent::MouseInput { state, button, .. } => {
+                    // B2: Right-click toggles mouse capture for FPS-style camera.
+                    if button == winit::event::MouseButton::Right
+                        && state == ElementState::Pressed
+                        && !app.egui_wants_pointer
+                    {
+                        app.mouse_captured = !app.mouse_captured;
+                        if app.mouse_captured {
+                            let _ = window.set_cursor_grab(CursorGrabMode::Confined);
+                            window.set_cursor_visible(false);
+                        } else {
+                            let _ = window.set_cursor_grab(CursorGrabMode::None);
+                            window.set_cursor_visible(true);
+                        }
+                    }
+
                     let egui_button = match button {
                         winit::event::MouseButton::Left => Some(egui::PointerButton::Primary),
                         winit::event::MouseButton::Right => Some(egui::PointerButton::Secondary),
@@ -901,6 +743,16 @@ pub fn run() -> Result<()> {
                 WindowEvent::Focused(focused) => {
                     app.window_focused = focused;
                     app.egui_events.push(egui::Event::WindowFocused(focused));
+                    // H1 fix: Clear all held keys when window loses focus to prevent sticky movement.
+                    // Also release mouse capture on focus loss (B2).
+                    if !focused {
+                        app.keys_pressed = KeysPressed::default();
+                        if app.mouse_captured {
+                            app.mouse_captured = false;
+                            let _ = window.set_cursor_grab(CursorGrabMode::None);
+                            window.set_cursor_visible(true);
+                        }
+                    }
                 }
                 WindowEvent::KeyboardInput {
                     event:
@@ -964,8 +816,19 @@ pub fn run() -> Result<()> {
                                 _ => {}
                             }
                         }
+                        // F1: Toggle HUD visibility (H9 fix).
+                        if key_code == KeyCode::F1 && pressed {
+                            app.show_hud = !app.show_hud;
+                        }
+                        // Escape: Release mouse capture first, exit on second press (M8 fix).
                         if key_code == KeyCode::Escape && pressed {
-                            elwt.exit();
+                            if app.mouse_captured {
+                                app.mouse_captured = false;
+                                let _ = window.set_cursor_grab(CursorGrabMode::None);
+                                window.set_cursor_visible(true);
+                            } else {
+                                elwt.exit();
+                            }
                         }
                     }
                 }
